@@ -1,14 +1,27 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { problem } from '../../mocks/problem';
+import { problem, serviceUnavailable } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
+import { settle } from '../../test/settle';
 import { expectNoNestedLiveRegions } from '../../test/liveRegions';
-import { COPY, committedAnswerLost, emulateFocusFixup } from '../../test/outage';
+import {
+  COPY,
+  advance,
+  advanceUntil,
+  committedAnswerLost,
+  emulateFocusFixup,
+  fakeClockUser,
+  installFakeClock,
+  lookupsSeen,
+  loseAnswerAfterCommit,
+  notKnown,
+  whenListedByKey,
+} from '../../test/outage';
 import { WithdrawDialog } from './WithdrawDialog';
 
 /*
@@ -601,6 +614,7 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     // The protocol's own answer to "the outcome is unknown", not a silent re-key.
     expect(await screen.findByText(/couldn.t confirm your withdrawal/i)).toBeInTheDocument();
     expect(screen.getByText(/may or may not have gone through/i)).toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     // NOT a trap: latching drops the key, so the dialog can be left.
     expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
     // And the second intent was never sent. One request, one key.
@@ -624,6 +638,8 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
 
     expect(await screen.findByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Withdraw/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Check recent transactions' }));
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
   });
@@ -863,6 +879,7 @@ describe('withdraw — the server says it went through', () => {
     expect(viewHistory).not.toHaveAttribute('aria-describedby');
 
     expect(keys).toHaveLength(1);
+    await settle();
     await userEvent.click(viewHistory);
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
     expect(keys).toHaveLength(1);
@@ -920,9 +937,11 @@ describe('withdraw — the server says it went through', () => {
     // unread, with a Withdraw tile behind it to press again.
     const closed = vi.fn();
     const keys: (string | null)[] = [];
+    let sentAt = 0;
     server.use(
       http.post('*/api/transactions/withdraw', ({ request }) => {
         keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
         return problem({
           status: 409,
           errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
@@ -943,17 +962,20 @@ describe('withdraw — the server says it went through', () => {
 
     await goToPinStep();
     await enterPin('123456');
-    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
     await answerDrawn(keys);
     expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
     expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     // This view lands no focus. The test puts it on an action, as a visitor who has reached one
     // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
     // Close, measured; jsdom is not asked where a Tab goes.)
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
     checkTransactions.focus();
 
-    await userEvent.click(backdrop());
+    await user.click(backdrop());
     expect(closed).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('dialog', { name: 'Withdraw Money' })).toBeInTheDocument();
     expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
@@ -962,16 +984,20 @@ describe('withdraw — the server says it went through', () => {
     expect(checkTransactions).toHaveFocus();
 
     // The exits nobody presses by accident are open: the view is not a trap.
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(closed).toHaveBeenCalledTimes(2);
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Close' }));
     expect(closed).toHaveBeenCalledTimes(3);
 
-    // Only this view is kept. "Try again" brings the form back, and a press outside the form
-    // closes the dialog as it did before the send.
-    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+    // Only this view is kept. Once the listing says the withdrawal did not land, "try again"
+    // brings the form back, and a press outside the form closes the dialog as it did before
+    // the send.
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
+    await user.click(screen.getByRole('button', { name: /didn't go through/ }));
     expect(screen.getByLabelText('Withdraw amount')).toBeInTheDocument();
-    await userEvent.click(backdrop());
+    await user.click(backdrop());
     expect(closed).toHaveBeenCalledTimes(4);
     expect(keys).toHaveLength(1);
   });
@@ -1054,6 +1080,7 @@ describe('withdraw — the server says it went through', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
     await answerDrawn(keys);
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     expect(screen.queryByText(/Withdrawal failed/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
@@ -1356,5 +1383,263 @@ describe('withdraw — choosing the account, and what the dialog does with the r
 
     const words = await screen.findByText('Please check the details and try again.');
     expect(words.closest('[role="alert"]')).not.toBeNull();
+  });
+});
+
+/**
+ * A withdrawal whose answer was lost, and what the listing by its key then says (ADR-0022).
+ */
+describe('withdraw — the listing by key after a lost answer', () => {
+  // The Withdraw button is disabled during the send, and a browser hands its focus to `body`.
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  const names = (buttons: HTMLElement[]) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
+  it('finds the withdrawal the server made, says so with its reference, and lets the PIN step go', async () => {
+    const sentAt = loseAnswerAfterCommit('/api/transactions/withdraw', () =>
+      notKnown('/api/transactions/withdraw'),
+    );
+    const seen = lookupsSeen();
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const sentence = await screen.findByText(COPY.withdrawalFound);
+    const row = mockState.transactions.find((entry) => entry.idempotencyKey === seen[0]?.key);
+    expect(row).toBeDefined();
+    const dialog = screen.getByRole('dialog', { name: 'Withdrawal Complete' });
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(within(dialog).getByText('-€100.00')).toBeInTheDocument();
+    expect(within(dialog).getByText('Reference').nextSibling).toHaveTextContent(
+      row?.transactionNumber ?? '(no row)',
+    );
+    expect(names(within(dialog).getAllByRole('button'))).toEqual(['Close', 'View History']);
+    // The PIN step is gone with the form, and nothing in the dialog can send again.
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
+    expect(sentAt).toHaveLength(1);
+    expect(seen.map((ask) => ask.accountId)).toEqual([MAIN.id]);
+  });
+
+  it('after a refused authorisation and an edit, the empty listing says at once that it did not go through', async () => {
+    /*
+      Every authorisation presented under the key was refused, so nothing under it can land: no
+      wait for the bound, and "try again" at once. The next withdrawal is a new key.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await screen.findByText(/expired/);
+    await userEvent.click(screen.getByRole('button', { name: /^Back/ }));
+    await userEvent.click(screen.getByRole('button', { name: '€50' }));
+
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(screen.queryByText(/may or may not have gone through/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    expectNoNestedLiveRegions();
+
+    await settle();
+    await userEvent.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+    await settle();
+    await goToPinStep('€50');
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €50.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('"Check again" asks about the same key and account again, and gives lost focus back to the first button', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        sentAt = Date.now();
+        return notKnown('/api/transactions/withdraw');
+      }),
+    );
+    // One answer per ask: the listing fails, answers, fails again at the bound, then answers.
+    const failures = [true, false, true, false];
+    whenListedByKey(() =>
+      failures.shift()
+        ? serviceUnavailable({ via: 'api', instance: '/api/transactions' })
+        : undefined,
+    );
+    const seen = lookupsSeen();
+    const actions = () => names(screen.getAllByRole('button')).filter((name) => name !== 'Close');
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText(COPY.movementUncheckedNotYet)).toBeInTheDocument();
+    expect(actions()).toEqual(['Check again', 'Check recent transactions']);
+
+    // Before the bound it is the first button, and the answer gives its focus back to it.
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ key: seen[0].key, accountId: MAIN.id });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toHaveFocus());
+
+    // The view asks by itself at the bound, and the listing fails: "Check again" comes second.
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+    expect(seen).toHaveLength(3);
+    expect(actions()).toEqual([
+      'Check recent transactions',
+      'Check again',
+      "It didn't go through — try again",
+    ]);
+
+    // Pressed there, it lands on the first button as the answer leaves the view.
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(seen).toHaveLength(4);
+    expect(seen[3]).toMatchObject({ key: seen[0].key, accountId: MAIN.id });
+    expect(actions()).toEqual(['Check recent transactions', "It didn't go through — try again"]);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check recent transactions' })).toHaveFocus(),
+    );
+  });
+
+  it('drops a press on the check view for 500 ms after it appears and after its verdict changes, and acts on one after', async () => {
+    /*
+      The wait on this dialog's footer (`useSettledPress`), as on the deposit's. Timed as the test
+      of the same name in deposit.test.tsx: the presses meant to be dropped come at most 100 ms of
+      the fake clock after the change they follow, the one meant to act 500 ms after it.
+    */
+    server.use(
+      http.post('*/api/transactions/withdraw', () => notKnown('/api/transactions/withdraw')),
+    );
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    whenListedByKey(async () => {
+      await held;
+      return undefined;
+    });
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    const checkTransactions = () =>
+      screen.getByRole('button', { name: 'Check recent transactions' });
+
+    // The view has just appeared, and the listing is being asked.
+    await user.click(checkTransactions());
+    await advance(100);
+    await user.click(checkTransactions());
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Withdraw Money' })).toBeInTheDocument();
+    await advance(400);
+
+    // The listing answers, and the view says "not yet": the wait starts again.
+    answer();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await user.click(checkTransactions());
+    await advance(100);
+    await user.click(checkTransactions());
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+    expect(checkTransactions()).toBeEnabled();
+    expect(checkTransactions()).not.toHaveAttribute('aria-disabled');
+
+    await advance(400);
+    await user.click(checkTransactions());
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+  });
+
+  it('drops a press on the amounts, the accounts and "Use max" for 500 ms after "try again", and acts on one after', async () => {
+    /*
+      DepositDialog's case: the second press of a double click on "It didn't go through — try
+      again" can land in the form's content, and a quick amount, an account card or "Use max"
+      would change the withdrawal the visitor goes on to confirm. Timed in one task, as the
+      deposit's test of the same wait is.
+    */
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        sentAt = Date.now();
+        return notKnown('/api/transactions/withdraw');
+      }),
+    );
+    const savings = mockState.accounts[1]; // seed: id a2, "Rainy Day", balance 830
+    renderWithProviders(
+      <WithdrawDialog
+        isOpen
+        onClose={() => {}}
+        accounts={[
+          seedAccount(),
+          { id: savings.id, name: 'Rainy Day', accountNumber: 'AB-****-****-34', balance: 830 },
+        ]}
+      />,
+    );
+    await goToPinStep();
+    await enterPin('123456');
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+    const fifty = screen.getByRole('button', { name: '€50' });
+    const rainyDay = screen.getByRole('button', { name: /Rainy Day/ });
+    const useMax = () => screen.getByRole('button', { name: /^Use maximum/ });
+    fireEvent.click(fifty);
+    fireEvent.click(rainyDay);
+    fireEvent.click(useMax());
+    act(() => void vi.advanceTimersByTime(499));
+    fireEvent.click(useMax());
+    fireEvent.click(rainyDay);
+    fireEvent.click(fifty);
+    expect(screen.getByRole('button', { name: 'Continue · €100.00' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Main Account/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(rainyDay).toHaveAttribute('aria-pressed', 'false');
+    // Refused its focus as well, as a press on the actions is.
+    expect(fireEvent.mouseDown(fifty)).toBe(false);
+
+    await advance(1);
+    fireEvent.click(rainyDay);
+    fireEvent.click(useMax());
+    await advance(0);
+    expect(rainyDay).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Continue · €830.00' })).toBeInTheDocument();
+    fireEvent.click(fifty);
+    await advance(0);
+    expect(screen.getByRole('button', { name: 'Continue · €50.00' })).toBeInTheDocument();
   });
 });

@@ -563,6 +563,7 @@ describe('after "Check again" on an in-flight send', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Check again' }));
     expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
   });
 });
 

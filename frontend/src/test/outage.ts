@@ -1,7 +1,10 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { getResponse, http } from 'msw';
 import { expect, vi } from 'vitest';
+import { handlers } from '../mocks/handlers';
 import { problem } from '../mocks/problem';
+import { server } from '../mocks/server';
 
 /**
  * What a visitor reads while a request is slow or the service is down, typed out here and NOT
@@ -36,6 +39,15 @@ export const COPY = {
   transferWentThrough: "Your transfer went through, but we couldn't show its receipt.",
   depositWentThrough: "Your deposit went through, but we couldn't show its receipt.",
   withdrawalWentThrough: "Your withdrawal went through, but we couldn't show its receipt.",
+  movementNotYet:
+    "It isn't in your transactions yet, and it may still go through. Keep this page open: we'll look again.",
+  movementNone: "It isn't in your transactions, so it didn't go through.",
+  movementUncheckedNotYet:
+    "We couldn't check your transactions for it, and it may still go through. Keep this page open: we'll look again.",
+  movementUnchecked: "We couldn't check your transactions for it.",
+  transferFound: 'Your transfer went through.',
+  depositFound: 'Your deposit went through.',
+  withdrawalFound: 'Your withdrawal went through.',
 } as const;
 
 /**
@@ -225,4 +237,94 @@ export function track<T>(promise: Promise<T>) {
     (error: unknown) => Object.assign(view, { state: 'rejected', error, at: Date.now() }),
   );
   return view;
+}
+
+/*
+  The listing by key, after a money send whose answer was lost (ADR-0022). The mock cannot model a
+  claim that is still live: the client's clock drives that, so a test installs the fake clock
+  BEFORE the send and counts from the send's own `Date.now()`: "by now" is 185 s after it
+  (`advanceUntil(sentAt, 185_000)`), "not yet" anything short of it.
+*/
+
+/** The 409 for a send whose outcome is not known: `IDEMPOTENCY_RESULT_UNKNOWN`, no `applied`. */
+export const notKnown = (instance: string) =>
+  problem({
+    status: 409,
+    errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
+    detail:
+      'A request with this idempotency key may have been executed: its record is no longer there, so the outcome is not known. Verify via GET /api/transactions before sending it again with a new key.',
+    instance,
+  });
+
+/**
+ * A money send that the mock carries out, whose answer is then lost: the mock's own handler
+ * writes the row with its key, moves the balance and stores its 201, and the client is told
+ * `lost()` instead. A send the mock refuses is answered as the mock answers it. Returns the
+ * `Date.now()` at which each send arrived.
+ *
+ * `lost()` is one of three: `notKnown(path)`, a JSON 409 that names no code, or a 201 whose `data`
+ * is null; the last is logged by RTK, so a test that uses it also calls
+ * `expectTheUnreadableAnswerLogged()`.
+ */
+export function loseAnswerAfterCommit(path: string, lost: () => Response) {
+  const sentAt: number[] = [];
+  server.use(
+    http.post(`*${path}`, async ({ request }) => {
+      sentAt.push(Date.now());
+      const real = await getResponse(handlers, request.clone());
+      return real?.ok ? lost() : real;
+    }),
+  );
+  return sentAt;
+}
+
+/**
+ * Answers the listing BY KEY with `answer`, and leaves every other read of the listing to the
+ * mock: a 503, a 429, a page an old app would send (rows with no key), a row that is `Pending`.
+ * An `answer` of `undefined` leaves that ask to the mock too.
+ */
+export function whenListedByKey(
+  answer: (request: Request) => Response | undefined | Promise<Response | undefined>,
+) {
+  server.use(
+    http.get('*/api/transactions', ({ request }) =>
+      new URL(request.url).searchParams.has('IdempotencyKey') ? answer(request) : undefined,
+    ),
+  );
+}
+
+/**
+ * Records each ask of the listing by key, then lets it through to whatever answers it. Registered
+ * last, so that it sees the asks before `whenListedByKey` answers them.
+ */
+export function lookupsSeen() {
+  const seen: { at: number; accountId: string | null; key: string | null; query: string }[] = [];
+  server.use(
+    http.get('*/api/transactions', ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      if (params.has('IdempotencyKey')) {
+        seen.push({
+          at: Date.now(),
+          accountId: params.get('AccountId'),
+          key: params.get('IdempotencyKey'),
+          query: [...params.keys()].sort().join(','),
+        });
+      }
+      return undefined;
+    }),
+  );
+  return seen;
+}
+
+/**
+ * RTK logs a response transform that throws, once, on console.error — which this suite treats as
+ * a failure. Where that error is the scenario (a money send answered 201 with no data), it is
+ * stubbed, and asserted to be that one.
+ */
+export function expectTheUnreadableAnswerLogged() {
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  return () => {
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(String(logged.mock.calls[0][0])).toMatch(/An unhandled error occurred processing/);
+  };
 }

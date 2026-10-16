@@ -1,8 +1,11 @@
 import { Button, Text } from '@fluentui/react-components';
 import { CheckmarkCircle24Filled } from '@fluentui/react-icons';
 import { PageHeader } from '../layout';
+import type { FoundMovement } from '../../api/movementByKey';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
+import { useSettledPress } from '../../hooks/useSettledPress';
 import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
+import { formatCurrency, formatDateTime } from '../../utils/format';
 
 /**
  * The screen a transfer shows when the server has said the payment went through and could not
@@ -28,6 +31,10 @@ import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
  * live region, which would be a second reading; and it describes neither button, which would be
  * another at the first Tab. That is the reasoning; what a screen reader was heard to say is in
  * ADR-0059's Validation.
+ *
+ * It is also the view for a send whose answer was lost and whose movement the listing then found
+ * by its key (`useMovementCheck`). It then shows that movement under the sentence: its amount,
+ * signed as the flow's receipt signs it, its reference and its time. Never its key.
  */
 export interface WentThroughViewProps {
   /** The flow's success title, the receipt's own. */
@@ -38,12 +45,27 @@ export interface WentThroughViewProps {
   onViewHistory: () => void;
   /** Take the visitor home. Routed through the flow. */
   onDone: () => void;
+  /** The movement the listing found by the send's key. Without it, the sentence alone. */
+  movement?: FoundMovement;
+  /** How the flow's receipt signs the amount: `-` for money that left, nothing for a move. */
+  sign?: '-' | '';
 }
 
-export function WentThroughView({ title, sentence, onViewHistory, onDone }: WentThroughViewProps) {
+export function WentThroughView({
+  title,
+  sentence,
+  onViewHistory,
+  onDone,
+  movement,
+  sign = '',
+}: WentThroughViewProps) {
   const styles = useTransferWizardStyles();
   // Mounted to be shown, so it is on screen from the first render.
   const sentenceRef = useFocusWhenLost<HTMLParagraphElement>(true);
+  // A press on the actions waits until the view has settled, as in the money dialogs. The view
+  // takes another's place, so a press made as it appears was meant for that one: the check view's
+  // when the listing found the movement, and the PIN step's when the answer said `applied: true`.
+  const settledPress = useSettledPress(true, '');
 
   return (
     <div className={styles.page}>
@@ -57,8 +79,26 @@ export function WentThroughView({ title, sentence, onViewHistory, onDone }: Went
           <Text as="p" className={styles.outcomeSentence} ref={sentenceRef} tabIndex={-1}>
             {sentence}
           </Text>
+          {movement && (
+            <>
+              <Text className={styles.successAmount}>
+                {sign}
+                {formatCurrency(movement.amount)}
+              </Text>
+              <div className={styles.reviewCard} style={{ width: '100%' }}>
+                <div className={styles.reviewRow}>
+                  <Text className={styles.reviewLabel}>Reference</Text>
+                  <Text className={styles.reviewValue}>{movement.transactionNumber}</Text>
+                </div>
+                <div className={styles.reviewRow}>
+                  <Text className={styles.reviewLabel}>Date &amp; time</Text>
+                  <Text className={styles.reviewValue}>{formatDateTime(movement.createdAt)}</Text>
+                </div>
+              </div>
+            </>
+          )}
         </div>
-        <div className={styles.actions}>
+        <div className={styles.actions} {...settledPress.actions}>
           <Button
             appearance="primary"
             size="large"

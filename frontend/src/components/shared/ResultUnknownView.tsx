@@ -2,6 +2,10 @@ import { Button, Text } from '@fluentui/react-components';
 import { Warning24Regular } from '@fluentui/react-icons';
 import { PageHeader } from '../layout';
 import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
+import { CHECK_AGAIN } from '../../api/problemMessages';
+import type { MovementCheck } from '../../hooks/useMovementCheck';
+import { useSettledPress } from '../../hooks/useSettledPress';
+import { MovementCheckStatus } from './MovementCheckStatus';
 
 /**
  * The screen a money flow shows when the server cannot say whether the money moved.
@@ -14,10 +18,10 @@ import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
  * **It renders no exits, and that is the feature.** No Back, no Close, no Send. `PageHeader` is
  * given neither `onBack` nor `onClose`, so the bar has nothing to click. A stray exit here would
  * let someone wander off without checking whether their money moved, and the copy on screen tells
- * them retrying blindly could send it again. The two buttons below are the only ways forward and
- * both force the user to confront the ambiguity.
+ * them retrying blindly could send it again. The buttons below are the only ways forward, and each
+ * forces the user to confront the ambiguity.
  *
- * **It does not navigate or reset by itself.** Both actions are handed in. That is the same rule
+ * **It does not navigate or reset by itself.** Every action is handed in. That is the same rule
  * `PageHeader` and `MoneyDialogShell` state: a shared component takes a handler and calls it, and
  * never decides a destination — which is why moving this view here cannot quietly change what
  * "start over" means. `onStartOver` in particular must re-arm the idempotency intent, and only the
@@ -36,6 +40,13 @@ export interface ResultUnknownViewProps {
   onCheckTransactions: () => void;
   /** Abandon this intent and start a NEW one — the flow's wizard re-arms the key. */
   onStartOver: () => void;
+  /**
+   * The listing by key, asked for the send whose answer was lost (`useMovementCheck`). Given, the
+   * view says what it found in a status region of its own, offers "Check again" while asking can
+   * still tell more, and draws "start over" only once nothing sent under the key can commit any
+   * more. Without it, or while it is `off`, the view is the one it always was.
+   */
+  check?: MovementCheck;
 }
 
 export function ResultUnknownView({
@@ -43,8 +54,46 @@ export function ResultUnknownView({
   repeatWarning,
   onCheckTransactions,
   onStartOver,
+  check,
 }: ResultUnknownViewProps) {
   const styles = useTransferWizardStyles();
+  const asking = check !== undefined && check.verdict !== 'off';
+  const landing = check?.landingRef;
+  const fullWidth = { width: '100%', height: '48px' };
+  // A press on the actions waits until what the view draws has settled, as in the money dialogs:
+  // each verdict, and the new-key action at the bound, moves its buttons (`useSettledPress`).
+  // "Start over" takes this view away and brings back the form step, whose account cards, quick
+  // amounts and "Use max" change what the visitor goes on to review. This view's wait goes with
+  // it, so the page that owns the form gives that form a wait of its own as the view goes
+  // (`afterLeaving` on TransferPage and InternalTransferPage).
+  const settledPress = useSettledPress(
+    true,
+    `${check?.verdict ?? 'off'} ${check?.canCheckAgain ?? true} ${check?.pastLive ?? false}`,
+  );
+
+  const checkTransactions = (primary: boolean) => (
+    <Button
+      key="check-transactions"
+      ref={primary ? landing : undefined}
+      appearance={primary ? 'primary' : 'secondary'}
+      size="large"
+      style={fullWidth}
+      onClick={onCheckTransactions}
+    >
+      Check recent transactions
+    </Button>
+  );
+  const startOver = (
+    <Button
+      key="start-over"
+      appearance="secondary"
+      size="large"
+      style={fullWidth}
+      onClick={onStartOver}
+    >
+      It didn&apos;t go through — start over
+    </Button>
+  );
 
   return (
     <div className={styles.page}>
@@ -56,28 +105,55 @@ export function ResultUnknownView({
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
-          <Text className={styles.stateBody}>
-            The request may or may not have gone through. Check your recent transactions before
-            trying again — retrying blindly could {repeatWarning}.
-          </Text>
+          {/* Hidden once the listing says it did not go through: "may or may not" is no longer
+              true. */}
+          {check?.verdict !== 'none' && (
+            <Text className={styles.stateBody}>
+              The request may or may not have gone through. Check your recent transactions before
+              trying again — retrying blindly could {repeatWarning}.
+            </Text>
+          )}
+          {asking && <MovementCheckStatus check={check} />}
         </div>
-        <div className={styles.actions}>
-          <Button
-            appearance="primary"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={onCheckTransactions}
-          >
-            Check recent transactions
-          </Button>
-          <Button
-            appearance="secondary"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={onStartOver}
-          >
-            It didn&apos;t go through — start over
-          </Button>
+        <div className={styles.actions} {...settledPress.actions}>
+          {!asking ? (
+            <>
+              {checkTransactions(true)}
+              {startOver}
+            </>
+          ) : check.checkAgainFirst ? (
+            <>
+              <Button
+                key="check-again"
+                ref={landing}
+                appearance="primary"
+                size="large"
+                style={fullWidth}
+                disabled={check.checking}
+                onClick={check.checkAgain}
+              >
+                {CHECK_AGAIN}
+              </Button>
+              {checkTransactions(false)}
+            </>
+          ) : (
+            <>
+              {checkTransactions(true)}
+              {check.offerCheckAgain && (
+                <Button
+                  key="check-again"
+                  appearance="secondary"
+                  size="large"
+                  style={fullWidth}
+                  disabled={check.checking}
+                  onClick={check.checkAgain}
+                >
+                  {CHECK_AGAIN}
+                </Button>
+              )}
+              {check.offerNewKey && startOver}
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -1127,6 +1127,224 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     },
   );
 
+  /*
+    6i to 6o: what the latch leaves behind for the listing by key (ADR-0022). The copy is read by
+    the check view and never by `submit`, which mints from its own key alone.
+  */
+  it('6i — an unconfirmed send leaves a copy of the key and the body it carried; after resetIntent the next send has a new key', async () => {
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        return keys.length === 1
+          ? problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' })
+          : depositOk();
+      }),
+    );
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+    expect(result.current.lastSent).toBeNull();
+
+    const first = await act(() => settle(result.current.submit(body)));
+    expect(first.ok).toBe(false);
+    expect(result.current.verifyRequired).toBe(true);
+    expect(result.current.lastSent).toMatchObject({
+      key: keys[0],
+      body,
+      everyAuthorisationRefused: false,
+    });
+
+    act(() => result.current.resetIntent());
+    expect(result.current.lastSent).toBeNull();
+    const next = await act(() => settle(result.current.submit({ ...body, amount: 80 })));
+    expect(next.ok).toBe(true);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('6j — the copy counts from the latest send under the key, not the first', async () => {
+    // Each send under the key could make a new claim, so the time from which nothing can commit
+    // any more counts from the latest one's start.
+    const handledAt: number[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        handledAt.push(performance.now());
+        return handledAt.length < 3
+          ? problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT' })
+          : problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' });
+      }),
+    );
+    installFakeClock();
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    await act(() => settle(result.current.submit(body)));
+    await advance(30_000);
+    await act(() => settle(result.current.submit(body)));
+    await advance(30_000);
+    await act(() => settle(result.current.submit(body)));
+
+    expect(handledAt).toHaveLength(3);
+    const lastSentAt = result.current.lastSent?.lastSentAt ?? Number.NaN;
+    expect(lastSentAt).toBeGreaterThan(handledAt[1]);
+    expect(lastSentAt).toBeLessThanOrEqual(handledAt[2]);
+  });
+
+  it('6k — requireVerify over a key that is held leaves a copy of it; with no key held, none', async () => {
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        return problem({ status: 503, title: 'Service Unavailable' });
+      }),
+    );
+    const { Wrapper } = hookWrapper();
+    const held = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    await act(() => settle(held.result.current.submit(body)));
+    expect(held.result.current.keyRetained).toBe(true);
+    act(() => held.result.current.requireVerify());
+    expect(held.result.current.lastSent).toMatchObject({ key: keys[0], body });
+
+    const none = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    act(() => none.result.current.requireVerify());
+    expect(none.result.current.verifyRequired).toBe(true);
+    expect(none.result.current.lastSent).toBeNull();
+  });
+
+  it('6l — after confirmWentThrough, resetIntent does nothing and no second send leaves', async () => {
+    const sent = countDeposits(() =>
+      problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' }),
+    );
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const body = { accountId: UUID, amount: 75 };
+
+    await act(() => settle(result.current.submit(body)));
+    // In one tick, as a flow's handler could: the lock is the ref, not the state.
+    act(() => {
+      result.current.confirmWentThrough();
+      result.current.resetIntent();
+    });
+    expect(result.current.wentThrough).toBe(true);
+    expect(result.current.verifyRequired).toBe(true);
+
+    const again = await act(() => settle(result.current.submit(body)));
+    expect(again.ok).toBe(false);
+    expect(sent.count).toBe(1);
+  });
+
+  it('6m — applied: true leaves no copy: the server has said it went through, and nothing is asked', async () => {
+    countDeposits(() => committedAnswerLost('/api/transactions/deposit'));
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+
+    await act(() => settle(result.current.submit({ accountId: UUID, amount: 75 })));
+
+    expect(result.current.wentThrough).toBe(true);
+    expect(result.current.lastSent).toBeNull();
+  });
+
+  const A1 = '0a1b2c3d-1111-4222-8333-000000000001';
+  const A2 = '0a1b2c3d-1111-4222-8333-000000000002';
+  const refused = () =>
+    problem({ status: 401, errorCode: 'AUTHORIZATION_EXPIRED', detail: 'Expired.' });
+  const noConnection = () => HttpResponse.error();
+
+  /** Sends one withdrawal per step under one key, then latches the check if no answer did. */
+  async function withdrawalsUnderOneKey(
+    steps: { authorisation?: string; answer: () => Response }[],
+  ) {
+    const keys: string[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+        return steps[keys.length - 1].answer();
+      }),
+    );
+    const { Wrapper } = hookWrapper();
+    const { result } = renderHook(() => useWithdrawIntent(), { wrapper: Wrapper });
+    for (const { authorisation } of steps) {
+      await act(() =>
+        settle(
+          result.current.submit(
+            { accountId: UUID, amount: 10 },
+            authorisation ? { stepUpAuthorizationId: authorisation } : undefined,
+          ),
+        ),
+      );
+    }
+    if (!result.current.verifyRequired) act(() => result.current.requireVerify());
+    expect(keys).toHaveLength(steps.length);
+    expect(new Set(keys).size).toBe(1);
+    expect(result.current.lastSent?.key).toBe(keys[0]);
+    return result.current.lastSent;
+  }
+
+  it('6n — every authorisation presented under the key was refused: nothing under it can commit any more', async () => {
+    const copy = await withdrawalsUnderOneKey([{ authorisation: A1, answer: refused }]);
+
+    expect(copy?.everyAuthorisationRefused).toBe(true);
+  });
+
+  it.each([
+    [
+      'a send that carried no authorisation',
+      [{ answer: () => problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' }) }],
+    ],
+    [
+      'A1 refused, then A2 answered with no connection',
+      [
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: noConnection },
+      ],
+    ],
+    [
+      'A1 answered with no connection, then A2 refused',
+      [
+        { authorisation: A1, answer: noConnection },
+        { authorisation: A2, answer: refused },
+      ],
+    ],
+    [
+      'A1 refused, then a send with no authorisation',
+      [{ authorisation: A1, answer: refused }, { answer: noConnection }],
+    ],
+    [
+      'A1 answered IN_FLIGHT',
+      [
+        {
+          authorisation: A1,
+          answer: () => problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT' }),
+        },
+      ],
+    ],
+    [
+      'A1 answered 503 with applied: false',
+      [
+        {
+          authorisation: A1,
+          answer: () =>
+            serviceUnavailable({
+              via: 'api',
+              instance: '/api/transactions/withdraw',
+              applied: false,
+            }),
+        },
+      ],
+    ],
+  ])(
+    '6o — not every authorisation was refused, so the key may still commit: %s',
+    async (_name, steps) => {
+      const copy = await withdrawalsUnderOneKey(steps);
+
+      expect(copy?.everyAuthorisationRefused).toBe(false);
+    },
+  );
+
   it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
     const keys: string[] = [];
     let received = 0;

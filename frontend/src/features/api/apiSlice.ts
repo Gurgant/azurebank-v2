@@ -16,6 +16,11 @@ import {
   bffSessionStatusResponseSchema,
 } from '../../api/bffSchemas';
 import { baseQueryWithStepUp } from '../../api/baseQueryWithStepUp';
+import {
+  readMovement,
+  type MovementLookupArg,
+  type MovementReading,
+} from '../../api/movementByKey';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import {
   accountNumberResponseSchema,
@@ -92,6 +97,19 @@ function closedAccountTags(error: unknown) {
   return (error as ApiProblem | undefined)?.errorCode === 'ACCOUNT_NOT_FOUND'
     ? [{ type: 'Account' as const, id: 'LIST' as const }]
     : [];
+}
+
+/**
+ * A movement the listing found by a send's key: the send went through, so what it changed is
+ * stale here, and the tags are the ones the send's success invalidates. A move names both of its
+ * accounts, whichever of the two it was found on.
+ */
+function foundTags(arg: MovementLookupArg) {
+  return [
+    { type: 'Account' as const, id: arg.accountId },
+    ...(arg.otherAccountId ? [{ type: 'Account' as const, id: arg.otherAccountId }] : []),
+    { type: 'Transaction' as const, id: 'LIST' as const },
+  ];
 }
 
 export type LoginRequest = Schemas['LoginRequest'];
@@ -192,6 +210,7 @@ export const HISTORY_PAGE_SIZE = 20;
  * the LIST (`closedAccountTags`), in the mutation itself: on rename, setPrimary, delete, the
  * reveal of the full number, deposit, withdraw, transfer, internal and the four mints of an
  * authorisation. The account is already gone; the LIST is stale.
+ * `findMovementByKey` invalidates the send's success tags when it finds the movement.
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -373,6 +392,31 @@ export const apiSlice = createApi({
       transformResponse: (response: PaginatedTransactions) =>
         devOnly(paginatedTransactionsSchema)?.parse(response) ?? response,
       providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
+    }),
+
+    /*
+      The listing by key, asked for a money send whose answer was lost (ADR-0022): did the send
+      write a row, and which. A GET sent as a MUTATION, as the reveal of the full number is, and
+      for two reasons of its own. A query keeps its arguments in the store, and the argument is
+      the idempotency key, which never sits in the store (ADR-0022, decision 1); a mutation keeps
+      only its result, and `readMovement` leaves the key out of that. And a mutation is never
+      retried by the request layer (`problemBaseQuery`): the visitor's "Check again" is the
+      retry, and the check view asks once more by itself at the bound (`useMovementCheck`). No
+      paging is sent: the server's first page of 20. `no-store`, because the listing's 200 says
+      nothing about caching and a cached empty page would be read as evidence.
+
+      Not a filter of `getTransactions` either: `TransactionsQuery` has no key, so the history's
+      own queries cannot pick one up.
+    */
+    findMovementByKey: builder.mutation<MovementReading, MovementLookupArg>({
+      query: ({ idempotencyKey, accountId }) => ({
+        url: '/api/transactions',
+        method: 'GET',
+        params: { AccountId: accountId, IdempotencyKey: idempotencyKey },
+        cache: 'no-store',
+      }),
+      transformResponse: (raw: unknown, _meta, arg) => readMovement(raw, arg),
+      invalidatesTags: (result, _error, arg) => (result?.kind === 'found' ? foundTags(arg) : []),
     }),
 
     getTransaction: builder.query<TransactionResponse, string>({
@@ -757,6 +801,7 @@ export const {
   useGetTransactionHistoryInfiniteQuery,
   useGetTransactionQuery,
   useGetTransactionSummaryQuery,
+  useFindMovementByKeyMutation,
   useDepositMutation,
   useAuthoriseWithdrawalMutation,
   useWithdrawMutation,

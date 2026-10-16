@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SESSION_CHECK_SLOW_AFTER_MS } from '../hooks/useWaitPhase';
+import { LIVE_BOUND_MS, PROCESSING_STALE_AFTER_MS } from './movementByKey';
 import { READ_BUDGET_MS, REQUEST_TIMEOUT_MS } from './problemBaseQuery';
 
 /**
@@ -78,5 +79,45 @@ describe("the session check's first word against the BFF's read-through ceiling"
 
   it('comes at least a second after the ceiling', () => {
     expect(SESSION_CHECK_SLOW_AFTER_MS).toBeGreaterThanOrEqual(Number(readThroughMs) + 1_000);
+  });
+});
+
+/*
+  The bound from which an empty listing by key is evidence (ADR-0022): every send under the key is
+  hung up on by REQUEST_TIMEOUT_MS, and a claim made by then is stale PROCESSING_STALE_AFTER_MS
+  later. The stale age is the API's, read here from the settings file that sets it and from the
+  code default behind it. The settings file has `//` comments, so it is read with a pattern, not
+  parsed. An environment variable that set it otherwise would escape this test; none does today.
+*/
+const API_SETTINGS = '../backend/src/AzureBank.Api/appsettings.json';
+const IDEMPOTENCY_OPTIONS = '../backend/src/AzureBank.Shared/Options/IdempotencyOptions.cs';
+
+function timeSpanMs(value: string | undefined): number | undefined {
+  const parts = value ? /^(\d{2}):(\d{2}):(\d{2})$/.exec(value) : null;
+  if (!parts) return undefined;
+  return ((Number(parts[1]) * 60 + Number(parts[2])) * 60 + Number(parts[3])) * 1000;
+}
+
+const staleInSettings = timeSpanMs(
+  /"ProcessingStaleAfter"\s*:\s*"([^"]+)"/.exec(readFileSync(API_SETTINGS, 'utf8'))?.[1],
+);
+const staleDefault = /ProcessingStaleAfter\s*\{[^}]*\}\s*=\s*TimeSpan\.FromMinutes\((\d+)\)/.exec(
+  readFileSync(IDEMPOTENCY_OPTIONS, 'utf8'),
+);
+const staleDefaultMs = staleDefault ? Number(staleDefault[1]) * 60_000 : undefined;
+
+describe("the listing by key's bound against the API's stale age", () => {
+  it('reads the stale age from the settings and from the code default', () => {
+    expect(staleInSettings).toBeGreaterThan(0);
+    expect(staleDefaultMs).toBeGreaterThan(0);
+  });
+
+  it("holds the API's stale age, as it is set and as it defaults", () => {
+    expect(PROCESSING_STALE_AFTER_MS).toBe(staleInSettings);
+    expect(PROCESSING_STALE_AFTER_MS).toBe(staleDefaultMs);
+  });
+
+  it('counts the abort and then the stale age', () => {
+    expect(LIVE_BOUND_MS).toBe(REQUEST_TIMEOUT_MS + PROCESSING_STALE_AFTER_MS);
   });
 });

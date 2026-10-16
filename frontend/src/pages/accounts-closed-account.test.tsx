@@ -7,7 +7,9 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { settle } from '../test/settle';
 import { enterPin } from '../test/pinFlow';
+import { COPY } from '../test/outage';
 import { AppToaster } from '../components/feedback';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
 import { AccountsPage } from './AccountsPage';
@@ -266,6 +268,8 @@ describe('an account closed elsewhere, met from its card', () => {
     expect(screen.queryByText(ACCOUNT_CLOSED)).not.toBeInTheDocument();
     // The key is let go behind the view: the X, barred while it was held, works again.
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeEnabled();
+    // The listing is refused on the closed account. Its "try again" only closes the dialog.
+    expect(await within(dialog).findByText(COPY.movementUnchecked)).toBeInTheDocument();
   }
 
   it.each(["It didn't go through — try again", 'Close'])(
@@ -287,6 +291,8 @@ describe('an account closed elsewhere, met from its card', () => {
       expect(seen.mints).toBe(2);
       expect(seen.withdrawals).toBe(1);
 
+      // The view's own button waits until the view has settled; the shell's X does not.
+      if (wayOut !== 'Close') await settle();
       await userEvent.click(within(dialog).getByRole('button', { name: wayOut }));
       await expectWithdrawClosed();
       await expectToldAndRefreshed(seen, listsBefore);
@@ -303,6 +309,7 @@ describe('an account closed elsewhere, met from its card', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Withdraw €100.00' }));
     await expectTheCheckView(dialog);
 
+    await settle();
     await userEvent.click(
       within(dialog).getByRole('button', { name: 'Check recent transactions' }),
     );
@@ -325,9 +332,52 @@ describe('an account closed elsewhere, met from its card', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
 
     await expectTheCheckView(dialog);
+    await settle();
     await userEvent.click(
       within(dialog).getByRole('button', { name: "It didn't go through — try again" }),
     );
+    await expectWithdrawClosed();
+    await expectToldAndRefreshed(seen, listsBefore);
+    expect(seen.mints).toBe(1);
+    expect(seen.withdrawals).toBe(1);
+  });
+
+  it('withdrawal, closed under a key held after no answer: while it may still land, the way out is "Close"', async () => {
+    /*
+      No authorisation was refused, so the withdrawal sent may still go through until the bound,
+      and the view says so. Its last button only closes the dialog: named "It didn't go through"
+      it would say the opposite of the words above it.
+    */
+    const seen = watchRequests();
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        seen.withdrawals += 1;
+        return HttpResponse.error();
+      }),
+    );
+    const dialog = await openWithdrawAt100();
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
+    await screen.findByText('Verify Withdrawal');
+    await enterPin();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Withdraw €100.00' }));
+    await within(dialog).findByText(/Couldn't reach the server/);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+
+    closeElsewhere();
+    const listsBefore = seen.lists;
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
+
+    expect(await within(dialog).findByText(COPY.movementUncheckedNotYet)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/didn't go through/)).not.toBeInTheDocument();
+    // The shell's X, then the view's two, "Check recent transactions" first.
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label') ?? button.textContent),
+    ).toEqual(['Close', 'Check recent transactions', 'Close']);
+
+    await settle();
+    await userEvent.click(within(dialog).getAllByRole('button', { name: 'Close' })[1]);
     await expectWithdrawClosed();
     await expectToldAndRefreshed(seen, listsBefore);
     expect(seen.mints).toBe(1);

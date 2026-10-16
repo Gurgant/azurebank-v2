@@ -97,9 +97,10 @@ stop rather than guess. When the server read the key's record as committed it sa
 `applied: true`, and the client says the payment went through and offers nothing that could send it
 again. When it did not, the client involves the user, because inventing a guess would be worse than
 asking. For a commit the server can prove, the 409 itself answers. The ledger can be asked too,
-though the client does not ask it: each row a money request writes on the caller's own accounts
-carries the request's key, and `GET /api/transactions?IdempotencyKey=` lists them, each with its
-key (ADR-0009).
+and the client asks it after a lost answer: each row a money request writes on the caller's own
+accounts carries the request's key, and `GET /api/transactions?IdempotencyKey=` lists them, each
+with its key (ADR-0009). A row found says the payment went through; an empty page says it did not
+only once nothing sent under the key can still commit (ADR-0022).
 
 There are **no optimistic updates on money**. Balances come from a refetch after invalidation. In
 a bank a briefly-wrong balance is a correctness failure, not a UX blemish.

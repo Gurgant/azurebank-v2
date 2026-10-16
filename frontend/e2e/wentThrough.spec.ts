@@ -1,6 +1,8 @@
 import { mkdir } from 'node:fs/promises';
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { WAIT_SLOW } from '../src/api/problemMessages';
+import { SETTLE_MS } from '../src/hooks/useSettledPress';
 import { USER } from './fixtures';
 
 /**
@@ -112,6 +114,112 @@ async function enterPin(scope: Page | Locator) {
   await scope.getByRole('textbox', { name: 'Digit 1 of 6' }).pressSequentially(USER.pin);
 }
 
+/**
+ * Where a click landed, as the page received it: the target's class, the control it is in, when it
+ * came on the page's `performance.now()`, and whether it came back up to the document, which it
+ * does only when nothing in the page stopped it on its way to that control. With the element that
+ * holds a view's actions given, also whether the press went down inside it, and whether anything
+ * in the page refused the default of its `mousedown`, which is what gives focus.
+ */
+type Landing = {
+  className: string;
+  control: string | null;
+  at: number;
+  delivered: boolean;
+  inActions: boolean | null;
+  refused: boolean | null;
+};
+
+/**
+ * Presses the point and returns where the press landed: the class of the element the click went
+ * to, and the name of the control around it (a button, a link, a field), or null when it is in
+ * none. Recorded as the page receives the click, so what a test says after it is said after a
+ * press that did arrive, and on that element.
+ */
+async function pressAt(
+  page: Page,
+  point: { x: number; y: number },
+  actions?: Locator,
+): Promise<Landing | undefined> {
+  const actionsElement = actions ? await actions.elementHandle() : null;
+  await page.evaluate((holder) => {
+    const record = window as unknown as {
+      landing?: Landing;
+      wentDown?: Event;
+      stopRecording?: () => void;
+    };
+    record.landing = undefined;
+    record.wentDown = undefined;
+    let pressed: Event | null = null;
+    const onGoingDown = (event: Event) => {
+      record.wentDown = event;
+    };
+    const onTheWayDown = (event: Event) => {
+      pressed = event;
+      const target = event.target as Element;
+      const control = target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="link"]',
+      );
+      const downOn = record.wentDown?.target;
+      record.landing = {
+        className: String(target.className),
+        control: control
+          ? (control.getAttribute('aria-label') ?? control.textContent ?? '').trim()
+          : null,
+        at: performance.now(),
+        delivered: false,
+        inActions: holder && downOn instanceof Node ? holder.contains(downOn) : null,
+        refused: null,
+      };
+    };
+    const onTheWayUp = (event: Event) => {
+      if (event === pressed && record.landing) record.landing.delivered = true;
+    };
+    document.addEventListener('mousedown', onGoingDown, { capture: true, once: true });
+    document.addEventListener('click', onTheWayDown, { capture: true, once: true });
+    document.addEventListener('click', onTheWayUp);
+    record.stopRecording = () => document.removeEventListener('click', onTheWayUp);
+  }, actionsElement);
+  await page.mouse.click(point.x, point.y);
+  return page.evaluate(() => {
+    const record = window as unknown as {
+      landing?: Landing;
+      wentDown?: Event;
+      stopRecording?: () => void;
+    };
+    record.stopRecording?.();
+    // Read once the `mousedown` has been through every handler in the page.
+    if (record.landing && record.wentDown) {
+      record.landing.refused = record.wentDown.defaultPrevented;
+    }
+    return record.landing;
+  });
+}
+
+/** Resolves once every animation on the page that ends has ended. */
+function animationsFinished(page: Page) {
+  return page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
+}
+
+/**
+ * The centre of `button` where a visitor presses it: once the dialog has finished opening, which
+ * it does with a 250 ms animation. Read while that runs, the box is smaller and its centre higher:
+ * at 1280×900, Deposit's centre at 716.84 px, against 719.5 px at rest.
+ */
+async function centreAtRest(page: Page, button: Locator) {
+  await animationsFinished(page);
+  const box = await button.boundingBox();
+  if (!box) throw new Error('the button has no box to press');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
 /** What each button is called: its label when it has no text of its own (a dialog's X). */
 function buttonNames(scope: Page | Locator) {
   return scope
@@ -155,11 +263,27 @@ function ringOverflow(element: Element) {
  * button stays disabled whatever is typed. Measured with the accounts read held back 1.5 s: no
  * account selected, "Deposit €1.00" disabled. The balance, the page's level-1 heading, is drawn
  * only once the accounts have arrived.
+ *
+ * The opener is pressed inside the dashboard's actions zone: the `section` that holds the Transfer
+ * card, with the two tiles. The card's name is its title and then the line under it, whose words
+ * change with the recipients and are not matched here. Recent activity and Needs attention draw
+ * each row as a button, and a deposit's is named after its description, or its type when it has
+ * none (`transactionLabel`): an undescribed deposit is a button named "Deposit", the tile's exact
+ * name, drawn before or after this press as the listing arrives. Inside the zone the exact name
+ * can only be the tile.
  */
 async function openMoneyDialog(page: Page, opener: 'Deposit' | 'Withdraw', name: RegExp) {
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
-  await page.getByRole('button', { name: opener, exact: true }).click();
+  const actions = page.locator('section').filter({
+    has: page.getByRole('button', { name: /^Transfer ./ }),
+  });
+  await expect(
+    actions,
+    'no single section on the dashboard holds a button named "Transfer" and a line after it: ' +
+      'the actions zone, with the Deposit and Withdraw tiles, was not found',
+  ).toHaveCount(1);
+  await actions.getByRole('button', { name: opener, exact: true }).click();
   const form = page.getByRole('dialog', { name });
   await expect(form.locator('[aria-pressed="true"]'), 'no account is selected').toHaveCount(1);
   return form;
@@ -254,6 +378,8 @@ async function expectReadThenLed(page: Page, sentence: Locator, viewHistory: Loc
   await page.keyboard.press('Tab');
   await expect(viewHistory).toBeFocused();
 
+  // A press on the view's actions acts once the view has settled; a sooner one is dropped.
+  await page.waitForTimeout(SETTLE_MS);
   await viewHistory.click();
   await expect(page).toHaveURL(/\/history(?:[?#]|$)/);
 }
@@ -347,9 +473,7 @@ test.describe('a payment the server says went through', () => {
     await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
     const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
     await expect(deposit).toBeEnabled();
-    const box = await deposit.boundingBox();
-    if (!box) throw new Error('the Deposit button has no box to press');
-    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const where = await centreAtRest(page, deposit);
 
     await page.mouse.click(where.x, where.y);
     await expect.poll(() => keys.length).toBe(1);
@@ -359,24 +483,8 @@ test.describe('a payment the server says went through', () => {
     await expect(sentence).toBeFocused();
 
     // What this test stages: the second press is on the backdrop, not on anything in the dialog.
-    // The press is recorded as the page receives it, so "the dialog is still there" below is said
-    // after a press that did arrive, and on that element.
-    await page.evaluate(() => {
-      const record = window as unknown as { pressedOn?: string };
-      record.pressedOn = undefined;
-      document.addEventListener(
-        'click',
-        (event) => {
-          record.pressedOn = (event.target as Element).className;
-        },
-        { capture: true, once: true },
-      );
-    });
-    await page.mouse.click(where.x, where.y);
-    const pressedOn = await page.evaluate(
-      () => (window as unknown as { pressedOn?: string }).pressedOn,
-    );
-    expect(pressedOn, 'the second press did not land on the backdrop').toContain(
+    const pressedOn = await pressAt(page, where);
+    expect(pressedOn?.className, 'the second press did not land on the backdrop').toContain(
       'fui-DialogSurface__backdrop',
     );
 
@@ -395,15 +503,299 @@ test.describe('a payment the server says went through', () => {
     expect(keys).toHaveLength(1);
   });
 
-  test('a second press where Deposit was leaves the check view on screen too', async ({ page }) => {
+  /*
+    The same double click when the answer proves nothing: a 409 with no `applied`, for which the
+    dialog draws the check view. Measured on the running stack at 1280×900 with the code as it
+    was before this branch, when the view did not ask the listing by key: the second press landed
+    on the backdrop and the dialog was gone; recorded after it, no dialog, the dashboard's
+    address, focus on `body`, no alert. So "We couldn't confirm your deposit" went unread, on the
+    page whose Deposit tile opens the dialog again (the tile is read in the page's code, and
+    pressed by this file's helper). The press outside must leave this view where it is too.
+
+    The view now grows when the listing answers and it says "not yet" in a status region, and
+    where a press at Deposit's place lands depends on the size and on that phase. Measured on
+    2026-10-17 from the first press at Deposit's centre at rest, sampled at each animation frame
+    and at each change to the page that added or removed nodes or changed text (attributes were
+    not watched), with the form 637 px tall at the first three sizes:
+      - 1280×900: Deposit's centre at 719.5 px. From 36.5 ms, before the listing answers, the view
+        is 491.5 px tall, its bottom edge at 695.75 px, and the point on the backdrop. From
+        70.6 ms, with "not yet" said, it is 552.5 px tall, its edge at 726.25 px, and the point in
+        its footer's padding, 18.25 px under "Check recent transactions".
+      - 375×812: Deposit's centre at 675.5 px. From 39 ms, before the listing answers, the view is
+        491.5 px tall, its edge at 651.75 px, and the point on the backdrop. From 109.8 ms, with
+        "not yet" said, it is 552.5 px tall, its edge at 682.25 px, and the point in its footer's
+        padding, 18.25 px under "Check recent transactions".
+      - 360×800: Deposit's centre at 669.5 px. From 36.7 ms, before the listing answers, the view
+        is 514 px tall, its edge at 657 px, and the point on the backdrop. From 70.5 ms, with
+        "not yet" said, it is 597.5 px tall, and the point is on "Check recent transactions"
+        (625.75 to 673.75 px).
+      - 375×640: Deposit's centre at 559 px. The second press of a double click, once "not yet"
+        was said, landed on "Check recent transactions".
+      - 320×568: the form and the view are both 511.19 px tall, cut to the surface's `maxHeight`,
+        and Deposit's centre is at 490.59 px. With "not yet" said, the view keeps its 389.5 px of
+        words, from 106.41 to 495.91 px, and the surface scrolls as a whole: "Check again" is at
+        512.91 to 560.91 px and "Check recent transactions" at 572.91 to 620.91 px, below the
+        surface's edge at 539.59 px until it is scrolled. The second press of a double click
+        landed in the view, on no control.
+    That button leaves for the history and takes the view away unread: without a guard, a double
+    click made of two clicks with a 130 ms wait between them, its second press 166 ms after the
+    first at 360×800 and 162 ms at 375×640, went to `/history` at both, and the dialog was gone.
+    So the view's actions drop a press for 500 ms after the view appears and after each change of
+    what it draws (`useSettledPress`), and what is under the point no longer decides. With that,
+    at 360×800, 375×640 and 320×568, the dialog stayed, the address did not change and one
+    deposit was sent; focus stayed on `body`, where the send had left it, at 360×800 and
+    375×640, and went to the dialog itself at 320×568.
+
+    Each test below waits for "not yet" and presses four times. First where Deposit was, as
+    soon as "not yet" is said, as the second press of a double click comes: that press must
+    reach no control, and give focus to nothing in the dialog, whatever is drawn under it. Then
+    outside the view, halfway between its bottom edge and the viewport's, in Deposit's column,
+    which is the backdrop. axe then finds nothing serious or critical on the view. Then it
+    scrolls the dialog with the wheel until "Check recent transactions" is inside it, and presses
+    "Check again" once the wait has passed: a deliberate press acts, and the listing is asked
+    once more. Then back up until the X is, and presses the X: the view closes and the dashboard
+    is left. That a press on "Check recent transactions" after the wheel acts is held by the test
+    of a dialog cut to its height, below.
+  */
+  for (const { name, width, height } of [
+    { name: '1280×900', width: 1280, height: 900 },
+    { name: '375×812', width: 375, height: 812 },
+    { name: '360×800', width: 360, height: 800 },
+    { name: '375×640', width: 375, height: 640 },
+    { name: '320×568', width: 320, height: 568 },
+  ]) {
+    test(`a second press where Deposit was, or outside the check view, leaves it on screen too (${name})`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height });
+      const keys = await answerEverySend(
+        page,
+        '/api/transactions/deposit',
+        notKnownBody('/api/transactions/deposit'),
+      );
+      // Every ask of the listing by key, so that "Check again" below can be seen to ask.
+      const asks: string[] = [];
+      page.on('request', (request) => {
+        if (/\/api\/transactions\?(?:[^#]*&)?IdempotencyKey=/i.test(request.url())) {
+          asks.push(request.url());
+        }
+      });
+      const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+      await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+      const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
+      await expect(deposit).toBeEnabled();
+      const where = await centreAtRest(page, deposit);
+      // When "not yet" is first said, on the page's clock: the change the press below follows.
+      await page.evaluate((notYet) => {
+        const record = window as unknown as { notYetAt?: number };
+        const observer = new MutationObserver(() => {
+          const said = Array.from(
+            document.querySelectorAll('[role="dialog"] [role="status"]'),
+          ).some((region) => region.textContent === notYet);
+          if (!said) return;
+          record.notYetAt = performance.now();
+          observer.disconnect();
+        });
+        observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+      }, NOT_YET);
+
+      await page.mouse.click(where.x, where.y);
+      await expect.poll(() => keys.length).toBe(1);
+      const dialog = page.getByRole('dialog');
+      const words = dialog.getByText("We couldn't confirm your deposit");
+      // Resolves once the observer above has written the time; `Number` only tells the compiler.
+      const notYetAt = Number(
+        await (
+          await page.waitForFunction(
+            () => (window as unknown as { notYetAt?: number }).notYetAt,
+            undefined,
+            { polling: 'raf' },
+          )
+        ).jsonValue(),
+      );
+
+      // The press where Deposit was, as the second press of a double click comes.
+      const checkTransactions = dialog.getByRole('button', { name: 'Check recent transactions' });
+      const actions = checkTransactions.locator('..');
+      const focusBefore = await page.evaluateHandle(() => document.activeElement);
+      const whereDepositWas = await pressAt(page, where, actions);
+      if (!whereDepositWas) throw new Error('the press where Deposit was did not arrive');
+      // What this test stages: that press came after "not yet" was said, and inside the time the
+      // view's actions wait after that change.
+      expect(
+        whereDepositWas.at - notYetAt,
+        'the press where Deposit was came too long after "not yet" to stand for a double click',
+      ).toBeLessThan(SETTLE_MS);
+      expect(
+        whereDepositWas.delivered ? whereDepositWas.control : null,
+        'the press where Deposit was reached a control',
+      ).toBeNull();
+      // A press inside the actions, which they drop, takes no focus. One outside them on no
+      // control, on the view's words, which nothing drops, gives focus to the dialog itself, as
+      // a press on any text in it does, and to nothing in it: measured at 320×568, where the view
+      // keeps its height and the point is in its words.
+      const focusAfter = await page.evaluate(
+        (before) =>
+          document.activeElement === before
+            ? 'where it was'
+            : document.activeElement?.getAttribute('role') === 'dialog'
+              ? 'on the dialog'
+              : `on ${document.activeElement?.outerHTML.slice(0, 80)}`,
+        focusBefore,
+      );
+      expect(
+        whereDepositWas.inActions === false && whereDepositWas.control === null
+          ? ['where it was', 'on the dialog']
+          : ['where it was'],
+        `the press where Deposit was moved focus: it is ${focusAfter}; the press went down ` +
+          `${whereDepositWas.inActions ? 'inside' : 'outside'} the actions, and its mousedown ` +
+          `was ${whereDepositWas.refused ? '' : 'not '}refused`,
+      ).toContain(focusAfter);
+      await expect(dialog, 'the press where Deposit was closed the check view').toBeVisible();
+      await expect(dialog).toHaveAccessibleName('Deposit Money');
+      await expect(words).toBeVisible();
+      await expect(dialog.getByRole('status').filter({ hasText: NOT_YET })).toHaveText(NOT_YET);
+      expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+      expect(keys).toHaveLength(1);
+      // The view keeps the height of its words: it is no scroll box, the surface scrolls instead.
+      const viewHeights = await words.locator('..').evaluate((view) => ({
+        scrolled: view.scrollHeight,
+        shown: view.clientHeight,
+      }));
+      expect(viewHeights.scrolled, 'the check view is cut to less than its words').toBe(
+        viewHeights.shown,
+      );
+
+      const view = await dialog.boundingBox();
+      const viewport = page.viewportSize();
+      if (!view || !viewport) throw new Error('the check view has no box to press outside');
+      const outside = { x: where.x, y: (view.y + view.height + viewport.height) / 2 };
+
+      // What this test stages, as in the test above: the press outside is on the backdrop.
+      const onBackdrop = await pressAt(page, outside);
+      expect(onBackdrop?.className, 'the press outside did not land on the backdrop').toContain(
+        'fui-DialogSurface__backdrop',
+      );
+      await expect(dialog, 'the press outside closed the check view').toBeVisible();
+      await expect(dialog).toHaveAccessibleName('Deposit Money');
+      await expect(words).toBeVisible();
+      await expect(dialog.getByText(/retrying blindly could deposit twice/)).toBeVisible();
+      expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+      expect(keys).toHaveLength(1);
+
+      /*
+        axe over the view as the visitor meets it, with the sweep's four tags, scoped to the
+        dialog: nothing serious or critical. Measured with the view made a scroll box again: at
+        320×568, where it is then cut, axe reported `scrollable-region-focusable` (serious) on it,
+        a region that scrolls with no control in it.
+      */
+      const scan = await new AxeBuilder({ page })
+        .withTags(TAGS)
+        .include('[role="dialog"]')
+        .exclude(TABSTER_SENTINEL)
+        .analyze();
+      console.log(
+        `axe check view ${name}: ${scan.passes.length} passed, ${scan.violations.length} violations — ${
+          scan.violations.map((v) => `${v.id} (${v.impact}, ${v.nodes.length})`).join(', ') ||
+          'none'
+        }`,
+      );
+      expect(scan.passes.length, 'axe inspected no element of the check view').toBeGreaterThan(0);
+      expect(
+        scan.violations
+          .filter(
+            (violation) => violation.impact == null || GATED_IMPACTS.includes(violation.impact),
+          )
+          .map((violation) => `${violation.id} (${violation.impact}, ${violation.nodes.length})`),
+        'a serious or critical finding on the check view',
+      ).toEqual([]);
+
+      /*
+        Every action is reached where it is drawn, and so is the way out. Where the view's words
+        and its footer are taller than the dialog, its surface scrolls as a whole: scrolled here
+        with the wheel, as a visitor scrolls it, until "Check recent transactions" is inside the
+        surface's box, where the point at its centre must be that button; then back up until the
+        X is inside it, where the point at its centre must be the X. Not `scrollIntoView`, which
+        scrolls a box whose overflow is hidden as well, where neither a wheel nor a finger can.
+      */
+      const insideTheSurface = (control: Locator) =>
+        control.evaluate((element) => {
+          const surface = (element.closest('[role="dialog"]') as Element).getBoundingClientRect();
+          const box = element.getBoundingClientRect();
+          return box.top >= surface.top && box.bottom <= surface.bottom;
+        });
+      const wheelUntilInside = async (control: Locator, deltaY: number, what: string) => {
+        await expect(async () => {
+          if (!(await insideTheSurface(control))) await page.mouse.wheel(0, deltaY);
+          expect(
+            await insideTheSurface(control),
+            `the wheel did not bring ${what} inside the dialog`,
+          ).toBe(true);
+        }).toPass({ timeout: 5_000 });
+        expect(
+          await control.evaluate((element) => {
+            const box = element.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+            return hit !== null && element.contains(hit);
+          }),
+          `the point at the centre of ${what} is not ${what}`,
+        ).toBe(true);
+      };
+      await page.mouse.move(view.x + view.width / 2, view.y + view.height / 2);
+      await wheelUntilInside(checkTransactions, 100, '"Check recent transactions"');
+
+      // A deliberate press, once the wait has passed, acts in the "not yet" layout: "Check
+      // again", pressed where it is drawn, asks the listing once more, and the view stays.
+      const checkAgain = dialog.getByRole('button', { name: 'Check again' });
+      await wheelUntilInside(checkAgain, 100, '"Check again"');
+      await page.waitForTimeout(SETTLE_MS);
+      const asksBefore = asks.length;
+      expect(asksBefore, 'the view never asked the listing by key').toBeGreaterThan(0);
+      const again = await checkAgain.boundingBox();
+      if (!again) throw new Error('"Check again" has no box to press');
+      const pressedAgain = await pressAt(page, {
+        x: again.x + again.width / 2,
+        y: again.y + again.height / 2,
+      });
+      expect(
+        pressedAgain?.delivered ? pressedAgain.control : null,
+        'the press on "Check again", after the wait, did not reach it',
+      ).toBe('Check again');
+      await expect
+        .poll(() => asks.length, { message: '"Check again" did not ask the listing again' })
+        .toBeGreaterThan(asksBefore);
+      await expect(dialog.getByRole('status').filter({ hasText: NOT_YET })).toHaveText(NOT_YET);
+      expect(keys).toHaveLength(1);
+
+      // Not a trap: back up to the X, as a visitor goes back to it, and pressed where it is drawn
+      // it closes the view, and what is left is the dashboard the dialog was opened on.
+      const close = dialog.getByRole('button', { name: 'Close' });
+      await wheelUntilInside(close, -100, 'the X');
+      const reached = await close.boundingBox();
+      if (!reached) throw new Error('the X has no box to press');
+      const closed = await pressAt(page, {
+        x: reached.x + reached.width / 2,
+        y: reached.y + reached.height / 2,
+      });
+      expect(closed?.delivered ? closed.control : null, 'the press on the X did not reach it').toBe(
+        'Close',
+      );
+      await expect(page.getByRole('dialog'), 'the X did not close the check view').toHaveCount(0);
+      expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+      await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+      expect(keys).toHaveLength(1);
+    });
+  }
+
+  test('a press as the check view’s hint gains its words is dropped, and one after the wait acts', async ({
+    page,
+  }) => {
     /*
-      The same double click when the answer proves nothing: a 409 with no `applied`, for which the
-      dialog draws the check view. That view is shorter than the form as well. Measured on the
-      running stack at this viewport: the second press landed on the backdrop and the dialog was
-      gone; recorded after it, no dialog, the dashboard's address, focus on `body`, no alert. So
-      "We couldn't confirm your deposit" went unread, on the page whose Deposit tile opens the
-      dialog again (the tile is read in the page's code, and pressed by this file's helper). The
-      press outside must leave this view where it is too.
+      The hint under the view's buttons gains its words 5 s into the listing's answer, and the
+      view grows around the dialog's centre, so the buttons move: nothing the dialog renders names
+      that change, and only the size of what holds the buttons says it. Here the listing is held
+      9 s, so the words come while it is still asked. A press right after the words appear lands
+      on the new layout, and must be dropped; one after the wait must act.
     */
     await page.setViewportSize({ width: 1280, height: 900 });
     const keys = await answerEverySend(
@@ -411,51 +803,155 @@ test.describe('a payment the server says went through', () => {
       '/api/transactions/deposit',
       notKnownBody('/api/transactions/deposit'),
     );
+    await page.route(
+      (url) => url.pathname === '/api/transactions' && url.searchParams.has('IdempotencyKey'),
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 9_000));
+        await route.continue().catch(() => undefined);
+      },
+    );
     const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
     await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
-    const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
-    await expect(deposit).toBeEnabled();
-    const box = await deposit.boundingBox();
-    if (!box) throw new Error('the Deposit button has no box to press');
-    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await form.getByRole('button', { name: 'Deposit €1.00' }).click();
+    await expect.poll(() => keys.length).toBe(1);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText("We couldn't confirm your deposit")).toBeVisible();
+    const checkTransactions = dialog.getByRole('button', { name: 'Check recent transactions' });
+    const before = await checkTransactions.boundingBox();
+    // When the words appear, on the page's clock.
+    await page.evaluate((words) => {
+      const record = window as unknown as { wordsAt?: number };
+      const observer = new MutationObserver(() => {
+        if (!document.querySelector('[role="dialog"]')?.textContent?.includes(words)) return;
+        record.wordsAt = performance.now();
+        observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+    }, WAIT_SLOW);
+    // Resolves once the observer above has written the time; `Number` only tells the compiler.
+    const wordsAt = Number(
+      await (
+        await page.waitForFunction(
+          () => (window as unknown as { wordsAt?: number }).wordsAt,
+          undefined,
+          { polling: 'raf', timeout: 8_000 },
+        )
+      ).jsonValue(),
+    );
+    const after = await checkTransactions.boundingBox();
+    if (!before || !after) throw new Error('"Check recent transactions" has no box to press');
+    // What this test stages: the words moved the button.
+    expect(after.y, 'the words did not move "Check recent transactions"').not.toBe(before.y);
+    const centre = { x: after.x + after.width / 2, y: after.y + after.height / 2 };
 
-    await page.mouse.click(where.x, where.y);
+    const soon = await pressAt(page, centre);
+    if (!soon) throw new Error('the press as the words appeared did not arrive');
+    console.log(
+      `the hint's words moved "Check recent transactions" from ${before.y} to ${after.y} px; ` +
+        `the press came ${(soon.at - wordsAt).toFixed(1)} ms after them`,
+    );
+    expect(soon.at - wordsAt, 'the press came too long after the words').toBeLessThan(SETTLE_MS);
+    expect(
+      soon.delivered ? soon.control : null,
+      'the press as the words appeared acted',
+    ).toBeNull();
+    await expect(dialog).toHaveAccessibleName('Deposit Money');
+    expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
+
+    await page.waitForTimeout(SETTLE_MS);
+    const later = await pressAt(page, centre);
+    expect(later?.delivered ? later.control : null).toBe('Check recent transactions');
+    await expect(page).toHaveURL(/\/history(?:[?#]|$)/);
+    expect(keys).toHaveLength(1);
+  });
+
+  test('in a dialog cut to its height, one press after the hint’s words and the wait acts', async ({
+    page,
+  }) => {
+    /*
+      At 320×568 the surface is at its `maxHeight` and scrolls while the listing is asked. The
+      hint's words then grow the view alone: the surface and the footer keep their sizes, and the
+      footer moves down inside the surface. Nothing is pressed before the one press here, so no
+      earlier press can have shown the hook where the buttons are: it must have seen the move as
+      it happened. Measured with the view's size unwatched: this press was dropped.
+    */
+    await page.setViewportSize({ width: 320, height: 568 });
+    const keys = await answerEverySend(
+      page,
+      '/api/transactions/deposit',
+      notKnownBody('/api/transactions/deposit'),
+    );
+    // Held past the words at 5 s, and short of the 20 s ones.
+    await page.route(
+      (url) => url.pathname === '/api/transactions' && url.searchParams.has('IdempotencyKey'),
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 12_000));
+        await route.continue().catch(() => undefined);
+      },
+    );
+    const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+    await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+    await form.getByRole('button', { name: 'Deposit €1.00' }).click();
     await expect.poll(() => keys.length).toBe(1);
     const dialog = page.getByRole('dialog');
     const words = dialog.getByText("We couldn't confirm your deposit");
     await expect(words).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'Close' })).toBeEnabled();
+    const checkTransactions = dialog.getByRole('button', { name: 'Check recent transactions' });
+    // The heights of the surface, the view and the footer, and where the footer is laid out in
+    // the surface, apart from its scroll.
+    const parts = () =>
+      checkTransactions.evaluate((button) => {
+        const surface = button.closest('[role="dialog"]') as HTMLElement;
+        const footer = button.parentElement as HTMLElement;
+        const view = footer.previousElementSibling as HTMLElement;
+        return {
+          surface: surface.getBoundingClientRect().height,
+          scrolls: surface.scrollHeight > surface.clientHeight,
+          view: view.getBoundingClientRect().height,
+          footer: footer.getBoundingClientRect().height,
+          footerAt: footer.getBoundingClientRect().top + surface.scrollTop,
+        };
+      });
+    await animationsFinished(page);
+    const before = await parts();
+    await expect(dialog.getByText(WAIT_SLOW)).toBeVisible({ timeout: 8_000 });
+    const after = await parts();
+    // What this test stages: the words grew the view and moved the footer, in a surface that
+    // already scrolled, and changed the size of neither the surface nor the footer.
+    console.log(`320×568, the hint's words: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+    expect(before.scrolls, 'the surface is not cut to its height').toBe(true);
+    expect(after.view, 'the words did not grow the view').toBeGreaterThan(before.view);
+    expect(after.footerAt, 'the words did not move the footer').toBeGreaterThan(before.footerAt);
+    expect(after.surface).toBe(before.surface);
+    expect(after.footer).toBe(before.footer);
 
-    // What this test stages, as in the test above: the second press is on the backdrop.
-    await page.evaluate(() => {
-      const record = window as unknown as { pressedOn?: string };
-      record.pressedOn = undefined;
-      document.addEventListener(
-        'click',
-        (event) => {
-          record.pressedOn = (event.target as Element).className;
-        },
-        { capture: true, once: true },
-      );
-    });
-    await page.mouse.click(where.x, where.y);
-    const pressedOn = await page.evaluate(
-      () => (window as unknown as { pressedOn?: string }).pressedOn,
-    );
-    expect(pressedOn, 'the second press did not land on the backdrop').toContain(
-      'fui-DialogSurface__backdrop',
-    );
+    // The wheel brings the button inside the surface, as a visitor's does; a scroll is no move.
+    const surface = await dialog.boundingBox();
+    if (!surface) throw new Error('the dialog has no box to scroll');
+    await page.mouse.move(surface.x + surface.width / 2, surface.y + surface.height / 2);
+    await expect(async () => {
+      const inside = () =>
+        checkTransactions.evaluate((button) => {
+          const box = button.getBoundingClientRect();
+          const around = (button.closest('[role="dialog"]') as Element).getBoundingClientRect();
+          return box.top >= around.top && box.bottom <= around.bottom;
+        });
+      if (!(await inside())) await page.mouse.wheel(0, 100);
+      expect(await inside(), 'the wheel did not bring the button inside the dialog').toBe(true);
+    }).toPass({ timeout: 5_000 });
+    await page.waitForTimeout(SETTLE_MS);
+    // Still the words of a read that has not answered: nothing else changed before the press.
+    await expect(dialog.getByText(WAIT_SLOW)).toBeVisible();
+    await expect(dialog.getByRole('status').filter({ hasText: NOT_YET })).toHaveCount(0);
 
-    await expect(dialog, 'the press outside closed the check view').toBeVisible();
-    await expect(dialog).toHaveAccessibleName('Deposit Money');
-    await expect(words).toBeVisible();
-    await expect(dialog.getByText(/retrying blindly could deposit twice/)).toBeVisible();
-    expect(page.url()).toMatch(/\/dashboard(?:[?#]|$)/);
-    expect(keys).toHaveLength(1);
-
-    // Not a trap: the X closes it.
-    await dialog.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    const box = await checkTransactions.boundingBox();
+    if (!box) throw new Error('"Check recent transactions" has no box to press');
+    const once = await pressAt(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(
+      once?.delivered ? once.control : null,
+      'the one press after the words and the wait did not act',
+    ).toBe('Check recent transactions');
+    await expect(page).toHaveURL(/\/history(?:[?#]|$)/);
     expect(keys).toHaveLength(1);
   });
 
@@ -481,9 +977,7 @@ test.describe('a payment the server says went through', () => {
     await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
     const deposit = form.getByRole('button', { name: 'Deposit €1.00' });
     await expect(deposit).toBeEnabled();
-    const box = await deposit.boundingBox();
-    if (!box) throw new Error('the Deposit button has no box to press');
-    const where = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const where = await centreAtRest(page, deposit);
 
     await page.mouse.click(where.x, where.y);
     await expect.poll(() => keys.length).toBe(1);
@@ -623,14 +1117,7 @@ async function measure(
   const viewHistory = page.locator(scope).getByRole('button', { name: 'View History' });
 
   // A settled view, not a fading one: axe reads computed colours (see `axeScan.ts`).
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
-        .map((a) => a.finished.catch(() => undefined)),
-    ),
-  );
+  await animationsFinished(page);
 
   // What is drawn around the sentence, checked before the picture is taken so that each picture
   // is known to show its case: the app's ring, whole on screen, or no ring at all. Focus first,
@@ -750,6 +1237,126 @@ test.describe('the went-through view, measured', () => {
       await prepare(page);
       await transferThatWentThrough(page);
       await measure(page, `transfer-page-${name}`, '#root', SENTENCE.transfer, phone, true);
+    });
+  }
+});
+
+/*
+  A DEPOSIT WHOSE ANSWER WAS LOST, ASKED ABOUT BY ITS KEY (ADR-0022). Here the money does move: the
+  deposit is sent to the stack with `route.fetch()`, and its real 201 is replaced in the browser by
+  the 409 whose body names no outcome. The page then asks the real listing by the key it sent, on
+  the account it sent it for, and must show the row the stack wrote: the reference read back here
+  from that same listing. €1 on the seeded account, as `deposit.spec.ts` moves.
+
+  The other half moves nothing: the send is answered in the browser without reaching the stack, so
+  the listing is empty, and the page's clock, installed before the page loads, is moved past the
+  3 min 5 s from which an empty listing says the deposit did not go through.
+*/
+const FOUND = { deposit: 'Your deposit went through.' } as const;
+const NOT_YET =
+  "It isn't in your transactions yet, and it may still go through. Keep this page open: we'll look again.";
+const NONE = "It isn't in your transactions, so it didn't go through.";
+
+/*
+  Every deposit below carries a description, as `deposit.spec.ts` gives its own. A row with none is
+  listed under its type, so the dashboard's Recent activity would hold a button named "Deposit"
+  beside the quick action. `openMoneyDialog` presses the tile inside its own zone, but
+  `deposit.spec.ts` and `accessibility.spec.ts` press it by that exact name on the whole page, and
+  a later test there could find two.
+*/
+const DESCRIPTION = 'e2e: deposit';
+
+/** A €1 deposit that reaches the stack, whose answer is lost on the way back. */
+async function depositWhoseAnswerIsLost(page: Page) {
+  const keys: string[] = [];
+  const path = '/api/transactions/deposit';
+  await page.route(`**${path}`, async (route) => {
+    keys.push(route.request().headers()['idempotency-key'] ?? '(missing)');
+    const real = await route.fetch();
+    expect(real.status(), 'the deposit itself was refused').toBe(201);
+    await route.fulfill({
+      status: 409,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache,no-store',
+      },
+      body: notKnownBody(path),
+    });
+  });
+  const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+  await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+  await form.getByRole('textbox', { name: 'Description' }).fill(DESCRIPTION);
+  await form.getByRole('button', { name: 'Deposit €1.00' }).click();
+  await expect.poll(() => keys.length).toBe(1);
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toHaveAccessibleName('Deposit Complete');
+  return { dialog, key: keys[0] };
+}
+
+test.describe('a deposit whose answer was lost, asked about by its key', () => {
+  test('is found, with the reference the listing gives for its key, and nothing that sends again', async ({
+    page,
+  }) => {
+    const { dialog, key } = await depositWhoseAnswerIsLost(page);
+
+    const listed = await page.request.get(`/api/transactions?IdempotencyKey=${key}`);
+    expect(listed.status()).toBe(200);
+    const rows = (await listed.json()) as {
+      data: { transactionNumber: string; type: string; idempotencyKey: string | null }[];
+    };
+    expect(rows.data.map((row) => [row.type, row.idempotencyKey])).toEqual([['Deposit', key]]);
+
+    const sentence = dialog.getByText(FOUND.deposit);
+    await expect(sentence).toBeFocused();
+    await expect(dialog.getByText('+€1.00')).toBeVisible();
+    await expect(dialog.getByText(rows.data[0].transactionNumber)).toBeVisible();
+    expect(await buttonNames(dialog)).toEqual(['Close', 'View History']);
+    await expect(page.getByText(/didn't go through/)).toHaveCount(0);
+  });
+
+  test('says "not yet" while it may still land, and "it didn\'t go through" once nothing can', async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const keys = await answerEverySend(
+      page,
+      '/api/transactions/deposit',
+      notKnownBody('/api/transactions/deposit'),
+    );
+    const form = await openMoneyDialog(page, 'Deposit', /deposit money/i);
+    await form.getByRole('textbox', { name: 'Deposit amount' }).fill('1');
+    await form.getByRole('textbox', { name: 'Description' }).fill(DESCRIPTION);
+    await form.getByRole('button', { name: 'Deposit €1.00' }).click();
+    await expect.poll(() => keys.length).toBe(1);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('status').filter({ hasText: NOT_YET })).toHaveText(NOT_YET);
+    await expect(dialog.getByRole('button', { name: /didn't go through/ })).toHaveCount(0);
+
+    await page.clock.fastForward('03:06');
+    await expect(dialog.getByRole('status').filter({ hasText: NONE })).toHaveText(NONE);
+    await expect(
+      dialog.getByRole('button', { name: "It didn't go through — try again" }),
+    ).toBeVisible();
+    expect(keys).toHaveLength(1);
+  });
+});
+
+test.describe('the view of a deposit found by its key, measured', () => {
+  for (const { name, phone, prepare } of VARIANTS) {
+    test(`the deposit dialog (${name}) is centred, in view, and has no serious or critical finding`, async ({
+      page,
+    }) => {
+      await prepare(page);
+      await depositWhoseAnswerIsLost(page);
+      await measure(
+        page,
+        `found-deposit-dialog-${name}`,
+        '[role="dialog"]',
+        FOUND.deposit,
+        phone,
+        false,
+      );
     });
   }
 });

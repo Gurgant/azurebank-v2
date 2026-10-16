@@ -7,7 +7,11 @@ import {
   type MessageScope,
   type MoneyPhase,
 } from '../api/moneyProblem';
-import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMutation';
+import {
+  useIdempotentMutation,
+  type IdempotentTrigger,
+  type SentRequest,
+} from './useIdempotentMutation';
 
 /**
  * The form → review → send machine that every money wizard runs, owned once.
@@ -95,6 +99,16 @@ export interface MoneyWizard<TBody, TResult> {
    */
   wentThrough: boolean;
   /**
+   * What the sends under a key the check view dropped carried, for the flow to ask the listing by
+   * key (`useMovementCheck`); null under no check view, and under a proven commit.
+   */
+  lastSent: SentRequest<TBody> | null;
+  /**
+   * The listing found the movement: `wentThrough` is set, and `startOver` re-arms nothing from
+   * then on, as after `applied: true`.
+   */
+  confirmWentThrough: () => void;
+  /**
    * `isSubmitting || keyRetained` — an idempotency key is alive. Every exit must consult this: a key
    * survives IN_FLIGHT, network and 5xx failures too, and abandoning one then starting again mints a
    * fresh key, which is a second intent against a request that may already have committed.
@@ -162,8 +176,16 @@ export function useMoneyWizard<TBody, TResult>(
   options: { messages: DomainMessages; fallback: string },
 ): MoneyWizard<TBody, TResult> {
   const navigate = useNavigate();
-  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
-    useIdempotentMutation(trigger);
+  const {
+    submit,
+    resetIntent,
+    verifyRequired,
+    wentThrough,
+    keyRetained,
+    requireVerify,
+    lastSent,
+    confirmWentThrough,
+  } = useIdempotentMutation(trigger);
 
   const [step, setStep] = useState<MoneyWizardStep>('form');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -272,6 +294,8 @@ export function useMoneyWizard<TBody, TResult>(
     lastProblem,
     verifyRequired,
     wentThrough,
+    lastSent,
+    confirmWentThrough,
     keyLive,
 
     async run(body, extras) {

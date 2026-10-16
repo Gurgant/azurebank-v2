@@ -1,7 +1,8 @@
 # ADR-0059: The SPA tells the visitor when the service is slow or down
 
 **Status:** Accepted · **Date:** 2026-10-01 · **Amended:** 2026-10-01 (decisions 3 and 9: ADR-0009,
-ADR-0022), 2026-10-16 (the consequences: ADR-0009) · **Decision Makers:** Vladislav Aleshaev · The
+ADR-0022), 2026-10-16 (the consequences: ADR-0009; decision 2 and the validation: ADR-0022) ·
+**Decision Makers:** Vladislav Aleshaev · The
 client half of ADR-0058. **Amends** ADR-0022 decision 6, ADR-0057 §8 and the Consequences of
 ADR-0058.
 
@@ -23,10 +24,13 @@ only in the page (ADR-0022), so a visitor told the wrong thing sends again with 
 2. **A read is retried once, after the wait the answer names, within 120 s of its first attempt**
    (`READ_BUDGET_MS`), because one retry that honours the API's 10 s brings back a database gone for
    about a minute with no error shown; **a write is never retried**, because sent again it can spend
-   twice (ADR-0022). Retried: a failed connection (not the SPA's own 65 s abort, which would only
-   double the wait), any 503, a 502 or 504 whose body is JSON or empty. The wait is the body's
-   `retryAfterSeconds`, else `Retry-After` (RFC 9110), else 5 s after a gateway's answer and 1 s
-   after a failed connection, plus up to a fifth at random, to spread one outage's readers.
+   twice (ADR-0022). The listing by key that the check view asks after a lost answer is not
+   retried by the request layer either: the visitor's "Check again" is its retry, and the view
+   asks once more by itself at the bound (ADR-0022). Retried: a failed connection (not the SPA's
+   own 65 s abort, which would only double the wait), any 503, a 502 or 504 whose body is JSON
+   or empty. The wait is the body's `retryAfterSeconds`, else `Retry-After` (RFC 9110), else
+   5 s after a gateway's answer and 1 s after a failed connection, plus up to a fifth at random, to
+   spread one outage's readers.
 3. **A 503 reads as the SPA's own sentence, whoever wrote it** (`toApiProblem`: `detail` becomes
    `SERVICE_UNAVAILABLE`, a 503 that is not JSON is `HTTP_503`, a failed fetch reads
    `CONNECTION_FAILED`), because the servers' sentences promise "shortly", a time nobody measured,
@@ -89,9 +93,11 @@ only in the page (ADR-0022), so a visitor told the wrong thing sends again with 
   same on every surface and is never a sign-out. No backend behaviour changes.
 - Not covered: the key dies with the page. A reload or a new tab during a stuck send sends a new key
   and can pay twice (the FCA's 2022 Final Notice to TSB, ¶4.24(e)); the browser only asks first.
-- Not covered: the SPA does not ask whether key X landed without sending it again, though
-  `GET /api/transactions?IdempotencyKey=` lists what a key wrote without sending anything
-  (ADR-0009); and a commit whose answer was lost answers `IDEMPOTENCY_IN_FLIGHT` for two minutes.
+- After a money send whose answer was lost, the check view asks
+  `GET /api/transactions?AccountId=&IdempotencyKey=`, which lists what a key wrote without sending
+  anything (ADR-0009, ADR-0022). Not covered: the states that keep the key do not ask, because their
+  control re-sends the same key; and a commit whose answer was lost answers
+  `IDEMPOTENCY_IN_FLIGHT` for two minutes.
 - Not covered: opening an account carries no key, so a second attempt can open a second account.
 - Not covered: nothing bounds retries across visitors (one read can reach the database ten times
   per operation, ADR-0058), and each page of an infinite query has its own 120 s.
@@ -114,8 +120,10 @@ only in the page (ADR-0022), so a visitor told the wrong thing sends again with 
   of the waits, the outage and the failed sign-out; on the went-through view the sentence once in
   each of the four flows, and the title only as a dialog's name, not as a transfer page's heading.
 - Not heard: the transfer pages' outage bars, `applied: false`, a failed PIN check, the start-up
-  page, the PIN dialog, sign-in, the check view (it lands no focus); JAWS, Narrator, VoiceOver,
-  TalkBack. Not measured: anything on Azure, any browser but Chromium, a reload during a send.
+  page, the PIN dialog, sign-in, the check view (it lands no focus) and what it says once it has
+  asked the listing by key, the view of a movement found by key; JAWS, Narrator, VoiceOver,
+  TalkBack. Not measured: anything on Azure, any browser but Chromium, a reload during a send, the
+  listing by key on a running stack.
 
 ## Related
 

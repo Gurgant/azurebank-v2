@@ -29,6 +29,8 @@ import {
 } from '../features/api/apiSlice';
 import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
+import { useMovementCheck } from '../hooks/useMovementCheck';
+import { useSettledPress } from '../hooks/useSettledPress';
 import { abortRunning, useWaitLanding, type StartedRead } from '../hooks/useWaitLanding';
 import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
@@ -47,9 +49,11 @@ import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
 import {
   ACCOUNT_CLOSED,
+  CHECK_AGAIN,
   CONNECTION_FAILED,
   NO_DOUBLE_CHARGE,
   SERVICE_UNAVAILABLE,
+  TRANSFER_FOUND,
   TRANSFER_WENT_THROUGH,
   TRY_AGAIN,
 } from '../api/problemMessages';
@@ -347,6 +351,35 @@ export function TransferPage() {
     instead of reviving an elapsed number.
   */
   const [pinLockDeadline, setPinLockDeadline] = useState<number | null>(null);
+
+  /*
+    Under the check view, the listing is asked by the key that was sent, on the account the
+    transfer was sent from: the payee's row carries no key, so a closed source leaves nothing
+    else to ask. A movement found there is the transfer going through, and the PIN and the
+    authorisation go with it, as on `applied: true` (`handleRefusal`).
+  */
+  const check = useMovementCheck(
+    wizard.lastSent,
+    (sent) => ({ first: { accountId: sent.fromAccountId, type: 'TransferOut' } }),
+    () => {
+      wizard.confirmWentThrough();
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+    },
+  );
+  /*
+    The check view's own actions wait until what it draws has settled (`ResultUnknownView`). Its
+    "start over" takes the view away and brings back the form with its values, and the second
+    press of a double click there lands on the form: a quick amount, "Use max" or the account
+    card under it would change the transfer the visitor goes on to review, with the form never
+    seen. So the form's content and its actions wait once more as the view goes. Measured on the
+    running stack at 360×800 and 320×568 without this wait, the second press 155 to 166 ms after
+    the first: it landed on the amount field, which took focus, and with a second account listed
+    on no control.
+  */
+  const settledPress = useSettledPress(verifyRequired, '', { afterLeaving: true });
 
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -930,6 +963,25 @@ export function TransferPage() {
   }
 
   /*
+    ===== The listing found the movement the send wrote, by its key =====
+
+    Before the went-through view, which `confirmWentThrough` sets with it: the same title and
+    ways on, with the movement's amount, reference and time under the sentence.
+  */
+  if (check.movement) {
+    return (
+      <WentThroughView
+        title="Transfer Complete"
+        sentence={TRANSFER_FOUND}
+        movement={check.movement}
+        sign="-"
+        onViewHistory={() => requestLeave('/history')}
+        onDone={() => requestLeave('/dashboard')}
+      />
+    );
+  }
+
+  /*
     ===== The server said it went through, and could not return the receipt =====
 
     Before the check view, and the order matters: `wentThrough` is set together with
@@ -956,6 +1008,7 @@ export function TransferPage() {
         repeatWarning="send twice"
         onCheckTransactions={() => requestLeave('/history')}
         onStartOver={wizard.startOver}
+        check={check}
       />
     );
   }
@@ -1066,7 +1119,7 @@ export function TransferPage() {
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
-                {!inFlight && nothingChanged ? TRY_AGAIN : 'Check again'}
+                {!inFlight && nothingChanged ? TRY_AGAIN : CHECK_AGAIN}
               </Button>
             </MessageBarActions>
           </MessageBar>
@@ -1087,7 +1140,7 @@ export function TransferPage() {
         {accountsHoldThePage ? null : step === 'form' ? (
           <>
             {/* From account */}
-            <div>
+            <div {...settledPress.content}>
               <Text className={styles.sectionLabel}>From</Text>
               <div
                 style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}
@@ -1129,7 +1182,7 @@ export function TransferPage() {
             </div>
 
             {/* Recipient */}
-            <div>
+            <div {...settledPress.content}>
               <Text className={styles.sectionLabel}>To (recipient&apos;s @handle)</Text>
               <div className={styles.recipientRow} style={{ marginTop: '8px' }}>
                 <Controller
@@ -1197,7 +1250,7 @@ export function TransferPage() {
             </div>
 
             {/* Amount */}
-            <div className={styles.amountSection}>
+            <div className={styles.amountSection} {...settledPress.content}>
               <Text className={styles.subtle}>Amount</Text>
               <AmountField
                 control={control}
@@ -1232,7 +1285,7 @@ export function TransferPage() {
                 }
               />
             </div>
-            <div className={styles.quickAmounts}>
+            <div className={styles.quickAmounts} {...settledPress.content}>
               {QUICK_AMOUNTS.map((quickAmount) => (
                 <button
                   key={quickAmount}
@@ -1247,7 +1300,7 @@ export function TransferPage() {
               ))}
             </div>
 
-            <div className={styles.actions}>
+            <div className={styles.actions} {...settledPress.actions}>
               <Button
                 appearance="primary"
                 size="large"

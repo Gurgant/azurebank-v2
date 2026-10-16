@@ -13,10 +13,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
 import {
+  CHECK_AGAIN,
   MOVE_ACCOUNT_CLOSED,
   MOVE_DESTINATION_CLOSED,
   MOVE_SOURCE_CLOSED,
   NO_DOUBLE_MOVE,
+  TRANSFER_FOUND,
   TRANSFER_WENT_THROUGH,
   TRY_AGAIN,
 } from '../api/problemMessages';
@@ -33,6 +35,8 @@ import {
 } from '../features/api/apiSlice';
 import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
+import { useMovementCheck } from '../hooks/useMovementCheck';
+import { useSettledPress } from '../hooks/useSettledPress';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
 import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
@@ -218,6 +222,44 @@ export function InternalTransferPage() {
     instead of reviving an elapsed number.
   */
   const [pinLockDeadline, setPinLockDeadline] = useState<number | null>(null);
+
+  /*
+    Under the check view, the listing is asked by the key that was sent, on the account the move
+    was sent from. Both rows carry the key and were written in one transaction, so when that
+    account is closed (403) the destination is asked for its own row. A movement found either way
+    is the move going through, as on TransferPage.
+  */
+  const check = useMovementCheck(
+    wizard.lastSent,
+    (sent) => ({
+      first: {
+        accountId: sent.fromAccountId,
+        type: 'TransferOut',
+        otherAccountId: sent.toAccountId,
+      },
+      fallback: {
+        accountId: sent.toAccountId,
+        type: 'TransferIn',
+        otherAccountId: sent.fromAccountId,
+      },
+    }),
+    () => {
+      wizard.confirmWentThrough();
+      setPin('');
+      enteredPin.current = '';
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
+    },
+  );
+  /*
+    As on TransferPage: "start over" takes the check view away and brings back the form with its
+    values, and the second press of a double click there lands on the form, where an account
+    card of either side, a quick amount or "Use max" would change the move the visitor goes on to
+    review. So the form's content and its actions wait once more as the view goes. Measured on
+    the running stack at 360×800 and 320×568 without this wait, with a second account to move
+    to, the second press 155 and 161 ms after the first: it landed on no control.
+  */
+  const settledPress = useSettledPress(verifyRequired, '', { afterLeaving: true });
 
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
@@ -646,6 +688,20 @@ export function InternalTransferPage() {
     );
   }
 
+  // The listing found the movement by the send's key: before the went-through view, which is set
+  // with it. Found through the destination, the number is the destination row's own.
+  if (check.movement) {
+    return (
+      <WentThroughView
+        title="Transfer Complete"
+        sentence={TRANSFER_FOUND}
+        movement={check.movement}
+        onViewHistory={() => requestLeave('/history')}
+        onDone={() => requestLeave('/dashboard')}
+      />
+    );
+  }
+
   // The server said it went through and could not return the receipt. Before the check view:
   // `wentThrough` is set together with `verifyRequired`, so tested second it would never be
   // reached. The receipt's title and its two ways on, as on TransferPage.
@@ -667,6 +723,7 @@ export function InternalTransferPage() {
         repeatWarning="move the money twice"
         onCheckTransactions={() => requestLeave('/history')}
         onStartOver={wizard.startOver}
+        check={check}
       />
     );
   }
@@ -769,7 +826,7 @@ export function InternalTransferPage() {
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
-                {!inFlight && nothingChanged ? TRY_AGAIN : 'Check again'}
+                {!inFlight && nothingChanged ? TRY_AGAIN : CHECK_AGAIN}
               </Button>
             </MessageBarActions>
           </MessageBar>
@@ -788,7 +845,7 @@ export function InternalTransferPage() {
             empty form under the accounts' wait would show an available balance of zero. */}
         {accountsHoldThePage ? null : step === 'form' ? (
           <>
-            <div>
+            <div {...settledPress.content}>
               <Text className={styles.sectionLabel}>From</Text>
               <div
                 style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}
@@ -813,7 +870,7 @@ export function InternalTransferPage() {
               </div>
             </div>
 
-            <div>
+            <div {...settledPress.content}>
               <Text className={styles.sectionLabel}>To</Text>
               {/* `isSuccess`, NOT `!isLoading`. On a FAILED fetch RTK Query sets isLoading back
                   to false and leaves data undefined, so `accounts` fell back to [] and this said
@@ -854,7 +911,7 @@ export function InternalTransferPage() {
               </div>
             </div>
 
-            <div className={styles.amountSection}>
+            <div className={styles.amountSection} {...settledPress.content}>
               <Text className={styles.subtle}>Amount</Text>
               <AmountField
                 control={control}
@@ -889,7 +946,7 @@ export function InternalTransferPage() {
                 }
               />
             </div>
-            <div className={styles.quickAmounts}>
+            <div className={styles.quickAmounts} {...settledPress.content}>
               {QUICK_AMOUNTS.map((quickAmount) => (
                 <button
                   key={quickAmount}
@@ -902,7 +959,7 @@ export function InternalTransferPage() {
               ))}
             </div>
 
-            <div className={styles.actions}>
+            <div className={styles.actions} {...settledPress.actions}>
               <Button
                 appearance="primary"
                 size="large"
