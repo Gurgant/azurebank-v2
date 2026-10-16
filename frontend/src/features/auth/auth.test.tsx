@@ -274,7 +274,13 @@ describe('login flow (returnTo + error branching)', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'Wrong-Pass-1!');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
-    await waitFor(() => expect(screen.getByText('Invalid email or password.')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+        ),
+      ).toBeInTheDocument(),
+    );
     expect(store.getState().auth.status).toBe('anonymous');
   });
 

@@ -94,8 +94,6 @@ interface DemoEntryProps {
    * of the page runs, this block's or not, and while the page has been told to wait.
    */
   disabled: boolean;
-  /** The kept copy's sign-in is locked: "Continue with my copy" waits, and nothing else does. */
-  continueLocked: boolean;
   /** "Forget this copy" was pressed on this page. It is said once the page offers no copy. */
   forgotten: boolean;
   /** "Try the demo" was pressed. */
@@ -148,7 +146,6 @@ export function DemoEntry({
   copy,
   pending,
   disabled,
-  continueLocked,
   forgotten,
   onTry,
   onContinue,
@@ -181,7 +178,7 @@ export function DemoEntry({
             appearance="primary"
             size="large"
             className={styles.button}
-            disabled={disabled || continueLocked}
+            disabled={disabled}
             icon={waiting ? <Spinner size="tiny" /> : undefined}
             onClick={onContinue}
           >

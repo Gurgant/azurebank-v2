@@ -7,7 +7,7 @@ import { PinInput } from '../components/PinInput';
 import { enableDemoMode } from '../test/demoMode';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
-import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
+import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../mocks/state';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import {
@@ -402,19 +402,16 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
   });
 
   it('says the account is locked after too many wrong passwords', async () => {
-    // A wrong password here counts toward the sign-in lockout, and the lock answers as it does
-    // on the sign-in route: the body measured there on 2026-08-06 and quoted in the mock
-    // (src/mocks/handlers.ts) is 429, ACCOUNT_LOCKED, retryAfterSeconds 900. It was not measured
-    // on this route for this change. The mock keeps no lockout, so the answer is given here.
-    const alert = await refusedWith(() =>
-      problem({
-        status: 429,
-        errorCode: 'ACCOUNT_LOCKED',
-        detail:
-          'Too many failed login attempts. Your account is temporarily locked; try again later.',
-        extensions: { retryAfterSeconds: 900 },
-      }),
-    );
+    // A wrong password here counts toward the sign-in's lock, and while it stands this route
+    // answers 429 ACCOUNT_LOCKED to every password, the right one included, without reading it.
+    // Measured on SQL Server on 2026-10-16 (`LoginGuessBoundSqlServerTests`): the right password
+    // after a burst of wrong ones was answered 429 and compared with nothing. The mock keeps the
+    // lock (src/mocks/handlers.ts), and the password typed here is the right one.
+    mockState.loginLockedUntil[MOCK_USER.email] = new Date(Date.now() + 15 * 60_000).toISOString();
+    await toTheConfirmation();
+    await typePassword();
+    await pasteDigits('123456');
+    const alert = await screen.findByRole('alert');
 
     expect(alert).toHaveTextContent(
       'Too many incorrect passwords. Your account is locked; try again later.',

@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { MOCK_PASSWORD, mockState, seedMockDemoCopy, seedMockSession } from '../../mocks/state';
+import {
+  MOCK_PASSWORD,
+  MOCK_USER,
+  mockState,
+  seedMockDemoCopy,
+  seedMockSession,
+} from '../../mocks/state';
 import { enableDemoMode, rememberDemoCopy } from '../../test/demoMode';
 import { emulateFocusFixup } from '../../test/outage';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
@@ -382,63 +388,26 @@ describe('SessionExpiryWarning', () => {
   /*
     Two refusals of the password that had no test, and the tab that comes back.
 
-    The lock's body is the one measured on the sign-in route on 2026-08-06 and quoted in the
-    mock (src/mocks/handlers.ts): 429, errorCode ACCOUNT_LOCKED, retryAfterSeconds 900, no
-    Retry-After header. The mock keeps no lockout of its own, so the answer is given here, with
-    300 seconds in place of the 900: the default the dialog falls back on is fifteen minutes,
-    and a body that said the same would not show which of the two was read.
+    A locked account is a 401 here, as wherever a sign-in is refused: re-authentication is the
+    API's sign-in, which answers a locked account as it answers a wrong password, whatever
+    password it is sent, and reads none (ADR-0012 decision 3). The mock keeps the lock
+    (src/mocks/handlers.ts).
   */
-  it('a locked account says for how long, from the body, and does not end the session', async () => {
+  it('a locked account, its right password typed, is told the rule, and the session goes on', async () => {
     const store = await bootAbsolute();
-    server.use(
-      http.post('*/bff/auth/reauthenticate', () =>
-        HttpResponse.json(
-          {
-            type: 'https://httpstatuses.com/429',
-            title: 'Too Many Requests',
-            status: 429,
-            detail:
-              'Too many failed login attempts. Your account is temporarily locked; try again later.',
-            instance: '/api/auth/login',
-            errorCode: 'ACCOUNT_LOCKED',
-            retryAfterSeconds: 300,
-          },
-          { status: 429, headers: { 'Content-Type': 'application/problem+json' } },
-        ),
-      ),
-    );
     await reachTheWarning(store);
+    // Locked from now for fifteen minutes, as five wrong passwords would lock it.
+    mockState.loginLockedUntil[MOCK_USER.email] = new Date(Date.now() + 15 * 60_000).toISOString();
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Too many failed attempts. Try again in about 5 minutes.',
+      "That password didn't match. After 5 failed attempts, sign-in is paused for 15 minutes.",
     );
     expect(dialog()).toBeInTheDocument();
     expect(store.getState().auth.status).toBe('authenticated');
-  });
-
-  it('a lock that names no time says fifteen minutes', async () => {
-    const store = await bootAbsolute();
-    server.use(
-      http.post('*/bff/auth/reauthenticate', () =>
-        HttpResponse.json(
-          { title: 'Too Many Requests', status: 429, errorCode: 'ACCOUNT_LOCKED' },
-          { status: 429, headers: { 'Content-Type': 'application/problem+json' } },
-        ),
-      ),
-    );
-    await reachTheWarning(store);
-
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
-    await user.click(screen.getByRole('button', { name: /sign in again/i }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Too many failed attempts. Try again in about 15 minutes.',
-    );
   });
 
   it('a failure it has no words for says it could not sign in, and blames nothing', async () => {
@@ -558,7 +527,10 @@ describe('SessionExpiryWarning', () => {
       signInAgain: 'Sign in again',
       signOut: 'Sign out now',
       ended: 'This demo copy has ended. Sign out to get a new one.',
-      wrongPassword: "That password didn't match. Please try again.",
+      paused:
+        'Your copy did not sign in. After 5 failed attempts, sign-in is paused for 15 minutes. Try again later, or sign out to get a new copy.',
+      wrongPassword:
+        "That password didn't match. After 5 failed attempts, sign-in is paused for 15 minutes.",
       tooManyAttempts: 'Too many attempts just now. Wait a moment and try again.',
     } as const;
     /** What the dialog is operated with, top to bottom, for the copy's owner and for anyone else. */
@@ -593,6 +565,9 @@ describe('SessionExpiryWarning', () => {
       await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
       return { store, claimed };
     }
+
+    /** A copy's end ten seconds from now, by this browser's clock: past by the warning. */
+    const tenSecondsFromNow = () => new Date(Date.now() + 10_000).toISOString();
 
     /** A control as one line: a field by its label, a button by its words. */
     const asLine = (control: Element | null) =>
@@ -764,7 +739,9 @@ describe('SessionExpiryWarning', () => {
     });
 
     it('a copy that has ended says so, and stays remembered', async () => {
-      const { store } = await bootOnACopy();
+      // Its end, by this browser's clock, passes before the button is pressed: reaching the
+      // warning takes 35 s.
+      const { store } = await bootOnACopy({ kept: { expiresAt: tenSecondsFromNow() } });
       const sent = reauthsSent();
       const kept = localStorage.getItem(KEY);
       expect(kept).toContain(FIRST_PASSWORD);
@@ -795,8 +772,37 @@ describe('SessionExpiryWarning', () => {
       });
     });
 
+    it('a locked copy, refused before its end, says that sign-in pauses, and stays remembered', async () => {
+      const { store, claimed } = await bootOnACopy();
+      const sent = reauthsSent();
+      const kept = localStorage.getItem(KEY);
+      await reachTheWarning(store);
+      expect(offered()).toStrictEqual(THE_OWNERS);
+      // Somebody typed its password wrong five times: the lock answers the kept, right password
+      // as a wrong one, unread, and the copy's end is a day away.
+      mockState.loginLockedUntil[claimed.copy.email] = new Date(
+        Date.now() + 15 * 60_000,
+      ).toISOString();
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(stayButtons()[0]);
+
+      await waitFor(() => expect(alerts()).toStrictEqual([WORDS.paused]));
+      expect({
+        sent,
+        offered: offered(),
+        kept: localStorage.getItem(KEY),
+        status: store.getState().auth.status,
+      }).toStrictEqual({
+        sent: [{ password: FIRST_PASSWORD }],
+        offered: THE_OWNERS,
+        kept,
+        status: 'authenticated',
+      });
+    });
+
     it('after a refused request focus is back on "Stay signed in"', async () => {
-      const { store } = await bootOnACopy();
+      const { store } = await bootOnACopy({ kept: { expiresAt: tenSecondsFromNow() } });
       // The copy has ended on the server, as in the test above, and the answer is held until the
       // wait has been drawn: an answer that came at once would never show the button waiting.
       mockState.demoCopies = [];

@@ -36,8 +36,9 @@ import { LoginPage } from './LoginPage';
 
   In a browser that keeps a copy the page offers that copy instead: "Continue with my copy" signs
   in with what the browser kept, "Get a new copy" asks before it claims another, and "Forget this
-  copy" leaves nothing behind. What each sends, what the page says when the copy is gone, locked
-  or past its end, and what the page does about a copy another tab forgot or replaced.
+  copy" leaves nothing behind. What each sends, what the page says when the copy is refused before
+  its end or after it, or is past its end, and what the page does about a copy another tab forgot
+  or replaced.
 
   The words are typed out here and not imported from the product, so a test fails the day the words
   on screen are no longer these. The apostrophes are ASCII; the dash in the connection's sentence is
@@ -62,7 +63,8 @@ const WORDS = {
   poolEmpty:
     'All demo copies are in use right now. New ones are added regularly. Please try again later.',
   dailyLimit: 'This network has used its demo copies for today. Please try again tomorrow.',
-  wrongPassword: 'Invalid email or password.',
+  wrongPassword:
+    'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
   connection: "Couldn't reach the server — check your connection and try again.",
   fallback: 'Something went wrong. Please try again.',
   continue: 'Continue with my copy',
@@ -71,7 +73,8 @@ const WORDS = {
   forgotten: 'This browser no longer remembers the copy.',
   copyGone:
     'That demo copy is no longer available. Copies are closed after 24 hours. You can get a new one.',
-  locked: 'Too many failed sign-in attempts — your account is temporarily locked.',
+  copyPaused:
+    'Your copy did not sign in. After 5 failed attempts, sign-in is paused for 15 minutes. Try again later, or get a new copy.',
   startOverTitle: 'Start over with a new copy?',
   startOver: 'Start over',
   keepThisCopy: 'Keep this copy',
@@ -102,24 +105,12 @@ const NOBODY = 'visitor@azurebank.example';
 type Answer = () => Response | Promise<Response> | undefined;
 
 /**
- * The 429 `ACCOUNT_LOCKED` the API sent at sign-in for the right password on a locked account. It
- * sends none since ADR-0012 decision 3 changed: a locked account is answered with the 401 of a
- * wrong password, and the mock follows the API. The page still has its branch for this answer, so
- * the tests of that branch send it by hand, `seconds` before the lock ends.
+ * Locks `email` in the mock for fifteen minutes from now, as five wrong passwords would
+ * (src/mocks/handlers.ts). While it stands the mock answers every password as a wrong one, the
+ * right one included, and reads none, as the API does (ADR-0012 decision 3).
  */
-function lockAnswer(seconds: number): Answer {
-  return () =>
-    problem({
-      status: 429,
-      errorCode: 'ACCOUNT_LOCKED',
-      detail:
-        'Too many failed login attempts. Your account is temporarily locked; try again later.',
-      instance: '/api/auth/login',
-      extensions: {
-        retryAfterSeconds: seconds,
-        lockedUntil: new Date(Date.now() + seconds * 1000).toISOString(),
-      },
-    });
+function lockInTheMock(email: string) {
+  mockState.loginLockedUntil[email] = new Date(Date.now() + 15 * 60_000).toISOString();
 }
 
 /**
@@ -221,6 +212,19 @@ function rememberAClaimedCopy(change: Partial<KeptCopy> = {}): KeptCopy {
   const kept = { ...seedMockDemoCopy().copy, ...change };
   rememberDemoCopy(kept);
   return kept;
+}
+
+/** A copy's end half a minute from now, by this browser's clock. */
+const halfAMinuteFromNow = () => new Date(Date.now() + 30_000).toISOString();
+
+/**
+ * Lets the end `halfAMinuteFromNow` set pass under the open page, which still offers the copy: the
+ * end is looked at when the page opens. From here the clock is fake, and a press goes through
+ * `fakeClockUser`.
+ */
+async function letTheEndPass() {
+  installFakeClock();
+  await advanceUntil(Date.now(), 45_000);
 }
 
 const tryTheDemo = () =>
@@ -399,22 +403,21 @@ describe('the sign-in page without the demo', () => {
     }
   });
 
-  it('without the tag: a lock takes "Sign in" away, and says so with its countdown', async () => {
-    // CONTROL: green before this change
-    // The lock's 429, with 30 s left (see `lockAnswer`).
-    const { requests } = await openSignInPage({ demo: false, signIn: lockAnswer(30) });
+  it('without the tag: a locked account, its right password typed, is told what a wrong one is told, and "Sign in" stays', async () => {
+    // No answer says that a lock stands, so the page has none to say and no countdown to run.
+    lockInTheMock(MOCK_USER.email);
+    const { requests } = await openSignInPage({ demo: false });
     await fillTheForm(MOCK_USER.email, MOCK_PASSWORD);
 
     await userEvent.click(signInButton());
 
-    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.locked]));
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
     expect({
       signIns: requests.signIns,
-      timers: timers().map((words) => /^Try again in [1-3]?\ds$/.test(words ?? '')),
-      // Gone, not disabled, until the countdown ends.
-      signInButtons: buttonsNamed(WORDS.signIn).length,
+      timers: timers(),
+      signIn: disabledOf(WORDS.signIn),
       where: where(),
-    }).toStrictEqual({ signIns: 1, timers: [true], signInButtons: 0, where: 'the sign-in page' });
+    }).toStrictEqual({ signIns: 1, timers: [], signIn: [false], where: 'the sign-in page' });
   });
 
   it('without the tag: too many attempts are said under "Sign in", inside the form', async () => {
@@ -1096,25 +1099,22 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     }).toStrictEqual({ requests: [1, 0], signedInAs: FIRST_COPY });
   });
 
-  it('a lock met by the form takes "Sign in" away until its countdown ends, on the demo too', async () => {
-    // CONTROL: green before this change
-    // A copy somebody claimed, its right password typed into the form, and the lock's 429 with
-    // 30 s left (see `lockAnswer`).
+  it('a locked copy met by the form: the words of a wrong password, and nothing waits, on the demo too', async () => {
+    // A copy somebody claimed and locked, its right password typed into the form.
     const { copy } = seedMockDemoCopy();
-    const { requests } = await openSignInPage({ signIn: lockAnswer(30) });
+    lockInTheMock(copy.email);
+    const { requests } = await openSignInPage();
     await fillTheForm(copy.email, copy.password);
 
     await userEvent.click(signInButton());
 
-    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.locked]));
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
     expect({
       signIns: requests.signIns,
-      timers: timers().length,
-      // The form's own lock: its button is gone, not disabled, as before the demo.
-      signInButtons: buttonsNamed(WORDS.signIn).length,
-      // The demo is another way in, for another copy: the lock is not its to wait out.
-      demo: buttonsNamed(WORDS.tryTheDemo).map((button) => button.disabled),
-    }).toStrictEqual({ signIns: 1, timers: 1, signInButtons: 0, demo: [false] });
+      timers: timers(),
+      signIn: disabledOf(WORDS.signIn),
+      demo: disabledOf(WORDS.tryTheDemo),
+    }).toStrictEqual({ signIns: 1, timers: [], signIn: [false], demo: [false] });
   });
 
   it('no live region sits inside another', async () => {
@@ -1214,11 +1214,12 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   });
 
   it('a copy that is gone: once the page offers the demo again its title is "Welcome"', async () => {
-    rememberAClaimedCopy({ password: 'Wrong-Pass-1!' });
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!', expiresAt: halfAMinuteFromNow() });
     await openSignInPage();
+    await letTheEndPass();
     const before = title();
 
-    await userEvent.click(continueButton());
+    await fakeClockUser().click(continueButton());
     await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyGone]));
 
     expect({
@@ -1355,13 +1356,15 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   });
 
   it('a copy that is gone: one sentence, the copy forgotten, the demo offered again', async () => {
-    // The browser kept a password the server no longer takes: what a copy that ended, or one that
-    // was handed to somebody else, answers. The same 401 as any wrong password.
-    rememberAClaimedCopy({ password: 'Wrong-Pass-1!' });
+    // The browser kept a password the server no longer takes, and the copy's end, half a minute
+    // away when the page opened, has passed when the answer comes: what a copy that ended answers.
+    // The same 401 as any wrong password; the end is what says the copy is gone.
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!', expiresAt: halfAMinuteFromNow() });
     const { requests } = await openSignInPage();
+    await letTheEndPass();
     const keptBefore = keptAddress();
 
-    await userEvent.click(continueButton());
+    await fakeClockUser().click(continueButton());
 
     await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyGone]));
     expect({
@@ -1393,9 +1396,10 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   });
 
   it('after a copy that is gone, "Try the demo" claims a new one and the sentence goes', async () => {
-    rememberAClaimedCopy({ password: 'Wrong-Pass-1!' });
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!', expiresAt: halfAMinuteFromNow() });
     const { requests, store } = await openSignInPage();
-    await userEvent.click(continueButton());
+    await letTheEndPass();
+    await fakeClockUser().click(continueButton());
     await waitFor(() =>
       expect({ alerts: alerts(), tryTheDemo: disabledOf(WORDS.tryTheDemo) }).toStrictEqual({
         alerts: [WORDS.copyGone],
@@ -1404,7 +1408,7 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     );
 
     // "You can get a new one.": by the button the page now offers.
-    await userEvent.click(tryTheDemo());
+    await fakeClockUser().click(tryTheDemo());
 
     await waitFor(() => expect(where()).toBe('the dashboard'));
     expect({
@@ -1427,15 +1431,17 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     await userEvent.click(forgetLink());
     const afterForget = forgetStatuses().map((region) => region.textContent);
     // Another tab claimed a copy since, and this tab draws its page again: it offers that copy.
-    // The browser kept a password for it that the server no longer takes.
-    rememberAClaimedCopy({ password: 'Wrong-Pass-1!' });
+    // The browser kept a password for it that the server no longer takes, and its end passes
+    // before the answer comes.
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!', expiresAt: halfAMinuteFromNow() });
     rerender(<LoginHarness />);
     const offeredAgain = {
       continue: buttonsNamed(WORDS.continue).length,
       statuses: forgetStatuses().map((region) => region.textContent),
     };
+    await letTheEndPass();
 
-    await userEvent.click(continueButton());
+    await fakeClockUser().click(continueButton());
 
     await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyGone]));
     expect({
@@ -1499,68 +1505,56 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     }).toStrictEqual({ signIns: 2, kept: FIRST_COPY, continue: [false], tryTheDemo: 0 });
   });
 
-  it('a locked copy: the existing banner and countdown; "Continue" waits; the form keeps "Sign in"', async () => {
-    rememberAClaimedCopy();
-    // The kept password is the right one, answered with the lock's 429 with 30 s left (see
-    // `lockAnswer`).
-    const { requests } = await openSignInPage({ signIn: lockAnswer(30) });
+  it('a locked copy, refused before its end: kept, the page says that sign-in pauses, and nothing waits', async () => {
+    // Somebody typed its password wrong five times, on a phone, say. The kept password is the
+    // right one, and the lock answers it as a wrong one, unread. The copy's end is a day away.
+    const kept = rememberAClaimedCopy();
+    lockInTheMock(kept.email);
+    const { requests } = await openSignInPage();
 
     await userEvent.click(continueButton());
 
-    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.locked]));
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyPaused]));
     expect({
       signIns: requests.signIns,
-      timers: timers().map((words) => /^Try again in [1-3]?\ds$/.test(words ?? '')),
+      timers: timers(),
       aboveTheDemo: inOrder(
         document.querySelector('[role="alert"]'),
-        screen.queryByRole('timer'),
         buttonsNamed(WORDS.continue)[0],
       ),
-      // The lock is the kept copy's. "Continue with my copy" waits its countdown out; a new copy,
-      // forgetting this one, and the form, which may be for another address, do not.
-      continue: buttonsNamed(WORDS.continue).map((button) => ({
-        disabled: button.disabled,
-        spinners: spinnersIn(button),
-      })),
-      others: [disabledOf(WORDS.getNew), disabledOf(WORDS.forget)],
-      signIn: disabledOf(WORDS.signIn),
-      // Not forgotten: a locked copy is still the browser's copy.
+      // Not forgotten: the browser is the only place its password is kept.
       kept: keptAddress(),
+      // Still the page of a browser that keeps a copy.
+      title: title(),
+      controls: [disabledOf(WORDS.continue), disabledOf(WORDS.getNew), disabledOf(WORDS.forget)],
+      signIn: disabledOf(WORDS.signIn),
     }).toStrictEqual({
       signIns: 1,
-      timers: [true],
+      timers: [],
       aboveTheDemo: true,
-      continue: [{ disabled: true, spinners: 0 }],
-      others: [[false], [false]],
-      signIn: [false],
       kept: FIRST_COPY,
+      title: WORDS.title,
+      controls: [[false], [false], [false]],
+      signIn: [false],
     });
     expectNoNestedLiveRegions();
   });
 
-  it('when the lock\'s countdown ends the banner goes and "Continue with my copy" can be pressed again', async () => {
-    rememberAClaimedCopy();
-    await openSignInPage({ signIn: lockAnswer(30) });
-    installFakeClock();
-    const pressedAt = Date.now();
+  it('once the lock has ended, "Continue with my copy" signs in to the copy the page kept', async () => {
+    const kept = rememberAClaimedCopy();
+    lockInTheMock(kept.email);
+    const { requests } = await openSignInPage();
+    await userEvent.click(continueButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyPaused]));
 
-    await fakeClockUser().click(continueButton());
+    // The lock's fifteen minutes are over.
+    mockState.loginLockedUntil[kept.email] = new Date(Date.now() - 1_000).toISOString();
+    await userEvent.click(continueButton());
 
-    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.locked]));
-    const whileItCounted = { timers: timers().length, disabled: disabledOf(WORDS.continue) };
-
-    // The lock had 30 s left when the page opened.
-    await advanceUntil(pressedAt, 31_500);
-
-    await waitFor(() => expect(timers()).toStrictEqual([]));
-    expect({
-      whileItCounted,
-      alerts: alerts(),
-      disabled: disabledOf(WORDS.continue),
-    }).toStrictEqual({
-      whileItCounted: { timers: 1, disabled: [true] },
-      alerts: [],
-      disabled: [false],
+    await waitFor(() => expect(where()).toBe('the dashboard'));
+    expect({ signIns: requests.signIns, kept: keptAddress() }).toStrictEqual({
+      signIns: 2,
+      kept: FIRST_COPY,
     });
   });
 

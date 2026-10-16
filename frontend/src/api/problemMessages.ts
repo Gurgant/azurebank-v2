@@ -92,6 +92,23 @@ export const TRY_AGAIN = 'Try again';
 export const SIGN_OUT_FAILED = "We couldn't sign you out. You're still signed in.";
 
 /*
+  A refused sign-in. The API answers a wrong password, an address nobody has and a locked account
+  alike, whatever password the lock is sent, so that no answer tells a guesser which it was
+  (ADR-0012 decision 3), and the page cannot tell either. What it can say is the rule, which is how
+  the holder of the right password learns that waiting is the way in. The numbers are the API's
+  `ValidationRules.MaxLoginAttempts` and `LoginLockoutMinutes`.
+*/
+
+/** The rule, said wherever a sign-in was refused. */
+export const SIGN_IN_PAUSES = 'After 5 failed attempts, sign-in is paused for 15 minutes.';
+
+/**
+ * The sign-in form's refusal: the API's own sentence, word for word, which the contract suite
+ * holds the API to (src/contract/auth.contract.test.ts).
+ */
+export const SIGN_IN_REFUSED = `Invalid email or password. ${SIGN_IN_PAUSES}`;
+
+/*
   The visitor's own account, closed under the page: closed in another tab or another session while
   this one still showed it. The API answers 404 `ACCOUNT_NOT_FOUND` to whatever is then done on
   it, with a sentence that carries the account's identifier and is never shown.
