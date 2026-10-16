@@ -472,6 +472,45 @@ public class TransactionEndpointTests : IntegrationTestBase
         result!.Data.Should().NotBeEmpty();
     }
 
+    [Fact]
+    public async Task ListTransactions_ForAnAccountNotInTheCallersScope_IsRefused_EvenWithNoOpenAccount()
+    {
+        // Arrange — a caller whose every account is closed. No caller reaches that through the API
+        // today, since a primary account cannot be closed, so the closing is written to the table;
+        // the answer to an AccountId must not rest on that rule all the same.
+        var (otherToken, _, othersAccountId) = await RegisterTestUserAsync();
+        await DepositAsync(otherToken, othersAccountId, 100m);
+        var (token, userId, ownAccountId) = await RegisterTestUserAsync();
+        await CloseEveryAccountOfAsync(userId);
+        SetAuthHeader(token);
+
+        // Act
+        var ownClosed = await Client.GetAsync($"/api/transactions?AccountId={ownAccountId}");
+        var anotherUsers = await Client.GetAsync($"/api/transactions?AccountId={othersAccountId}");
+        var unscoped = await Client.GetAsync("/api/transactions");
+
+        // Assert — both accounts are outside the scope and refused, as for a caller with an open
+        // account; with no AccountId the empty page stays.
+        ownClosed.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        anotherUsers.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        unscoped.StatusCode.Should().Be(HttpStatusCode.OK);
+        var page = await unscoped.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions);
+        page!.Data.Should().BeEmpty();
+        page.Pagination.TotalItems.Should().Be(0);
+    }
+
+    private async Task CloseEveryAccountOfAsync(Guid userId)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        foreach (var account in db.Accounts.Where(a => a.UserId == userId).ToList())
+        {
+            account.IsDeleted = true;
+            account.DeletedAt = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync();
+    }
+
     [Theory]
     // (1073741825 - 1) * 20 is exactly 5 * 2^32, so in int arithmetic the offset wrapped to 0 and
     // this page came back holding the FIRST page's rows — measured on SQL Server 2026-09-11, and
