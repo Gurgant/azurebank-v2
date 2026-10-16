@@ -1252,81 +1252,183 @@ describe('failure modes the mock could not previously produce', () => {
       body: JSON.stringify({ email, password }),
     });
 
-  it('U3: locks after five failures and refuses the CORRECT password', async () => {
+  it('U3: locks after five failures, and then answers the CORRECT password as a wrong one', async () => {
     /*
       Mock-only, and it has to be: a contract test against the real stack would lock a real account
-      for fifteen minutes and take the rest of the suite with it. Measured instead on a THROWAWAY
-      registered user, 2026-08-06 — `PinAccessFailedCount` and the login counter are both per-user,
-      so admin (which e2e drives) stayed clean and logged in fine afterwards:
+      for fifteen minutes and take the rest of the suite with it. Measured on SQL Server through the
+      API's own pipeline on 2026-10-16 (`LoginGuessBoundSqlServerTests`), and forwarded verbatim by
+      the BFF:
 
-        wrong x5 -> 401 INVALID_CREDENTIALS each, no hint a counter is running (ADR-0013,
-                    enumeration-neutral: telling you about the lock tells you the account exists)
-        CORRECT  -> 429 {"detail":"Too many failed login attempts. Your account is temporarily
-                    locked; try again later.","instance":"/api/auth/login",
-                    "errorCode":"ACCOUNT_LOCKED","retryAfterSeconds":900,
-                    "lockedUntil":"2026-08-06T18:54:57.3924877+00:00"}
+        wrong x5 -> 401 INVALID_CREDENTIALS each, the fifth latching the lock
+        CORRECT  -> 401 {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+                    "detail":"Invalid email or password. After 5 failed attempts, sign-in is paused
+                    for 15 minutes.","instance":"/api/auth/login",
+                    "errorCode":"INVALID_CREDENTIALS","traceId":"…"}
+        wrong    -> the same, but for traceId
+
+      Answered otherwise for the right password, the lock would tell a guesser which password is
+      right (ADR-0012 decision 3).
     */
     for (let i = 0; i < 5; i++) {
       const wrong = await login('demo@azurebank.dev', 'WrongPassword1!');
       expect(wrong.status).toBe(401);
       expect((await wrong.json()).errorCode).toBe('INVALID_CREDENTIALS');
     }
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeDefined();
 
     const correct = await login('demo@azurebank.dev', 'Password1!');
-    expect(correct.status).toBe(429);
-    /*
-      No Retry-After HEADER — and this one was READ from ForwardUpstreamError (status and body,
-      no headers) long before it was observed. Measured on both hops 2026-08-07, same locked
-      throwaway user, so the asymmetry is now a fact rather than an inference:
-
-        :7215 direct   429  Retry-After: 900   Cache-Control: no-cache,no-store
-        :5000 via BFF  429  (neither header — only Content-Type survives the copy)
-
-      The rate-limit 429 below DOES carry Retry-After, because the limiter is BFF middleware and
-      writes its own response instead of forwarding one. That is what makes the two 429s
-      distinguishable at all.
-    */
+    const wrongAgain = await login('demo@azurebank.dev', 'AnotherWrong1!');
+    expect(correct.status).toBe(401);
+    expect(wrongAgain.status).toBe(401);
+    // No header and no member says that a lock stands.
     expect(correct.headers.get('Retry-After')).toBeNull();
 
-    const body = await correct.json();
-    expect(body.errorCode).toBe('ACCOUNT_LOCKED');
-    expect(body.detail).toBe(
-      'Too many failed login attempts. Your account is temporarily locked; try again later.',
+    const { traceId: correctTrace, ...correctBody } = await correct.json();
+    const { traceId: wrongTrace, ...wrongBody } = await wrongAgain.json();
+    expect(correctTrace).toBeDefined();
+    expect(wrongTrace).toBeDefined();
+    expect(correctBody).toEqual(wrongBody);
+    expect(correctBody.errorCode).toBe('INVALID_CREDENTIALS');
+    expect(correctBody.detail).toBe(
+      'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
     );
-    // The API's path, not the BFF's — the body was generated upstream. This is the discriminator
-    // against the rate-limit 429, which names /bff/auth/login.
-    expect(body.instance).toBe('/api/auth/login');
-    expect(body.retryAfterSeconds).toBe(900);
-    expect(body.lockedUntil).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$/);
+    // The API's path, not the BFF's: the body was generated upstream.
+    expect(correctBody.instance).toBe('/api/auth/login');
   });
 
-  it('U3: a WRONG password never reveals the lock — the anti-enumeration property', async () => {
+  it('U3: attempts against the lock neither extend it nor are counted', async () => {
     /*
-      The half that matters for security, and the half I got backwards on the first pass: I checked
-      the lock BEFORE the password, so a wrong guess answered 429 and told an attacker "this address
-      exists and is locked". ADR-0012 names that as the thing to avoid, and the wire agrees.
-
-      Measured 2026-08-06 on a throwaway user:
-        wrong x5  -> 401 INVALID_CREDENTIALS
-        6th WRONG -> 401 INVALID_CREDENTIALS   (identical to an unknown address)
-        CORRECT   -> 429 ACCOUNT_LOCKED
-
-      Asserting the 401 here is what stops the ordering being flipped back: the other U3 test would
-      pass just as happily with the check in the wrong place.
+      While locked the counter is not touched and the password is not read, so a guesser cannot
+      extend the window by keeping at it.
     */
     for (let i = 0; i < 5; i++) {
       expect((await login('demo@azurebank.dev', 'WrongPassword1!')).status).toBe(401);
     }
+    const until = mockState.loginLockedUntil['demo@azurebank.dev'];
 
-    const stillWrong = await login('demo@azurebank.dev', 'AnotherWrong1!');
-    expect(stillWrong.status).toBe(401);
-    expect((await stillWrong.json()).errorCode).toBe('INVALID_CREDENTIALS');
+    for (const password of ['AnotherWrong1!', 'Password1!', 'YetAnother1!']) {
+      expect((await login('demo@azurebank.dev', password)).status).toBe(401);
+    }
 
-    // And the window was not extended by that sixth attempt — the correct password still reports
-    // the ORIGINAL deadline rather than a fresh fifteen minutes.
-    const revealed = await login('demo@azurebank.dev', 'Password1!');
-    expect(revealed.status).toBe(429);
-    expect((await revealed.json()).retryAfterSeconds).toBeLessThanOrEqual(900);
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBe(until);
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBe(0);
+  });
+
+  it("U3: a first PIN's password proof counts on the sign-in's lock, which then reads no password", async () => {
+    /*
+      The API counts the proof on the login's own row before the password is compared, and once
+      that row is locked it answers every password 429 ACCOUNT_LOCKED without reading it: behind a
+      session the account is known, so the lock is no secret, and an answer given unread cannot say
+      whether the password was right (ADR-0012 decision 3). Measured on SQL Server on 2026-10-16
+      (`LoginGuessBoundSqlServerTests`): twenty wrong passwords sent together, five compared, 401 x5
+      and 429 x15; then the right one, 429, compared 0. Through the BFF the body is forwarded with
+      the API's own `instance` and no `Retry-After`, as every BFF action's is.
+    */
+    seedMockSession({ ...mockState.session!, hasPin: false });
+    const enrol = (password: string) =>
+      fetch('/bff/auth/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '424242', password }),
+      });
+
+    for (let i = 0; i < 5; i++) {
+      const wrong = await enrol('WrongPassword1!');
+      expect(wrong.status).toBe(401);
+      expect(await wrong.json()).toMatchObject({
+        errorCode: 'INVALID_CREDENTIALS',
+        detail: 'Invalid password.',
+      });
+    }
+    const until = mockState.loginLockedUntil['demo@azurebank.dev'];
+    expect(until).toBeDefined();
+
+    const right = await enrol('Password1!');
+    expect(right.status).toBe(429);
+    expect(right.headers.get('Retry-After')).toBeNull();
+    const body = await right.json();
+    expect(body).toMatchObject({
+      errorCode: 'ACCOUNT_LOCKED',
+      detail:
+        'Too many failed login attempts. Your account is temporarily locked; try again later.',
+      instance: '/api/auth/pin',
+      lockedUntil: until,
+    });
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
+    expect(body.retryAfterSeconds).toBeLessThanOrEqual(15 * 60);
+    // Refused unread: no PIN was set, and the lock was neither moved nor counted against.
+    expect(mockState.session?.hasPin).toBe(false);
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBe(until);
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBe(0);
+
+    // One row, one lock: the sign-in meets it too.
+    const signIn = await login('demo@azurebank.dev', 'Password1!');
+    expect(signIn.status).toBe(401);
+    expect((await signIn.json()).errorCode).toBe('INVALID_CREDENTIALS');
+  });
+
+  it("U3: a first PIN's right password clears the count the sign-in left", async () => {
+    // Four wrong sign-ins leave four counted; the right password at the proof clears them, as a
+    // right password at the sign-in does.
+    seedMockSession({ ...mockState.session!, hasPin: false });
+    for (let i = 0; i < 4; i++) {
+      expect((await login('demo@azurebank.dev', 'WrongPassword1!')).status).toBe(401);
+    }
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBe(4);
+
+    const enrolled = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '424242', password: 'Password1!' }),
+    });
+
+    expect(enrolled.status).toBe(200);
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBeUndefined();
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeUndefined();
+  });
+
+  const reauthenticate = (password: string) =>
+    fetch('/bff/auth/reauthenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+
+  it("U3: re-authentication counts on the sign-in's lock, and a lock answers the right password as a wrong one", async () => {
+    /*
+      The BFF re-authenticates through the API's login and forwards its answer, so the attempt is
+      counted on the same row as a sign-in's, and a lock answers every password with the 401 of a
+      wrong one, unread (ADR-0012 decisions 2 and 3). A refusal leaves the session as it was.
+    */
+    for (let i = 0; i < 5; i++) {
+      expect((await reauthenticate('WrongPassword1!')).status).toBe(401);
+    }
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeDefined();
+    const startedAt = mockState.sessionCreatedAt;
+
+    const right = await reauthenticate('Password1!');
+    const wrong = await reauthenticate('AnotherWrong1!');
+    expect(right.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    const { traceId: rightTrace, ...rightBody } = await right.json();
+    const { traceId: wrongTrace, ...wrongBody } = await wrong.json();
+    expect(rightTrace).toBeDefined();
+    expect(wrongTrace).toBeDefined();
+    expect(rightBody).toEqual(wrongBody);
+    expect(rightBody.detail).toBe(
+      'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+    );
+    expect(mockState.sessionCreatedAt).toBe(startedAt);
+  });
+
+  it('U3: a right re-authentication clears the count', async () => {
+    for (let i = 0; i < 4; i++) {
+      expect((await reauthenticate('WrongPassword1!')).status).toBe(401);
+    }
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBe(4);
+
+    expect((await reauthenticate('Password1!')).status).toBe(200);
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBeUndefined();
   });
 
   it('an address that names NO account is never locked, however often it fails', async () => {
@@ -1342,8 +1444,7 @@ describe('failure modes the mock could not previously produce', () => {
         ghost1593@azurebank.dev, eight wrong passwords -> 401 INVALID_CREDENTIALS every time
 
       This is also the assertion that keeps the mock from inventing lockout state for addresses the
-      backend has no row for: track failures for every string that arrives and the sixth attempt
-      starts answering 429, which is what a reviewer caught on the first version of this handler.
+      backend has no row for, which is what a reviewer caught on the first version of this handler.
     */
     for (let i = 1; i <= 8; i++) {
       const attempt = await login('nobody@azurebank.dev', 'WhateverX1!');
@@ -1352,11 +1453,10 @@ describe('failure modes the mock could not previously produce', () => {
     }
 
     /*
-      And the half the wire cannot show. With the password compared first, a mock that DID arm a
-      lock for a strangers's address still answers 401 above — the 429 is simply unreachable — so
-      the loop passes either way and the divergence sits there waiting for the next edit to the
-      ordering to expose it. These two lines are the ones that actually fail if the tracking is
-      widened back, which is why they are worth more than the eight assertions above.
+      And the half the wire cannot show. A locked account answers the same 401 as a stranger, so a
+      mock that DID arm a lock for a stranger's address still answers 401 above, and the loop passes
+      either way. These two lines are the ones that actually fail if the tracking is widened back,
+      which is why they are worth more than the eight assertions above.
 
       The backend's guarantee is structural rather than incidental: no row means no
       AccessFailedCount and no LockoutEnd, so there is nothing to arm in the first place.
@@ -1371,19 +1471,21 @@ describe('failure modes the mock could not previously produce', () => {
       or dodge an existing lock. A case-SENSITIVE mock answers 200 on the last line here, which is
       exactly the drift this pins.
 
-      Measured 2026-08-07 on a throwaway registered user:
+      Measured 2026-08-07 on a throwaway registered user, when a lock still answered the right
+      password 429 (since 2026-10-16 it answers the 401 of a wrong password):
 
         register casb2159@azurebank.dev
         CASB2159@AZUREBANK.DEV x5 wrong -> 401 INVALID_CREDENTIALS
-        casb2159@azurebank.dev, CORRECT -> 429 ACCOUNT_LOCKED, retryAfterSeconds 900
+        casb2159@azurebank.dev, CORRECT -> refused by the lock
     */
     for (let i = 0; i < 5; i++) {
       expect((await login('DEMO@AZUREBANK.DEV', 'WrongPassword1!')).status).toBe(401);
     }
 
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeDefined();
     const correctInLowercase = await login('demo@azurebank.dev', 'Password1!');
-    expect(correctInLowercase.status).toBe(429);
-    expect((await correctInLowercase.json()).errorCode).toBe('ACCOUNT_LOCKED');
+    expect(correctInLowercase.status).toBe(401);
+    expect((await correctInLowercase.json()).errorCode).toBe('INVALID_CREDENTIALS');
   });
 
   it('U4: the eleventh auth call in a minute is the BFF’s own 429', async () => {
@@ -1399,9 +1501,9 @@ describe('failure modes the mock could not previously produce', () => {
     */
     /*
       Assert the first ten, do not merely spend them. Without this the test passes just as happily
-      when requests six through ten answer 429 ACCOUNT_LOCKED for the wrong reason — the eleventh
-      is a 429 either way, so the interesting failure hides behind an identical status code. That
-      is not hypothetical: it is what the first version of the login handler did.
+      when requests six through ten answer a 429 for the wrong reason — the eleventh is a 429
+      either way, so the interesting failure hides behind an identical status code. That is not
+      hypothetical: it is what the first version of the login handler did.
     */
     for (let i = 1; i <= 10; i++) {
       const spent = await login('nobody@azurebank.dev', 'WhateverX1!');
@@ -1420,7 +1522,7 @@ describe('failure modes the mock could not previously produce', () => {
     expect(body.detail).toBe('Too many requests. Please retry later.');
     // The BFF's OWN path — the limiter is BFF middleware, so nothing upstream produced this.
     expect(body.instance).toBe('/bff/auth/login');
-    // And NO retryAfterSeconds: the seconds live in the header here, in the body for ACCOUNT_LOCKED.
+    // And NO retryAfterSeconds: the seconds live in the header here.
     expect(body.retryAfterSeconds).toBeUndefined();
   });
 });

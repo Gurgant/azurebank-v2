@@ -88,10 +88,11 @@ describe('contract: the BFF answers in its own envelope', () => {
       own path — which the browser never requested.
 
       Observed: {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
-                 "detail":"Invalid email or password.","instance":"/api/auth/login",
+                 "detail":"Invalid email or password. After 5 failed attempts, sign-in is paused
+                 for 15 minutes.","instance":"/api/auth/login",
                  "errorCode":"INVALID_CREDENTIALS","traceId":"…"}
 
-      Note the trailing period, which the mock omitted. Sending a deliberately wrong password for a
+      The second sentence is in every refusal of the login, a locked account's included (ADR-0012). Sending a deliberately wrong password for a
       NON-EXISTENT address on purpose: `AuthService` locks an account after five failures, so
       aiming this at a real one would arm a 15-minute lockout inside the suite.
     */
@@ -122,7 +123,9 @@ describe('contract: the BFF answers in its own envelope', () => {
       'type',
     ]);
     expect(problem.errorCode).toBe('INVALID_CREDENTIALS');
-    expect(problem.detail).toBe('Invalid email or password.');
+    expect(problem.detail).toBe(
+      'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+    );
     expect(problem.instance).toBe('/api/auth/login');
     expect(problem.type).toBe('https://httpstatuses.com/401');
     // The API's handlers write a BARE 32-hex trace id, not a W3C traceparent — the framework path

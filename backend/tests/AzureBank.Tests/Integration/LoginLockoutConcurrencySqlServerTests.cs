@@ -50,9 +50,12 @@ public sealed class LoginLockoutConcurrencySqlServerTests : IDisposable
                 .Select(_ => LoginStatusAsync(client, email, "WrongPass999!")));
         _output.WriteLine("parallel wrong-password statuses: " + string.Join(",", statuses.Select(s => (int)s)));
 
-        // The account is now locked: even the CORRECT password is refused with 429.
-        (await LoginStatusAsync(client, email, Password)).Should().Be(HttpStatusCode.TooManyRequests,
+        // The account is now locked: the row holds the lock, and even the CORRECT password is
+        // refused, with the 401 a wrong one receives (ADR-0012 decision 3).
+        (await ReadLockoutEndAsync(email)).Should().BeAfter(DateTimeOffset.UtcNow,
             "exactly MaxLoginAttempts parallel wrong passwords must lock the account (atomic counter)");
+        (await LoginStatusAsync(client, email, Password)).Should().Be(HttpStatusCode.Unauthorized,
+            "the right password is refused while the lock stands, as a wrong one is");
     }
 
     [SqlServerFact]
@@ -68,14 +71,24 @@ public sealed class LoginLockoutConcurrencySqlServerTests : IDisposable
             await Task.WhenAll(Enumerable.Range(0, ValidationRules.MaxLoginAttempts * 3)
                 .Select(_ => LoginStatusAsync(client, email, "WrongPass999!")));
 
-            (await LoginStatusAsync(client, email, Password)).Should().Be(HttpStatusCode.TooManyRequests,
+            (await ReadLockoutEndAsync(email)).Should().BeAfter(DateTimeOffset.UtcNow,
                 $"round {round}: a burst of parallel wrong passwords must leave the account LOCKED, never bypassed");
+            (await LoginStatusAsync(client, email, Password)).Should().Be(HttpStatusCode.Unauthorized,
+                $"round {round}: the right password is refused while the lock stands, as a wrong one is");
 
             // The atomic WHERE-guard leaves NO residual count on a just-locked account,
             // so the next window (after expiry) gets a full budget (ADR-0012).
             (await ReadAccessFailedCountAsync(email)).Should().Be(0,
                 $"round {round}: a late concurrent increment must not survive onto a locked row");
         }
+    }
+
+    private async Task<DateTimeOffset?> ReadLockoutEndAsync(string email)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.Where(u => u.Email == email)
+            .Select(u => u.LockoutEnd).SingleAsync();
     }
 
     private async Task<int> ReadAccessFailedCountAsync(string email)

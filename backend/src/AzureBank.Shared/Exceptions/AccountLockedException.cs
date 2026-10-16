@@ -3,14 +3,16 @@ using AzureBank.Shared.Constants;
 namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
-/// Thrown when an account is temporarily locked after too many failed logins
-/// (<see cref="ValidationRules.MaxLoginAttempts"/>). Rendered as HTTP 429 Too Many
-/// Requests + errorCode ACCOUNT_LOCKED + a Retry-After header, with the unlock time
-/// surfaced via Details (retryAfterSeconds, lockedUntil) so clients back off precisely.
+/// Thrown when the login's lock (<see cref="ValidationRules.MaxLoginAttempts"/> failures)
+/// refuses a password proof made behind a session, where the account is already known: the
+/// password proof of a first PIN (ADR-0040). Rendered as HTTP 429 Too Many Requests +
+/// errorCode ACCOUNT_LOCKED + a Retry-After header, which the BFF does not forward, with the
+/// unlock time surfaced via Details (retryAfterSeconds, lockedUntil).
 ///
-/// It is returned ONLY when the CORRECT password is presented to a locked account:
-/// a wrong password always yields the generic 401 (Invalid email or password) so the
-/// lock state is never an enumeration oracle for a password guesser (ADR-0012).
+/// It is thrown for every password, the right one included, without reading it, so it cannot
+/// tell whether the password was right. Sign-in never throws it: there a locked account is
+/// answered with the 401 of a wrong password and of an email nobody has, so the lock is no
+/// oracle for a password guesser (ADR-0012 decision 3).
 /// </summary>
 public sealed class AccountLockedException : AppException
 {

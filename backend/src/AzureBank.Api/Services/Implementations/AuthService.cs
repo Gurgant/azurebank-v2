@@ -113,68 +113,106 @@ public class AuthService : IAuthService
             }
 
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
-            throw new AuthenticationException("Invalid email or password.");
+            throw new AuthenticationException(SignInRefused);
         }
 
         var now = DateTimeOffset.UtcNow;
-        var passwordOk = await CheckPasswordAsync(user, request.Password, cancellationToken);
-        // Respect Identity's per-user LockoutEnabled opt-out (matches IsLockedOutAsync):
-        // an exempt account (e.g. a service account) is never treated as locked.
-        var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
-            ? end
-            : (DateTimeOffset?)null;
 
-        if (passwordOk)
+        // An account exempt from lockout (LockoutEnabled false, ADR-0012 decision 7) is never
+        // counted and never locked: its password is compared on every request, as before.
+        if (!user.LockoutEnabled)
         {
-            // Correct password on a locked account: reveal the lock ONLY here — the
-            // caller has proven knowledge of the password, so the signal carries no
-            // enumeration value — and give a precise Retry-After (ADR-0012).
-            if (lockedUntil is { } until)
+            if (await CheckPasswordAsync(user, request.Password, cancellationToken))
             {
-                _logger.LogWarning("Login refused for locked account {UserId} until {Until}", user.Id, until);
-                ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "locked"));
-                throw AccountLockedException.Until(until, now);
+                if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
+                {
+                    await ResetLoginLockoutAsync(user, cancellationToken);
+                }
+
+                return await IssueSignInAsync(user, cancellationToken);
             }
 
-            // Success: clear any accumulated failures / expired lock.
-            if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
-            {
-                await ResetLoginLockoutAsync(user, cancellationToken);
-            }
-
-            // The access token BEFORE the grant, so the grant cannot cap it; the start-up rule that a
-            // grant lives at least as long as an access token (JwtOptions) is what keeps it inside
-            // the grant's lifetime anyway (ADR-0057 F11).
-            var tokenResult = _jwtService.GenerateToken(user);
-            var grant = await _refreshTokenService.IssueAsync(user, cancellationToken);
-            _logger.LogInformation("User {UserId} logged in successfully", user.Id);
-            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
-            return new LoginResponse
-            {
-                /*
-                  The stamp as read at the top, BEFORE the grant was issued (ADR-0057 §5.3). A
-                  sign-out everywhere that commits after that read raises the stamp above this one,
-                  so the BFF ends this session within one poll even though its grant may have been
-                  issued after the revoke. Read after the grant instead, the same race could leave a
-                  session whose stamp is current and whose grant was revoked: alive for up to half
-                  an access token's life. This way the race errs toward signing out.
-                */
-                Token = ToTokenResponse(tokenResult, grant, user.SessionStamp),
-                User = _userMapper.ToLoginInfo(user)
-            };
+            _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
+            throw new AuthenticationException(SignInRefused);
         }
 
-        // Wrong password. Count it toward the lockout (but not while already locked, so
-        // a persistent attacker cannot extend the window), then return the SAME generic
-        // 401 as an unknown user — the lock state is never leaked to a password guesser.
-        if (lockedUntil is null)
+        /*
+          THE ATTEMPT IS COUNTED BEFORE THE PASSWORD IS COMPARED (ADR-0012 decision 2), as the PIN's is
+          (ADR-0010). Only an attempt the claim counted has its password compared, so requests sent
+          together cannot each read "not locked" and each be compared: the row hands out
+          MaxLoginAttempts comparisons a window and refuses the rest. Measured on SQL Server with the
+          count taken after the comparison: twenty wrong passwords sent together were all compared,
+          and the right one sent among them signed in.
+        */
+        if (!await ClaimLoginAttemptAsync(user, now, cancellationToken))
         {
-            await IncrementAndMaybeLockLoginAsync(user, now, cancellationToken);
+            /*
+              LOCKED, AND THE ANSWER DOES NOT DEPEND ON THE PASSWORD (ADR-0012 decision 3). It is the
+              401 a wrong password and an unknown email receive, whatever was sent: answered
+              otherwise for the right password, the lock would tell a guesser which password is right
+              (measured: 429 for the right one, 401 for a wrong one). The password is not compared;
+              the cost of a comparison is spent on the equaliser's dummy hash, so the dominant cost is
+              a wrong password's. What is left is the write: the claim matched no row here and wrote
+              nothing, which a fine timing analysis could still tell (ADR-0012, consequences). The
+              holder of the right password learns from the text of the answer that sign-in pauses
+              after repeated failures.
+            */
+            _timingEqualizer.SpendVerifyCost(request.Password);
+            _logger.LogWarning("Login refused unread: account {UserId} is locked", user.Id);
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "locked"));
+            throw new AuthenticationException(SignInRefused);
         }
-        // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
+
+        if (await CheckPasswordAsync(user, request.Password, cancellationToken))
+        {
+            // Unconditional: the claim counted this attempt, and may have latched the lock at the
+            // threshold, or a wrong password sent beside it may have while this one was compared.
+            // The right password clears both.
+            await ResetLoginLockoutAsync(user, cancellationToken);
+            return await IssueSignInAsync(user, cancellationToken);
+        }
+
+        // Wrong password, already counted by the claim: the same 401 as an unknown user.
+        // On a KNOWN account: log the stable user id, not the raw email (PII).
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
-        throw new AuthenticationException("Invalid email or password.");
+        throw new AuthenticationException(SignInRefused);
+    }
+
+    /// <summary>
+    /// The answer to every refused sign-in: an unknown email, a wrong password, a demo copy the gate
+    /// refuses and an account that is locked are told the same thing, so no answer says which it was
+    /// (ADR-0012 decision 3). The second sentence is what tells the holder of the right password,
+    /// during a lock, that waiting is the way in.
+    /// </summary>
+    private static readonly string SignInRefused =
+        $"Invalid email or password. After {ValidationRules.MaxLoginAttempts} failed attempts, sign-in is "
+        + $"paused for {ValidationRules.LoginLockoutMinutes} minutes.";
+
+    /// <summary>The answer to a sign-in whose password was proved: an access token and a grant.</summary>
+    private async Task<LoginResponse> IssueSignInAsync(ApplicationUser user, CancellationToken cancellationToken)
+    {
+        // The access token BEFORE the grant, so the grant cannot cap it; the start-up rule that a
+        // grant lives at least as long as an access token (JwtOptions) is what keeps it inside
+        // the grant's lifetime anyway (ADR-0057 F11).
+        var tokenResult = _jwtService.GenerateToken(user);
+        var grant = await _refreshTokenService.IssueAsync(user, cancellationToken);
+        _logger.LogInformation("User {UserId} logged in successfully", user.Id);
+        ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
+        return new LoginResponse
+        {
+            /*
+              The stamp as read at the top, BEFORE the grant was issued (ADR-0057 §5.3). A
+              sign-out everywhere that commits after that read raises the stamp above this one,
+              so the BFF ends this session within one poll even though its grant may have been
+              issued after the revoke. Read after the grant instead, the same race could leave a
+              session whose stamp is current and whose grant was revoked: alive for up to half
+              an access token's life. This way the race errs toward signing out.
+            */
+            Token = ToTokenResponse(tokenResult, grant, user.SessionStamp),
+            User = _userMapper.ToLoginInfo(user)
+        };
     }
 
     /// <summary>
@@ -326,28 +364,30 @@ public class AuthService : IAuthService
 
     // ---- Atomic login-lockout writers (Identity's native AccessFailedCount / LockoutEnd) ----
     // A single set-based ExecuteUpdate (no read-modify-write, so no lost updates under a
-    // burst of parallel wrong passwords). Identity's UserManager.AccessFailedAsync would
+    // burst of parallel requests). Identity's UserManager.AccessFailedAsync would
     // instead do an optimistic-concurrency read-modify-write whose lost update EF silently
     // folds into IdentityResult.ConcurrencyFailure — letting a parallel burst stay under
     // the threshold and never lock. ExecuteUpdate is relational-only, so the InMemory test
     // provider falls back to an equivalent tracked write (single-threaded there).
 
     /// <summary>
-    /// One atomic failed-login transition: increment AccessFailedCount, and when it crosses
-    /// <see cref="ValidationRules.MaxLoginAttempts"/> set LockoutEnd and reset the counter —
-    /// all against the row's CURRENT value in a single statement. An EXPIRED lock is cleared;
-    /// a FUTURE lock is never cleared, so the threshold cannot be bypassed by parallel bursts.
+    /// Counts one password attempt against <paramref name="user"/> BEFORE the password is compared:
+    /// increment AccessFailedCount, and when it reaches <see cref="ValidationRules.MaxLoginAttempts"/>
+    /// set LockoutEnd and reset the counter, all against the row's CURRENT value in one statement.
+    /// True when the attempt was counted; false when a lock that has not expired refused it, and
+    /// then the password must not be compared. An EXPIRED lock is cleared; a FUTURE lock is never
+    /// cleared, so the threshold cannot be bypassed by requests sent together.
     /// </summary>
-    private async Task IncrementAndMaybeLockLoginAsync(
+    /// <remarks>
+    /// The attempt that reaches the threshold is counted and latches the lock in the same
+    /// statement, so a window hands out exactly MaxLoginAttempts comparisons. A counted attempt
+    /// whose request then dies stays counted: the limiter fails closed. Only a lockout-eligible
+    /// account reaches this (the callers compare an exempt account's password without counting),
+    /// which keeps the invariant "LockoutEnd non-null => the account was lockout-eligible".
+    /// </remarks>
+    private async Task<bool> ClaimLoginAttemptAsync(
         ApplicationUser user, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        // An account exempt from lockout (LockoutEnabled=false) never accrues lock state,
-        // preserving the invariant "LockoutEnd non-null => the account was lockout-eligible"
-        // that the read gate relies on. (Diverges from Identity's AccessFailedAsync, which
-        // always increments; safe here because the read gate never re-checks the flag mid-count.)
-        if (!user.LockoutEnabled)
-            return;
-
         var max = ValidationRules.MaxLoginAttempts;
         var until = now.AddMinutes(ValidationRules.LoginLockoutMinutes);
 
@@ -357,7 +397,7 @@ public class AuthService : IAuthService
             // increment that lands AFTER a peer already latched the lock updates zero rows —
             // no residual count survives onto the next window. Because a matched row is
             // therefore always null-or-expired, the LockoutEnd else-branch is just null.
-            await _context.Users
+            var counted = await _context.Users
                 .Where(u => u.Id == user.Id && u.LockoutEnabled && (u.LockoutEnd == null || u.LockoutEnd < now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.AccessFailedCount,
@@ -367,7 +407,12 @@ public class AuthService : IAuthService
                     .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
             // Detach so the tracked (now-stale) user can't be written back by a later save.
             _context.Entry(user).State = EntityState.Detached;
-            return;
+            return counted == 1;
+        }
+
+        if (user.LockoutEnd is { } standing && standing > now)
+        {
+            return false;
         }
 
         if (user.AccessFailedCount + 1 >= max)
@@ -385,6 +430,7 @@ public class AuthService : IAuthService
         }
         user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await _context.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     // On the relational path ExecuteUpdate bypasses the change tracker, so the tracked
@@ -1065,33 +1111,46 @@ public class AuthService : IAuthService
     /// <c>IPinVerifier</c> precisely so wrong values land on the shared PIN lockout.
     /// </para>
     /// <para>
-    /// Every branch mirrors <see cref="LoginAsync"/>, on purpose — including revealing a lock ONLY
-    /// once the password has been proven (ADR-0012), so the lock state never becomes a signal for a
-    /// guesser. What it does NOT mirror is the generic "Invalid email or password": the caller is
-    /// already authenticated as a known account, so there is no enumeration to protect and a vague
-    /// message would only leave the user guessing which field was wrong.
+    /// It counts as <see cref="LoginAsync"/> does, on the same row and the same limit: the attempt is
+    /// counted before the password is compared (ADR-0012 decision 2), so a burst here is bounded as
+    /// one at the login is. What it does NOT mirror is the answer: the caller is already
+    /// authenticated as a known account, so there is no enumeration to protect. A locked account is
+    /// told it is locked, whatever password was sent and without reading it, as a locked PIN is
+    /// (ADR-0010); a wrong password is "Invalid password.", since a vague message would only leave
+    /// the user guessing which field was wrong.
     /// </para>
     /// </remarks>
     private async Task VerifyAccountPasswordAsync(
         ApplicationUser user, string password, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var passwordOk = await CheckPasswordAsync(user, password, cancellationToken);
-        // Respect Identity's per-user LockoutEnabled opt-out, exactly as the login path does.
-        var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
-            ? end
-            : (DateTimeOffset?)null;
 
-        if (passwordOk)
+        // Counted before the comparison, on the login's own row and limit (ADR-0012 decision 2).
+        // An exempt account is compared without counting, exactly as the login path does.
+        if (user.LockoutEnabled && !await ClaimLoginAttemptAsync(user, now, cancellationToken))
         {
-            if (lockedUntil is { } until)
-            {
-                _logger.LogWarning(
-                    "PIN enrolment refused for locked account {UserId} until {Until}", user.Id, until);
-                throw AccountLockedException.Until(until, now);
-            }
+            /*
+              LOCKED: REFUSED UNREAD, as a locked PIN is (ADR-0010). The caller is signed in as this
+              account, so saying it is locked tells nobody anything new; what must not show is
+              whether the password was right, and an answer given without reading it cannot show
+              that (ADR-0012 decision 3).
+            */
+            var lockedUntil = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.Id == user.Id)
+                .Select(u => u.LockoutEnd)
+                .FirstOrDefaultAsync(cancellationToken)
+                ?? now.AddMinutes(ValidationRules.LoginLockoutMinutes);
+            _logger.LogWarning(
+                "PIN enrolment refused unread for locked account {UserId} until {Until}", user.Id, lockedUntil);
+            throw AccountLockedException.Until(lockedUntil, now);
+        }
 
-            if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
+        if (await CheckPasswordAsync(user, password, cancellationToken))
+        {
+            // The claim counted this attempt: the right password clears it, and a lock it or a
+            // wrong password beside it latched. An exempt account resets only what it carries.
+            if (user.LockoutEnabled || user.AccessFailedCount != 0 || user.LockoutEnd is not null)
             {
                 await ResetLoginLockoutAsync(user, cancellationToken);
                 /*
@@ -1107,16 +1166,16 @@ public class AuthService : IAuthService
             }
 
             /*
-              THEN TRACK IT AGAIN, where the reset or the new password hash stopped tracking it.
-              On a relational provider ResetLoginLockoutAsync and StoreNewPasswordHashAsync detach
-              `user`, and the login path can leave it so because it never saves that user again.
-              This caller does: UpdateAsync first runs Identity's user validators, which look the
-              user up by name and by e-mail. With `user` detached those lookups track a SECOND
-              instance of the row, the store's Attach(user) then finds two instances under one key
-              and throws, and a first PIN after a wrong password answers 500 with nothing stored.
-              Tracked, the lookups resolve to this instance.
+              THEN TRACK IT AGAIN, where the claim, the reset or the new password hash stopped
+              tracking it. On a relational provider each of the three detaches `user`, and the login
+              path can leave it so because it never saves that user again. This caller does:
+              UpdateAsync first runs Identity's user validators, which look the user up by name and
+              by e-mail. With `user` detached those lookups track a SECOND instance of the row, the
+              store's Attach(user) then finds two instances under one key and throws, and a first
+              PIN after a wrong password answers 500 with nothing stored. Tracked, the lookups
+              resolve to this instance.
 
-              The InMemory branches of the two never detach, so there is nothing to attach there.
+              The InMemory branches never detach, so there is nothing to attach there.
             */
             if (_context.Entry(user).State == EntityState.Detached)
             {
@@ -1126,13 +1185,7 @@ public class AuthService : IAuthService
             return;
         }
 
-        // Wrong password. Count it — but not while already locked, so a persistent attacker cannot
-        // extend the window by hammering this endpoint instead of the login one.
-        if (lockedUntil is null)
-        {
-            await IncrementAndMaybeLockLoginAsync(user, now, cancellationToken);
-        }
-
+        // Wrong password, already counted by the claim.
         _logger.LogWarning("PIN enrolment refused: wrong password for account {UserId}", user.Id);
         throw new AuthenticationException("Invalid password.", ErrorCodes.InvalidCredentials);
     }

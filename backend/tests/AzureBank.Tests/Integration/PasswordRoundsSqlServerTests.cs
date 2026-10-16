@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Entities;
@@ -97,9 +98,12 @@ public sealed class PasswordRoundsSqlServerTests : IDisposable
         await StoreAHashAt100000Async(email);
 
         // Each loads the row before any of them has stored the new hash, so one write lands and
-        // the others find another hash in the row than the one they verified.
+        // the others find another hash in the row than the one they verified. Five, the most a
+        // window compares: each is counted before it is compared, and a sixth sent at the same
+        // moment would meet the lock the fifth latched and be refused unread, the right password
+        // and all (ADR-0012 decision 2).
         var together = await Task.WhenAll(
-            Enumerable.Range(0, 6).Select(_ => SignInAsync(client, email, Password)));
+            Enumerable.Range(0, ValidationRules.MaxLoginAttempts).Select(_ => SignInAsync(client, email, Password)));
         var stored = await StoredAsync(email);
         var after = await SignInAsync(client, email, Password);
 

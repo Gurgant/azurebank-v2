@@ -124,11 +124,14 @@ const STARTING_ACCOUNTS = [
   { name: 'Checking', type: 'Checking', balance: 2300, isPrimary: false },
 ];
 
-/** The body of a refused sign-in: one answer for a wrong password and for an unknown address. */
+/**
+ * The body of a refused sign-in: one answer for a wrong password, for an unknown address and for
+ * a locked account.
+ */
 const INVALID_CREDENTIALS = {
   status: 401,
   errorCode: 'INVALID_CREDENTIALS',
-  detail: 'Invalid email or password.',
+  detail: 'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
   instance: '/api/auth/login',
 };
 
@@ -485,12 +488,10 @@ describe("who signs in to the mock while the page is the demo, and who doesn't",
     const withItsPair = await signIn(copy.email, copy.password);
 
     expect(wrong).toEqual([401, 401, 401, 401, 401]);
-    expect(withItsPair.status).toBe(429);
-    expect(await withItsPair.json()).toMatchObject({
-      status: 429,
-      errorCode: 'ACCOUNT_LOCKED',
-      instance: '/api/auth/login',
-    });
+    // Locked, and the copy's own pair is answered as a wrong password is (ADR-0012 decision 3).
+    expect(mockState.loginLockedUntil[copy.email]).toBeDefined();
+    expect(withItsPair.status).toBe(401);
+    expect(await withItsPair.json()).toMatchObject(INVALID_CREDENTIALS);
   });
 
   it('in the demo nobody outside a claimed copy signs in', async () => {

@@ -292,7 +292,8 @@ Use a phone, or make the browser window about 390 pixels wide.
    later." and the PIN. It has no "Show sign-in details" and no "Start over": that browser does
    not keep the copy.
 
-Both browsers can be signed in at once. A wrong pair is answered "Invalid email or password."
+Both browsers can be signed in at once. A wrong pair is answered "Invalid email or password.
+After 5 failed attempts, sign-in is paused for 15 minutes."
 
 **Forget this copy** removes the email and the password from this browser, and nothing else.
 You should see "This browser no longer remembers the copy." and **Try the demo** again. The

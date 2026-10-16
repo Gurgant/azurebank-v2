@@ -1,7 +1,7 @@
 # ADR-0026: The absolute session cap is re-authenticated, never extended
 
 **Status:** Accepted · **Date:** 2026-07-30 · **Amended:** 2026-09-28 (item 4, ADR-0057),
-2026-10-05 (item 2, ADR-0063) · **Decision Makers:** Vladislav Aleshaev
+2026-10-05 (item 2, ADR-0063), 2026-10-16 (ADR-0012) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -65,9 +65,9 @@ becomes of the old session, and a later reader would otherwise take them for bug
 - A wrong password costs a message, not a session: a 401 `INVALID_CREDENTIALS` is exempt from the
   sign-out a 401 otherwise triggers, so the client never passes through `expired`, a transition
   that runs `resetApiState()` and discards every cached balance and account.
-- The upstream error is forwarded verbatim, which inherits the API's login semantics: the generic
-  401, the `ACCOUNT_LOCKED` 429 with its `Retry-After`, and a lock that reveals itself only to a
-  correct password (ADR-0012). The endpoint adds the BFF's `auth` rate-limit policy.
+- The upstream error is forwarded verbatim, which inherits the API's login semantics: one generic
+  401 for every refused password, a locked account's included, whose text says that sign-in pauses
+  after repeated failures (ADR-0012). The endpoint adds the BFF's `auth` rate-limit policy.
 
 ## Verified by
 

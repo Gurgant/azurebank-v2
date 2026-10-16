@@ -102,6 +102,27 @@ const NOBODY = 'visitor@azurebank.example';
 type Answer = () => Response | Promise<Response> | undefined;
 
 /**
+ * The 429 `ACCOUNT_LOCKED` the API sent at sign-in for the right password on a locked account. It
+ * sends none since ADR-0012 decision 3 changed: a locked account is answered with the 401 of a
+ * wrong password, and the mock follows the API. The page still has its branch for this answer, so
+ * the tests of that branch send it by hand, `seconds` before the lock ends.
+ */
+function lockAnswer(seconds: number): Answer {
+  return () =>
+    problem({
+      status: 429,
+      errorCode: 'ACCOUNT_LOCKED',
+      detail:
+        'Too many failed login attempts. Your account is temporarily locked; try again later.',
+      instance: '/api/auth/login',
+      extensions: {
+        retryAfterSeconds: seconds,
+        lockedUntil: new Date(Date.now() + seconds * 1000).toISOString(),
+      },
+    });
+}
+
+/**
  * The API's refusal for an empty pool, with the API's own sentence: not the page's. The sentence
  * is `PoolEmptyDetail` in backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs, and the
  * day's limit further down gives `DailyLimitDetail`; src/features/demo/demoContract.test.ts holds
@@ -380,10 +401,8 @@ describe('the sign-in page without the demo', () => {
 
   it('without the tag: a lock takes "Sign in" away, and says so with its countdown', async () => {
     // CONTROL: green before this change
-    // Locked after too many wrong passwords, and the right password typed: the one answer that
-    // says the lock (src/mocks/handlers.ts).
-    mockState.loginLockedUntil[MOCK_USER.email] = new Date(Date.now() + 30_000).toISOString();
-    const { requests } = await openSignInPage({ demo: false });
+    // The lock's 429, with 30 s left (see `lockAnswer`).
+    const { requests } = await openSignInPage({ demo: false, signIn: lockAnswer(30) });
     await fillTheForm(MOCK_USER.email, MOCK_PASSWORD);
 
     await userEvent.click(signInButton());
@@ -1079,11 +1098,10 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
 
   it('a lock met by the form takes "Sign in" away until its countdown ends, on the demo too', async () => {
     // CONTROL: green before this change
-    // A copy somebody claimed, locked after too many wrong passwords, and its right password
-    // typed into the form: the one answer that says the lock (src/mocks/handlers.ts).
+    // A copy somebody claimed, its right password typed into the form, and the lock's 429 with
+    // 30 s left (see `lockAnswer`).
     const { copy } = seedMockDemoCopy();
-    mockState.loginLockedUntil[copy.email] = new Date(Date.now() + 30_000).toISOString();
-    const { requests } = await openSignInPage();
+    const { requests } = await openSignInPage({ signIn: lockAnswer(30) });
     await fillTheForm(copy.email, copy.password);
 
     await userEvent.click(signInButton());
@@ -1482,11 +1500,10 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   });
 
   it('a locked copy: the existing banner and countdown; "Continue" waits; the form keeps "Sign in"', async () => {
-    const kept = rememberAClaimedCopy();
-    // Locked after too many wrong passwords. The kept password is the right one: the one answer
-    // that says the lock (src/mocks/handlers.ts).
-    mockState.loginLockedUntil[kept.email] = new Date(Date.now() + 30_000).toISOString();
-    const { requests } = await openSignInPage();
+    rememberAClaimedCopy();
+    // The kept password is the right one, answered with the lock's 429 with 30 s left (see
+    // `lockAnswer`).
+    const { requests } = await openSignInPage({ signIn: lockAnswer(30) });
 
     await userEvent.click(continueButton());
 
@@ -1522,9 +1539,8 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   });
 
   it('when the lock\'s countdown ends the banner goes and "Continue with my copy" can be pressed again', async () => {
-    const kept = rememberAClaimedCopy();
-    mockState.loginLockedUntil[kept.email] = new Date(Date.now() + 30_000).toISOString();
-    await openSignInPage();
+    rememberAClaimedCopy();
+    await openSignInPage({ signIn: lockAnswer(30) });
     installFakeClock();
     const pressedAt = Date.now();
 

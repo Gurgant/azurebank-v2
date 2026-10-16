@@ -137,8 +137,21 @@ public sealed partial class PasswordRehashWriteSqlServerTests : IDisposable
     [SqlServerTheory]
     [InlineData(1)]
     [InlineData(ValidationRules.MaxLoginAttempts)]
-    public async Task ASignInThatBeganBeforeWrongPasswords_LeavesTheirCountAndTheirLock(int wrongPasswords)
+    public async Task ASignInThatBeganBeforeWrongPasswords_ClearsWhatTheyCounted_AndStoresTheNewHash(int wrongPasswords)
     {
+        /*
+          Until 2026-10-16 this sign-in left the count and the lock of wrong passwords sent while it
+          was compared: it counted nothing itself, and cleared only what the row it loaded showed.
+          Since then it counts its own attempt before comparing (ADR-0012 decision 2), and a right
+          password clears the count and any lock latched while it was compared, theirs included: a
+          sign-in that succeeds starts a new window, as one did after earlier failures. The write of
+          the new hash must not put back the count the row was loaded with, which is zero here, as
+          the clearing leaves it: the other tests of this class hold that write's columns.
+
+          With MaxLoginAttempts wrong passwords, this sign-in's claim is the first of the window,
+          so four of them are counted and compared, the last of the four latches the lock, and the
+          fifth meets it and is refused unread, with the same 401.
+        */
         var (client, email) = await RegisterAsync();
         await StoreAHashAt100000Async(email);
         var before = await StoredAsync(email);
@@ -155,18 +168,11 @@ public sealed partial class PasswordRehashWriteSqlServerTests : IDisposable
 
         var after = await StoredAsync(email);
         using var all = new AssertionScope();
-        status.Should().Be(HttpStatusCode.OK, "this sign-in read the row before any wrong password");
+        status.Should().Be(HttpStatusCode.OK, "this sign-in's attempt was counted before any wrong password");
         before.AccessFailedCount.Should().Be(0, "ARRANGE");
         before.LockoutEnd.Should().BeNull("ARRANGE");
-        if (wrongPasswords < ValidationRules.MaxLoginAttempts)
-        {
-            after.AccessFailedCount.Should().Be(wrongPasswords, "the wrong passwords stay counted");
-            after.LockoutEnd.Should().BeNull();
-        }
-        else
-        {
-            after.LockoutEnd.Should().BeAfter(DateTimeOffset.UtcNow, "the account stays locked");
-        }
+        after.AccessFailedCount.Should().Be(0, "the right password cleared the count, theirs included");
+        after.LockoutEnd.Should().BeNull("and any lock latched while it was compared");
 
         AccountPasswordHasher.IterationsOf(after.PasswordHash).Should().Be(220_000);
     }
@@ -214,8 +220,14 @@ public sealed partial class PasswordRehashWriteSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
-    public async Task ASignInOnAHashAt100000_SendsOneUpdateOfTheUsersRow_ThatSetsTheHashAndUpdatedAtOnly()
+    public async Task ASignInOnAHashAt100000_StoresTheHashInOneUpdate_ThatSetsTheHashAndUpdatedAtOnly()
     {
+        /*
+          A sign-in writes the user's row twice whatever its hash, since ADR-0012 decision 2: the
+          claim of its attempt, before the password is compared, and on a right password the
+          clearing of the count. Both set the lockout's columns and the update time only. On a hash
+          below the count the new hash is one more write, between the two.
+        */
         var (client, email) = await RegisterAsync();
         await StoreAHashAt100000Async(email);
         string usersTable;
@@ -240,11 +252,24 @@ public sealed partial class PasswordRehashWriteSqlServerTests : IDisposable
         first.Should().Be(HttpStatusCode.OK);
         second.Should().Be(HttpStatusCode.OK);
         _commands.Selects.Should().NotBeEmpty("the recorder was listening: the sign-in read the user");
-        onTheOlderHash.Should().ContainSingle("the new hash is one statement")
-            .Which.Should().BeEquivalentTo(nameof(ApplicationUser.PasswordHash), nameof(ApplicationUser.UpdatedAt));
+        onTheOlderHash.Should().BeEquivalentTo(
+            [ClaimOrClearing, [nameof(ApplicationUser.PasswordHash), nameof(ApplicationUser.UpdatedAt)], ClaimOrClearing],
+            options => options.WithStrictOrdering(),
+            "the claim, the new hash in one statement, and the clearing");
         again.Selects.Should().NotBeEmpty("the recorder was listening the second time too");
-        UpdatesOf(usersTable, again.Writes).Should().BeEmpty("a hash at the count is left as it is");
+        UpdatesOf(usersTable, again.Writes).Should().BeEquivalentTo(
+            [ClaimOrClearing, ClaimOrClearing],
+            options => options.WithStrictOrdering(),
+            "a hash at the count is left as it is: the claim and the clearing only");
     }
+
+    /// <summary>The columns the claim of a sign-in attempt and its clearing set (ADR-0012).</summary>
+    private static readonly string[] ClaimOrClearing =
+    [
+        nameof(ApplicationUser.AccessFailedCount),
+        nameof(ApplicationUser.LockoutEnd),
+        nameof(ApplicationUser.UpdatedAt),
+    ];
 
     /// <summary>
     /// For each UPDATE of <paramref name="table"/> in <paramref name="commands"/>, the columns it
