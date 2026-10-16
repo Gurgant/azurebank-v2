@@ -6,8 +6,8 @@ namespace AzureBank.Shared.Exceptions;
 /// Thrown when the login's lock (<see cref="ValidationRules.MaxLoginAttempts"/> failures)
 /// refuses a password proof made behind a session, where the account is already known: the
 /// password proof of a first PIN (ADR-0040). Rendered as HTTP 429 Too Many Requests +
-/// errorCode ACCOUNT_LOCKED + a Retry-After header, which the BFF does not forward, with the
-/// unlock time surfaced via Details (retryAfterSeconds, lockedUntil).
+/// errorCode ACCOUNT_LOCKED + a Retry-After header, which the BFF forwards with the error, with
+/// the unlock time surfaced via Details (retryAfterSeconds, lockedUntil).
 ///
 /// It is thrown for every password, the right one included, without reading it, so it cannot
 /// tell whether the password was right. Sign-in never throws it: there a locked account is

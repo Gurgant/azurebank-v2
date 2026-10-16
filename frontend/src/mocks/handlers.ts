@@ -4116,19 +4116,19 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     const account = mockState.session.email;
     const nowMs = Date.now();
     if (!claimLoginAttempt(account, nowMs)) {
-      // A BFF action, so the body is forwarded with the API's own instance and no Retry-After
-      // header survives the hop (see `BFF_ACTION_INSTANCES`).
+      // The API's body, with its own `instance`, and the API's `Retry-After` with it: the BFF
+      // copies that header onto every error it forwards (`KeepTheApisRetryHeaders` in
+      // backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
       const lockedUntil = mockState.loginLockedUntil[account];
+      const retryAfterSeconds = Math.ceil((Date.parse(lockedUntil) - nowMs) / 1000);
       return problem({
         instance: '/api/auth/pin',
         status: 429,
         errorCode: 'ACCOUNT_LOCKED',
         detail:
           'Too many failed login attempts. Your account is temporarily locked; try again later.',
-        extensions: {
-          retryAfterSeconds: Math.ceil((Date.parse(lockedUntil) - nowMs) / 1000),
-          lockedUntil,
-        },
+        extensions: { retryAfterSeconds, lockedUntil },
+        headers: { 'Retry-After': String(retryAfterSeconds) },
       });
     }
     if (password !== MOCK_PASSWORD) {
