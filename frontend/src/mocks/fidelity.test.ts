@@ -1321,8 +1321,9 @@ describe('failure modes the mock could not previously produce', () => {
       session the account is known, so the lock is no secret, and an answer given unread cannot say
       whether the password was right (ADR-0012 decision 3). Measured on SQL Server on 2026-10-16
       (`LoginGuessBoundSqlServerTests`): twenty wrong passwords sent together, five compared, 401 x5
-      and 429 x15; then the right one, 429, compared 0. Through the BFF the body is forwarded with
-      the API's own `instance` and no `Retry-After`, as every BFF action's is.
+      and 429 x15; then the right one, 429, compared 0. Through the BFF the body keeps the API's own
+      `instance`, and the API's `Retry-After` comes with it (`KeepTheApisRetryHeaders` in
+      BffAuthController.cs).
     */
     seedMockSession({ ...mockState.session!, hasPin: false });
     const enrol = (password: string) =>
@@ -1345,8 +1346,8 @@ describe('failure modes the mock could not previously produce', () => {
 
     const right = await enrol('Password1!');
     expect(right.status).toBe(429);
-    expect(right.headers.get('Retry-After')).toBeNull();
     const body = await right.json();
+    expect(right.headers.get('Retry-After')).toBe(String(body.retryAfterSeconds));
     expect(body).toMatchObject({
       errorCode: 'ACCOUNT_LOCKED',
       detail:
