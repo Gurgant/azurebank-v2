@@ -299,8 +299,8 @@ describe('contract: money', () => {
   it('lists the row a deposit wrote by the key it was sent with, and nothing by an unknown key', async () => {
     /*
       `GET /api/transactions?IdempotencyKey=` (ADR-0009): what a client whose answer was lost asks
-      to find the movement its request made. The row carries the key in the table and never on the
-      wire, so the only way to see it is to list by it.
+      to find the movement its request made. The row carries the key, in the table and in every
+      answer that shows it, so a client checks each row it is given against the key it sent.
 
       On a probe account of its own, so the seeded first account's balance and history stay as they
       were: drained and closed afterwards, the way the funded probe above is.
@@ -325,14 +325,17 @@ describe('contract: money', () => {
         }),
       });
       expect(deposited.status).toBe(201);
-      const row = (deposited.body as { data: { transaction: { id: string } } }).data.transaction;
+      const row = (
+        deposited.body as { data: { transaction: { id: string; idempotencyKey: string | null } } }
+      ).data.transaction;
+      expect(row.idempotencyKey).toBe(key);
 
       const byKey = await call(`/api/transactions?IdempotencyKey=${key}`);
       const found = byKey.body as ListedPage;
       expect(byKey.status).toBe(200);
       expect(found.data.map((t) => t.id)).toEqual([row.id]);
       expect(found.pagination.totalItems).toBe(1);
-      expect(found.data[0]).not.toHaveProperty('idempotencyKey');
+      expect(found.data[0].idempotencyKey).toBe(key);
 
       const byUnknown = await call(`/api/transactions?IdempotencyKey=${idempotencyKey()}`);
       const empty = byUnknown.body as ListedPage;
@@ -361,6 +364,6 @@ describe('contract: money', () => {
 
 /** The members of the listing these assertions read. */
 interface ListedPage {
-  data: { id: string }[];
+  data: { id: string; idempotencyKey: string | null }[];
   pagination: { totalItems: number; totalPages: number };
 }

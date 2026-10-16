@@ -98,7 +98,8 @@ stop rather than guess. When the server read the key's record as committed it sa
 again. When it did not, the client involves the user, because inventing a guess would be worse than
 asking. For a commit the server can prove, the 409 itself answers. The ledger can be asked too,
 though the client does not ask it: each row a money request writes on the caller's own accounts
-carries the request's key, and `GET /api/transactions?IdempotencyKey=` lists them (ADR-0009).
+carries the request's key, and `GET /api/transactions?IdempotencyKey=` lists them, each with its
+key (ADR-0009).
 
 There are **no optimistic updates on money**. Balances come from a refetch after invalidation. In
 a bank a briefly-wrong balance is a correctness failure, not a UX blemish.

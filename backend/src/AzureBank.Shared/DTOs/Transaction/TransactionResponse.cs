@@ -14,4 +14,12 @@ public class TransactionResponse
     public string? SenderAzureTag { get; set; }
     public TransactionStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// The <c>Idempotency-Key</c> of the money request that wrote this row, so that a client
+    /// that lists by a key can check each row against it. Null on a row no keyed request wrote,
+    /// and on the payee's row of a transfer from another user, which never carries the sender's
+    /// key (ADR-0009).
+    /// </summary>
+    public Guid? IdempotencyKey { get; set; }
 }

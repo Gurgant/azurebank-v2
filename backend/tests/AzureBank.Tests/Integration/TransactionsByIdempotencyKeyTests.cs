@@ -47,6 +47,12 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
         page.Data.Single().Amount.Should().Be(25m);
         page.Pagination.TotalItems.Should().Be(1);
         page.Pagination.TotalPages.Should().Be(1);
+        // The row names the key that wrote it, in the listing and in the deposit's own answer.
+        page.Data.Single().IdempotencyKey.Should().Be(key);
+        row.IdempotencyKey.Should().Be(key);
+        // The other deposit's row names its own key, never this one.
+        (await ListAsync(token, key: null)).Data.Where(t => t.Id != row.Id)
+            .Should().ContainSingle().Which.IdempotencyKey.Should().NotBeNull().And.NotBe(key);
     }
 
     /// <summary>
@@ -120,6 +126,7 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
             new[] { TransactionType.TransferOut, TransactionType.TransferIn });
         page.Data.Should().ContainSingle(t => t.Type == TransactionType.TransferOut)
             .Which.Id.Should().Be(transferId, "the outgoing row is the one the answer names");
+        page.Data.Should().OnlyContain(t => t.IdempotencyKey == key, "both rows name the key that wrote them");
         page.Pagination.TotalItems.Should().Be(2);
 
         // Each row on its own account: the listing by key, narrowed to one account, holds that
@@ -155,10 +162,12 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
 
         var senders = await ListAsync(senderToken, key);
         senders.Data.Should().ContainSingle().Which.TransactionNumber.Should().Be(number);
+        senders.Data.Single().IdempotencyKey.Should().Be(key);
 
-        // CONTROL: the payee's row is there, and the payee can list it.
-        (await ListAsync(payee.Token, key: null)).Data.Should().ContainSingle()
-            .Which.Type.Should().Be(TransactionType.TransferIn);
+        // CONTROL: the payee's row is there, and the payee can list it; it names no key.
+        var payeesRow = (await ListAsync(payee.Token, key: null)).Data.Should().ContainSingle().Subject;
+        payeesRow.Type.Should().Be(TransactionType.TransferIn);
+        payeesRow.IdempotencyKey.Should().BeNull("the payee is never handed the sender's key");
 
         var payees = await ListAsync(payee.Token, key);
         payees.Data.Should().BeEmpty("the payee's row does not carry the sender's key");

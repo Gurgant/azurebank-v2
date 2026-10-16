@@ -3869,6 +3869,14 @@ export interface components {
             status: components["schemas"]["TransactionStatus"];
             /** Format: date-time */
             createdAt: string;
+            /**
+             * Format: uuid
+             * @description The `Idempotency-Key` of the money request that wrote this row, so that a client
+             *     that lists by a key can check each row against it. Null on a row no keyed request wrote,
+             *     and on the payee's row of a transfer from another user, which never carries the sender's
+             *     key (ADR-0009).
+             */
+            idempotencyKey?: null | string;
         };
         /**
          * @description Transaction Statuses: Pending, Completed, Failed, Reversed

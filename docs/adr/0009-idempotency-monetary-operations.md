@@ -70,7 +70,8 @@ before the commit and a commit whose response was lost demand opposite recoverie
   carries its `Idempotency-Key`: a deposit's row, a withdrawal's, a transfer's outgoing row, and
   both rows of a move between the caller's own accounts. `GET /api/transactions?IdempotencyKey=`
   lists them, inside the caller's open accounts as every listing, so another user's key gives an
-  empty page. The payee's row of a transfer to another user carries none: the payee is never
+  empty page, and every answer that shows a row carries its key as `idempotencyKey`: the listing,
+  a row read by its id, and a deposit's or a withdrawal's 201. The payee's row of a transfer to another user carries none: the payee is never
   handed the sender's key. The key stays on the rows for as long as they exist, after its record
   has expired. Rows written by an app without this change carry none: the demo's seeded history,
   and the rows of the app of before when a failed check puts it back on the new schema (ADR-0061).

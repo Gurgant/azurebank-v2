@@ -5150,6 +5150,14 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The `Idempotency-Key` of the money request that wrote this row, so that a client\r\nthat lists by a key can check each row against it. Null on a row no keyed request wrote,\r\nand on the payee's row of a transfer from another user, which never carries the sender's\r\nkey (ADR-0009).",
+            "format": "uuid"
           }
         }
       },

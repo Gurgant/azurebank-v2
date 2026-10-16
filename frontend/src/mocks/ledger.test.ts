@@ -260,7 +260,7 @@ describe('GET /api/transactions honours IdempotencyKey', () => {
   }
 
   async function listedBy(key: string): Promise<{
-    data: { id: string; type: string }[];
+    data: { id: string; type: string; idempotencyKey: string | null }[];
     pagination: { totalItems: number; totalPages: number };
   }> {
     const res = await fetch(
@@ -335,17 +335,19 @@ describe('GET /api/transactions honours IdempotencyKey', () => {
     expect(mockState.transactions.filter((t) => t.idempotencyKey === key)).toHaveLength(1);
   });
 
-  it('never ships the key on the wire', async () => {
+  it('ships the key on every row it answers with, and null on a row no request wrote', async () => {
     const key = crypto.randomUUID();
     const deposited = await send('/api/transactions/deposit', key, {
       accountId: MAIN_ACCOUNT_ID,
       amount: 25,
     });
 
-    expect((await deposited.json()).data.transaction).not.toHaveProperty('idempotencyKey');
-    for (const row of (await listedBy(key)).data) {
-      expect(row).not.toHaveProperty('idempotencyKey');
-    }
+    expect((await deposited.json()).data.transaction.idempotencyKey).toBe(key);
+    const found = (await listedBy(key)).data;
+    expect(found.map((row) => row.idempotencyKey)).toEqual([key]);
+    // The seeded history was written by no request.
+    const seeded = mockState.transactions.find((t) => t.idempotencyKey === null);
+    expect(seeded).toBeDefined();
   });
 
   it.each(['not-a-key', '', ' '])(

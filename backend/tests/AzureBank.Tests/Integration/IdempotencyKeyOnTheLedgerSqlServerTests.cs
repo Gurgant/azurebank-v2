@@ -101,6 +101,15 @@ public sealed class IdempotencyKeyOnTheLedgerSqlServerTests : IDisposable
             page.Pagination.TotalPages.Should().Be(1);
         }
 
+        foreach (var (page, key) in new[]
+        {
+            (byDeposit, made.DepositKey), (byWithdrawal, made.WithdrawalKey),
+            (byInternal, made.InternalKey), (byExternal, made.ExternalKey),
+        })
+        {
+            page.Data.Should().OnlyContain(t => t.IdempotencyKey == key, "each row names the key that wrote it");
+        }
+
         byNone.Data.Should().BeEmpty();
         byNone.Pagination.TotalItems.Should().Be(0);
         byNone.Pagination.TotalPages.Should().Be(0);
@@ -117,8 +126,9 @@ public sealed class IdempotencyKeyOnTheLedgerSqlServerTests : IDisposable
         var byTheDepositsKey = await ListAsync(client, made.Payee.Token, made.DepositKey);
 
         using var assertions = new AssertionScope();
-        // CONTROL: the payee's row is there, and the payee lists it.
+        // CONTROL: the payee's row is there, and the payee lists it; it names no key.
         all.Data.Should().ContainSingle().Which.Type.Should().Be(TransactionType.TransferIn);
+        all.Data.Single().IdempotencyKey.Should().BeNull("the payee is never handed the sender's key");
         byTheTransfersKey.Data.Should().BeEmpty("the payee's row does not carry the sender's key");
         byTheTransfersKey.Pagination.TotalItems.Should().Be(0);
         byTheDepositsKey.Data.Should().BeEmpty("a key of another user is a key no row of the caller carries");

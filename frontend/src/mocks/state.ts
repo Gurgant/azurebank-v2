@@ -53,11 +53,16 @@ export interface MockTransaction {
   senderAzureTag: string | null;
   status: TransactionStatus;
   createdAt: string;
+  /**
+   * The `Idempotency-Key` of the money request that wrote the row; null on a row no request wrote
+   * (ADR-0009).
+   */
+  idempotencyKey: string | null;
 }
 
 /**
- * What the mock's ledger STORES: the wire shape plus the two columns the database has and the API
- * does not return.
+ * What the mock's ledger STORES: the wire shape plus the column the database has and the API does
+ * not return.
  *
  * `Transaction.AccountId` is a real column — `TransactionService` filters on it and 403s when the
  * account is not the caller's — but `TransactionResponse` has no such field, so a client cannot
@@ -65,17 +70,16 @@ export interface MockTransaction {
  * shows a running-balance column only when the feed is scoped to one account. A cross-account list
  * has rows whose `balanceAfter` cannot be attributed to anything.
  *
- * `Transaction.IdempotencyKey` is the other: the `Idempotency-Key` of the money request that wrote
- * the row, in the canonical form the key was parsed to, and null on a row no request wrote. The
- * API puts it on the caller's own rows and never on the payee's row of a transfer to another user,
- * a row this mock does not keep. `GET /api/transactions?IdempotencyKey=` filters on it.
+ * It is stripped on the way out by `toWire`, so the mock cannot let a client depend on a field the
+ * real API will never send.
  *
- * Both are stripped on the way out by `toWire`, so the mock cannot let a client depend on a field
- * the real API will never send.
+ * `idempotencyKey`, which the wire shape does carry, is kept in the canonical form the key was
+ * parsed to. The API puts it on the caller's own rows and never on the payee's row of a transfer
+ * to another user, a row this mock does not keep. `GET /api/transactions?IdempotencyKey=` filters
+ * on it.
  */
 export interface MockLedgerEntry extends MockTransaction {
   accountId: string;
-  idempotencyKey: string | null;
 }
 
 /**
@@ -98,6 +102,7 @@ export function toWire(entry: MockLedgerEntry): MockTransaction {
     senderAzureTag: entry.senderAzureTag,
     status: entry.status,
     createdAt: entry.createdAt,
+    idempotencyKey: entry.idempotencyKey,
   };
 }
 
