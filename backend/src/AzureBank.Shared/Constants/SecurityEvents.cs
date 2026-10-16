@@ -311,6 +311,36 @@ public static class SecurityEvents
     /// </remarks>
     public const string PinChangeRefused = "PinChangeRefused";
 
+    /// <summary>
+    /// A PIN offered to the PIN check (<c>POST /api/auth/pin/verify</c>, the check the BFF uses to
+    /// raise a session) was compared and found wrong. Detail carries the ErrorCodes reason:
+    /// <c>INVALID_PIN</c>, or <c>PIN_LOCKED</c> when the lock answers that wrong PIN. A request the
+    /// lock refused unread writes no row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same guess that <see cref="PinChangeRefused"/> records at the route that replaces the PIN,
+    /// and the mints at the doors where money moves, made at the route that only checks it. The
+    /// attempts are counted by the same lockout (ADR-0010), so guesses made here alone lock every money
+    /// movement, and this row is what says where they were made.
+    /// </para>
+    /// <para>
+    /// The answer to the caller is unchanged: <c>200</c> with <c>verified</c> false for a wrong PIN, the
+    /// lock's <c>429</c> for the guess that arms it. The subject is the USER: the request names no
+    /// account. Written with <c>RecordRefusalAsync</c> on its own connection, through the same site as
+    /// <see cref="PinChangeRefused"/>. No notice is owed (ADR-0047 D4) and no <c>SecurityEvent</c> log
+    /// line is written, as at the mints.
+    /// </para>
+    /// <para>
+    /// NOT raised for a check by a user who has no PIN: nothing is compared, no attempt is spent, and
+    /// the answer is <c>verified</c> false as before. NOT raised for a request that finds the PIN already
+    /// locked: its PIN is not read, and a row for each such request would be a write the caller repeats
+    /// at will for as long as the lock stands (ADR-0044).
+    /// </para>
+    /// <para>OWASP: <c>authn_login_fail</c>.</para>
+    /// </remarks>
+    public const string PinVerificationRefused = "PinVerificationRefused";
+
     /// <summary>A self-registration was refused because the email or handle already exists.</summary>
     /// <remarks>
     /// No OWASP counterpart: <c>user_created</c> covers the success only. This exists because the

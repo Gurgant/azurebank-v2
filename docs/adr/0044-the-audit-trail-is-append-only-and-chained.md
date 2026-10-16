@@ -1,7 +1,8 @@
 # ADR-0044: Security events go to an append-only, hash-chained table
 
 **Status:** Accepted · **Date:** 2026-08-19 · **Amended:** 2026-08-29 to 2026-09-02 (D6, D7, D8),
-2026-09-04 to 2026-10-03 (ADR-0047, 0049, 0050, 0056 to 0058, 0062), 2026-10-13, 2026-10-14
+2026-09-04 to 2026-10-03 (ADR-0047, 0049, 0050, 0056 to 0058, 0062), 2026-10-13, 2026-10-14,
+2026-10-16
 
 ## Context
 
@@ -67,20 +68,22 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
   ledger row, the consumed `StepUpAuthorization`, its audit rows and the chain verdict. The success
   row names that authorisation under its hash, and the pack checks the unchained table against it
   (`ATransferWhoseAuthorisationRowIsGone_IsBOUNDAUTHORISATIONMISSING_AndTheChainStaysIntact`).
-- **What is wired, and what is not.** Fifteen events write a row, at nine `_audit.Record(` and eight
+- **What is wired, and what is not.** Sixteen events write a row, at nine `_audit.Record(` and eight
   `_audit.RecordRefusalAsync(` sites. Seven are administrative: `AccountDeleted`,
   `AccountNumberRevealed`, `AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`,
   `RefreshTokenReuse` (the tripwire) and `PinChanged`, which alone writes no log line (ADR-0047).
   Four are money movements (B1 in the code), `MoneyDeposited`, `MoneyWithdrawn`, `MoneyTransferred`
   and `MoneyTransferredInternally`: one row each, a transfer's on its outgoing ledger row, dropped
   with a failed attempt (`ADepositThatRetries_WritesExactlyOneAuditRow`), and no log line: evidence
-  to keep, not an alert. Four are refusals: `MoneyWithdrawalRefused`, `MoneyTransferRefused` and
+  to keep, not an alert. Five are refusals: `MoneyWithdrawalRefused`, `MoneyTransferRefused` and
   `AccountDeletionRefused` (ADR-0049) for no step-up authorisation, or a PIN compared and found
-  wrong at the four mints (ADR-0056), and `PinChangeRefused` for one at a PIN change. A request the
-  lock refuses unread, registration refusals and business validation (insufficient funds, the daily
-  limit) stay log-only, because a row the caller can repeat at will is an unbounded write on the
-  tail lock (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`); retry collisions as
-  health signals, not acts of a principal; `RefreshRenewalRateHigh` because a renewal writes nothing
+  wrong at the four mints (ADR-0056), `PinChangeRefused` for one at a PIN change, and
+  `PinVerificationRefused` for one at the PIN check that raises a session; the last two share one
+  site. A request the lock refuses unread, registration refusals and business validation
+  (insufficient funds, the daily limit) stay log-only, because a row the caller can repeat at will
+  is an unbounded write on the tail lock
+  (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`); retry collisions as health
+  signals, not acts of a principal; `RefreshRenewalRateHigh` because a renewal writes nothing
   (ADR-0057). `AuditChainUnavailable` is log-only by necessity: its row needs the lock that failed.
 
 ## Rejected
