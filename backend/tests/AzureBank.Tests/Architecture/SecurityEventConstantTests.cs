@@ -516,7 +516,9 @@ public class SecurityEventConstantTests
             + "MitigationFailed row went with the family revoke it reported on (ADR-0057 F3), so the token "
             + "paths hold two — the unknown grant and the tripwire. EIGHT with PinChangeRefused: "
             + "one site in AuthService for a current PIN found wrong on a PIN change, which "
-            + "arms the same lockout as a wrong PIN at a mint. Moving this means moving "
+            + "arms the same lockout as a wrong PIN at a mint. STILL EIGHT with "
+            + "PinVerificationRefused: the PIN check that raises a session writes through that same "
+            + "site, so the events grew to sixteen and the sites did not. Moving this means moving "
             + "ADR-0044's \"What is wired\" section too");
 
         perProject["Infrastructure"].Should().Be(
