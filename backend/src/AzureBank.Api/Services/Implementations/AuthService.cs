@@ -811,10 +811,39 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
-    public Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default) =>
-        // Delegated to PinService (attempt-limiting + lockout persisted in its own
-        // DbContext scope, so it never rides the caller's transaction/idempotency).
-        _pinVerifier.VerifyPinAsync(userId, pin, cancellationToken);
+    public async Task<bool> VerifyPinAsync(Guid userId, string pin, CancellationToken cancellationToken = default)
+    {
+        // The PIN check that raises a session records a refused guess on the rule of the mints and
+        // of the PIN change: a PIN that was compared and found wrong leaves a row, whether its answer
+        // is verified false or the lock's 429, and a request the lock refused unread leaves none
+        // (ADR-0044). A user with no PIN has nothing to compare: the verifier answers false without
+        // spending an attempt, so that answer writes no row either.
+        var hasPin = await _context.Users
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => !string.IsNullOrEmpty(u.PinHash))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        bool verified;
+        try
+        {
+            // Delegated to PinService (attempt-limiting + lockout persisted in its own
+            // DbContext scope, so it never rides the caller's transaction/idempotency).
+            verified = await _pinVerifier.VerifyPinAsync(userId, pin, cancellationToken);
+        }
+        catch (PinLockedException locked) when (locked.PinWasCompared)
+        {
+            await RecordPinRefusalAsync(SecurityEvents.PinVerificationRefused, userId, ErrorCodes.PinLocked);
+            throw;
+        }
+
+        if (!verified && hasPin)
+        {
+            await RecordPinRefusalAsync(SecurityEvents.PinVerificationRefused, userId, ErrorCodes.InvalidPin);
+        }
+
+        return verified;
+    }
 
     /// <inheritdoc />
     public async Task SetPinAsync(Guid userId, SetPinRequest request, CancellationToken cancellationToken = default)
@@ -906,13 +935,13 @@ public class AuthService : IAuthService
             }
             catch (PinLockedException locked) when (locked.PinWasCompared)
             {
-                await RecordPinChangeRefusalAsync(userId, ErrorCodes.PinLocked);
+                await RecordPinRefusalAsync(SecurityEvents.PinChangeRefused, userId, ErrorCodes.PinLocked);
                 throw;
             }
 
             if (!currentPinProved)
             {
-                await RecordPinChangeRefusalAsync(userId, ErrorCodes.InvalidPin);
+                await RecordPinRefusalAsync(SecurityEvents.PinChangeRefused, userId, ErrorCodes.InvalidPin);
 
                 // The answer a mint gives for a bad PIN (StepUpAuthorizationService.MintAsync).
                 throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
@@ -1079,17 +1108,19 @@ public class AuthService : IAuthService
     }
 
     /// <summary>
-    /// A PIN change refused for its current PIN, on its own connection: <c>PinChangeRefused</c>,
-    /// subject the user, <c>Detail</c> the <c>ErrorCodes</c> constant the caller received.
+    /// A PIN refused at one of the two routes of this service that compare it, on its own connection:
+    /// <c>PinChangeRefused</c> for the current PIN of a PIN change, <c>PinVerificationRefused</c> for
+    /// the PIN check that raises a session. Subject the user, <c>Detail</c> the <c>ErrorCodes</c>
+    /// reason.
     /// </summary>
     /// <remarks>
-    /// <c>RecordRefusalAsync</c>, never <c>Record</c>: nothing is saved on this path, and a row in
+    /// <c>RecordRefusalAsync</c>, never <c>Record</c>: nothing is saved on either path, and a row in
     /// the request's unit of work would be discarded with it. The detail is the reason and nothing
-    /// of either PIN the request carried (ADR-0044 D5).
+    /// of any PIN the request carried (ADR-0044 D5).
     /// </remarks>
-    private Task RecordPinChangeRefusalAsync(Guid userId, string errorCode) =>
+    private Task RecordPinRefusalAsync(string securityEvent, Guid userId, string errorCode) =>
         _audit.RecordRefusalAsync(
-            SecurityEvents.PinChangeRefused,
+            securityEvent,
             AuditOutcome.Refused,
             actorUserId: userId,
             subjectType: "User",

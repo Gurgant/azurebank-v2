@@ -25,9 +25,9 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The bound on the rows a refused PIN writes, on SQL Server, at the four mints and at the PIN
-/// change: one row for each PIN that was compared with the stored one and found wrong, and none
-/// for a request that the lock refused unread (ADR-0044).
+/// The bound on the rows a refused PIN writes, on SQL Server, at the four mints, at the PIN change
+/// and at the PIN check: one row for each PIN that was compared with the stored one and found wrong,
+/// and none for a request that the lock refused unread (ADR-0044).
 /// </summary>
 /// <remarks>
 /// Behind <c>[SqlServerTheory]</c> because the two things it holds exist only there: a refusal
@@ -64,6 +64,7 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
     [InlineData("deletion")]
     [InlineData("withdrawal")]
     [InlineData("change")]
+    [InlineData("verify")]
     public async Task RequestsAgainstAStandingLock_Answer429_AndWriteNoRow(string route)
     {
         var client = CreateClient();
@@ -91,8 +92,8 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
 
         answers.Should().Equal(
             [
-                HttpStatusCode.Unauthorized,
-                HttpStatusCode.Unauthorized,
+                scenario.Wrong,
+                scenario.Wrong,
                 HttpStatusCode.TooManyRequests,
                 HttpStatusCode.TooManyRequests,
                 HttpStatusCode.TooManyRequests,
@@ -126,6 +127,7 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
     [InlineData("deletion")]
     [InlineData("withdrawal")]
     [InlineData("change")]
+    [InlineData("verify")]
     public async Task ABurstOfWrongPins_WritesOneRowForEachPinThatWasCompared(string route)
     {
         var client = CreateClient();
@@ -147,8 +149,8 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
                     + $"rows {rows.Count} ({Describe(rows)})");
 
                 answers.Should().OnlyContain(
-                    a => a == HttpStatusCode.Unauthorized || a == HttpStatusCode.TooManyRequests,
-                    $"round {round}: a wrong PIN is answered 401, or 429 by the lock");
+                    a => a == scenario.Wrong || a == HttpStatusCode.TooManyRequests,
+                    $"round {round}: a wrong PIN is answered {(int)scenario.Wrong}, or 429 by the lock");
                 compared.Should().Be(
                     ValidationRules.MaxPinAttempts, $"round {round}: ADR-0010 bounds what a burst has compared");
                 rows.Count.Should().Be(
@@ -162,8 +164,8 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
                     r => r.Detail == ErrorCodes.PinLocked,
                     $"round {round}: the wrong PIN that arms the lock is answered by it, and leaves its row");
                 rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
-                    answers.Count(a => a == HttpStatusCode.Unauthorized),
-                    $"round {round}: every 401 was a PIN compared under the threshold");
+                    answers.Count(a => a == scenario.Wrong),
+                    $"round {round}: every {(int)scenario.Wrong} was a PIN compared under the threshold");
             }
         }
 
@@ -181,6 +183,7 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
     [InlineData("deletion")]
     [InlineData("withdrawal")]
     [InlineData("change")]
+    [InlineData("verify")]
     public async Task ARightPinBetweenWrongOnes_IsAccepted_AndLeavesNoRow(string route)
     {
         var client = CreateClient();
@@ -201,12 +204,7 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
             + $"compared {_hasher.Comparisons}, rows {Describe(rows)}");
 
         answers.Should().Equal(
-            [
-                HttpStatusCode.Unauthorized,
-                route == "change" ? HttpStatusCode.OK : HttpStatusCode.Created,
-                HttpStatusCode.Unauthorized,
-                HttpStatusCode.Unauthorized,
-            ],
+            [scenario.Wrong, scenario.Accepted, scenario.Wrong, scenario.Wrong],
             "the right PIN is accepted and resets the count, so the two wrong PINs after it are the first "
             + "and the second of a new count and no lock is armed");
         _hasher.Comparisons.Should().Be(4, "every one of the four PINs was read");
@@ -267,8 +265,15 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
         await AssertTheChainVerifiesAsync();
     }
 
+    /// <summary>
+    /// A route under test. <paramref name="Wrong"/> is how it answers a wrong PIN under the threshold
+    /// and <paramref name="Accepted"/> how it answers the right one: the mints refuse with 401 and
+    /// create with 201, the PIN change answers 401 and 200, and the PIN check answers 200 to both,
+    /// with <c>verified</c> false or true.
+    /// </summary>
     private sealed record Scenario(
-        Guid UserId, string Path, Func<string, object> Body, string Event, string SubjectType, Guid Subject);
+        Guid UserId, string Path, Func<string, object> Body, string Event, string SubjectType, Guid Subject,
+        HttpStatusCode Wrong = HttpStatusCode.Unauthorized, HttpStatusCode Accepted = HttpStatusCode.Created);
 
     private sealed record LockAnswer(string Raw, string Headers, string? MediaType, string[] RetryAfter);
 
@@ -364,10 +369,15 @@ public sealed class PinRefusalRowBoundSqlServerTests : IDisposable
             case "change":
                 return new Scenario(userId, "/api/auth/pin",
                     pin => new SetPinRequest { Pin = "654321", CurrentPin = pin },
-                    SecurityEvents.PinChangeRefused, "User", userId);
+                    SecurityEvents.PinChangeRefused, "User", userId, Accepted: HttpStatusCode.OK);
+            case "verify":
+                return new Scenario(userId, "/api/auth/pin/verify",
+                    pin => new VerifyPinRequest { Pin = pin },
+                    SecurityEvents.PinVerificationRefused, "User", userId,
+                    Wrong: HttpStatusCode.OK, Accepted: HttpStatusCode.OK);
             default:
                 throw new ArgumentOutOfRangeException(
-                    nameof(route), route, "external, internal, deletion, withdrawal or change");
+                    nameof(route), route, "external, internal, deletion, withdrawal, change or verify");
         }
     }
 

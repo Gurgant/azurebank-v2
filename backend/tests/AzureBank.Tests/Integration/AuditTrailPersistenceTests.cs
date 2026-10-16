@@ -764,6 +764,90 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             "a change that proved its PIN, and one that offered none, are not refused guesses");
     }
 
+    [Fact]
+    public async Task AWrongPinAtThePinCheck_WritesItsRow_AndNothingOfThePin()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+
+        var response = await VerifyPinAsync("999999");
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the PIN check answers a wrong PIN with verified false");
+        (await VerifiedAsync(response)).Should().BeFalse("999999 is not the PIN");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.PinVerificationRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.Detail.Should().Be(
+            ErrorCodes.InvalidPin, "the reason the PIN was refused, and nothing of the PIN itself");
+        row.SubjectType.Should().Be("User");
+        row.SubjectId.Should().Be(userId, "the PIN check names no account: its subject is the user");
+        row.RowHash.Should().MatchRegex("^[0-9a-f]{64}$", "the row joined the chain");
+    }
+
+    [Fact]
+    public async Task TheLockoutAtThePinCheck_LeavesARowForEachGuess_AndNoneForARequestAgainstTheLock()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+
+        var answers = new List<HttpStatusCode>();
+        for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
+        {
+            answers.Add((await VerifyPinAsync("999999")).StatusCode);
+        }
+
+        answers.Should().Equal(
+            [.. Enumerable.Repeat(HttpStatusCode.OK, ValidationRules.MaxPinAttempts - 1), HttpStatusCode.TooManyRequests],
+            "the wrong PINs under the threshold are answered verified false, and the one that arms the lock 429");
+
+        var locked = await VerifyPinAsync("123456");
+        locked.StatusCode.Should().Be(
+            HttpStatusCode.TooManyRequests, "the right PIN is refused too once the PIN is locked");
+        var lockedAgain = await VerifyPinAsync("999999");
+        lockedAgain.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        // As at the mints and at the PIN change, the attempt that arms the lock is recorded as the
+        // lockout, and a request that finds the lock standing leaves no row: its PIN is not read.
+        var rows = await RowsForActorAsync(userId, SecurityEvents.PinVerificationRefused);
+        rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
+            ValidationRules.MaxPinAttempts - 1,
+            "the attempt that arms the lock is recorded as the lockout instead");
+        rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
+            1, "the attempt that arms the lock, and not the two requests the standing lock refused");
+        rows.Should().OnlyContain(r => r.Outcome == AuditOutcome.Refused && r.SubjectId == userId);
+    }
+
+    [Fact]
+    public async Task APinCheckThatIsNotAGuess_WritesNoRefusal()
+    {
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // No PIN yet: nothing is compared, so nothing was guessed and no attempt is spent.
+        var noPin = await VerifyPinAsync("123456");
+        noPin.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await VerifiedAsync(noPin)).Should().BeFalse("a user without a PIN does not pass the check");
+
+        await SetPinAsync(token);
+
+        var right = await VerifyPinAsync("123456");
+        right.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await VerifiedAsync(right)).Should().BeTrue("123456 is the PIN");
+
+        (await RowsForActorAsync(userId, SecurityEvents.PinVerificationRefused)).Should().BeEmpty(
+            "a check with no PIN to compare, and one that proved the PIN, are not refused guesses");
+    }
+
+    private Task<HttpResponseMessage> VerifyPinAsync(string pin) =>
+        Client.PostAsJsonAsync("/api/auth/pin/verify", new VerifyPinRequest { Pin = pin }, JsonOptions);
+
+    private static async Task<bool> VerifiedAsync(HttpResponseMessage response)
+    {
+        using var body = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return body.RootElement.GetProperty("data").GetProperty("verified").GetBoolean();
+    }
+
     private Task<HttpResponseMessage> ChangePinAsync(string currentPin, string newPin) =>
         Client.PostAsJsonAsync(
             "/api/auth/pin", new SetPinRequest { Pin = newPin, CurrentPin = currentPin }, JsonOptions);
