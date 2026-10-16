@@ -1700,6 +1700,15 @@ export interface paths {
                     AccountId?: string;
                     FromDate?: string;
                     ToDate?: string;
+                    /**
+                     * @description An `Idempotency-Key`: lists the rows on the caller's own open accounts that the money
+                     *     requests sent with it wrote. A key is unique per endpoint and for 24 h only, so one key can
+                     *     list the rows of more than one request; a row's type and time tell them apart. Another
+                     *     user's key, or a key no row carries, gives an empty page. An empty page is not yet evidence
+                     *     that nothing was applied: while the request's claim may still be live, about 2 minutes, it
+                     *     can still commit (ADR-0022).
+                     */
+                    IdempotencyKey?: string;
                     Page?: number;
                     PageSize?: number;
                 };
@@ -3851,6 +3860,14 @@ export interface components {
             status: components["schemas"]["TransactionStatus"];
             /** Format: date-time */
             createdAt: string;
+            /**
+             * Format: uuid
+             * @description The `Idempotency-Key` of the money request that wrote this row, so that a client
+             *     that lists by a key can check each row against it. Null on a row no keyed request wrote,
+             *     and on the payee's row of a transfer from another user, which never carries the sender's
+             *     key (ADR-0009).
+             */
+            idempotencyKey?: null | string;
         };
         /**
          * @description Transaction Statuses: Pending, Completed, Failed, Reversed

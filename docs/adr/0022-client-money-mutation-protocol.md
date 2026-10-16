@@ -1,7 +1,8 @@
 # ADR-0022: Client-side money-mutation protocol
 
 **Status:** Accepted · **Date:** 2026-07-25 · **Amended:** 2026-08-12, 2026-08-16 (ADR-0041,
-ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059) · **Decision Makers:** Vladislav Aleshaev
+ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059), 2026-10-16 (ADR-0009) · **Decision
+Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -89,12 +90,22 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 - Not covered: "the server never saw it" and "the server saw it and died" look the same: no answer
   (`NETWORK`) or a `5xx`. KEEP (decision 2) is the safe answer for both, so a lost request occupies
   its key until the TTL: correctness first. An abort by the caller is decision 3, not this.
-- Not covered: no endpoint answers "did key X land?". A record read as committed answers in the 409
-  itself (`applied: true`); otherwise the user is asked to check: with the flag absent, a rejection
-  with no HTTP status, a 409 naming no code, an edit with a key held, or a closed account met
-  under a held key by the mint of a new authorisation or by the withdrawal dialog's check on
-  Continue. When the record has vanished another request may be about to commit, and "start
-  over" mints a new key.
+- Not covered: the client does not ask whether key X landed, though the API can be asked:
+  `GET /api/transactions?IdempotencyKey=` lists the rows on the caller's own accounts that the
+  requests sent with that key wrote, and the payee of a transfer never receives the sender's key
+  (ADR-0009). Each row the API answers with carries the key that wrote it, so a client takes only
+  the rows that carry the key it sent: an app that does not know the parameter, one put back by a
+  failed check (ADR-0061), answers the caller's latest page unfiltered, and its rows carry no key. A
+  key is unique per endpoint and for 24 h only, so a row's type and time tell which request of that
+  key wrote it. A record read as committed answers in the 409 itself (`applied: true`); otherwise
+  the user is asked to check: with the flag absent, a rejection with no HTTP status, a 409 naming no
+  code, an edit with a key held, or a closed account met under a held key by the mint of a new
+  authorisation or by the withdrawal dialog's check on Continue. When the record has vanished
+  another request may be about to commit, and "start over" mints a new key. An empty listing by key
+  is evidence that nothing was applied only once the claim is stale, 2 minutes after it was made, or
+  its record has expired, and only on an account still open. The 2 minutes rest on the request
+  deadline of ADR-0058, which a frozen API cannot enforce (its residual risk 4); the same key sent
+  again once the claim is stale is fenced, and applies the money at most once.
 - Not covered: the mutex bounds elevation to one retry. A second 403 after an elevation surfaces as
   an error: the session level is not sticking, which is a BFF defect to diagnose there.
 - Not covered: two browser tabs. Each mints its own key for its own intent; server-side velocity

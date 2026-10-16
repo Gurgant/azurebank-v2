@@ -55,6 +55,15 @@ public class Transaction
 
     public string? SenderAzureTag { get; set; }
 
+    /// <summary>
+    /// The <c>Idempotency-Key</c> of the money request that wrote this row, on the rows it writes
+    /// on the caller's own accounts: a deposit's, a withdrawal's, a transfer's outgoing row, and
+    /// both rows of a move between the caller's own accounts. Null on the payee's row of a transfer
+    /// to another user, which must not hand the payee the sender's key, on the demo's seeded
+    /// history, which no request wrote, and on the rows written before the column existed.
+    /// </summary>
+    public Guid? IdempotencyKey { get; set; }
+
     public TransactionStatus Status { get; set; } = TransactionStatus.Unspecified;
 
     /// <summary>

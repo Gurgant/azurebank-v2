@@ -2,8 +2,8 @@
 
 **Status:** Accepted · **Date:** 2026-07-13 · **Amended:** 2026-09-21 (ADR-0056), 2026-09-24
 (decision 7), 2026-09-30 (ADR-0058), 2026-10-01 (decision 6), 2026-10-03 (the outcome table),
-2026-10-05 (decision 7), 2026-10-06 (decision 7), 2026-10-11 (the outcome table) · **Decision
-Makers:** Vladislav Aleshaev
+2026-10-05 (decision 7), 2026-10-06 (decision 7), 2026-10-11 (the outcome table), 2026-10-16 (the
+consequences) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -16,8 +16,8 @@ before the commit and a commit whose response was lost demand opposite recoverie
 ## Decision
 
 1. **Wire contract.** `Idempotency-Key`, a UUID, is required on all four: missing is 400
-   `IDEMPOTENCY_KEY_MISSING`, malformed 400 `IDEMPOTENCY_KEY_INVALID`. A key lives 24 h, per user
-   and per endpoint, which is named from route metadata because raw paths would split it.
+   `IDEMPOTENCY_KEY_MISSING`, malformed 400 `IDEMPOTENCY_KEY_INVALID`. A key's record lives 24 h,
+   per user and per endpoint, which is named from route metadata because raw paths would split it.
 2. **Storage: the primary key is the lock.** `IdempotencyRecords` is keyed by user, endpoint and
    key, so one concurrent claim INSERT wins and the loser re-reads. `ClaimId` fences every UPDATE
    and DELETE, so a commit that EF's retry re-runs, or a stale claimant, matches no row.
@@ -66,8 +66,23 @@ before the commit and a commit whose response was lost demand opposite recoverie
 - It costs an INSERT and an UPDATE per request, and one secret the API refuses to start without.
 - Not covered: after 24 h a forgotten key executes again, so a retry that late moves money twice.
 - Not covered: a key whose answer was lost stays 409 until then: correctness over availability.
-- Not covered: the `applied: true` answer names no transaction, and `GET /api/transactions` does not
-  list a movement on an account closed afterwards.
+- A movement names its request. Each ledger row a money request writes on the caller's own accounts
+  carries its `Idempotency-Key`: a deposit's row, a withdrawal's, a transfer's outgoing row, and
+  both rows of a move between the caller's own accounts. `GET /api/transactions?IdempotencyKey=`
+  lists them, inside the caller's open accounts as every listing, so another user's key gives an
+  empty page, and every answer that shows a row carries its key as `idempotencyKey`: the listing,
+  a row read by its id, and a deposit's or a withdrawal's 201. The payee's row of a transfer to another user carries none: the payee is never
+  handed the sender's key. The key stays on the rows for as long as they exist, after its record
+  has expired. Rows written by an app without this change carry none: the demo's seeded history,
+  and the rows of the app of before when a failed check puts it back on the new schema (ADR-0061).
+- Not covered: the `applied: true` answer names no transaction; the listing by key finds it. A key
+  that no row carries is evidence that nothing was applied only once the claim is stale, 2 minutes
+  after it was made, or its record has expired, since until then the request may still commit. The
+  2 minutes rest on the request deadline of ADR-0058, which a frozen API cannot enforce (its
+  residual risk 4); the same key sent again once the claim is stale is fenced, and applies the
+  money at most once. The listing does not show a movement on an account closed afterwards, and a
+  key is unique per endpoint and for 24 h only, so one key can list the rows of more than one
+  request.
 - Not covered: a replay restores status, body and content type, and no header a 201 may gain later.
 - Not covered: the claim precedes model validation, so an invalid body costs an INSERT and a DELETE.
 - Not covered: the retry jitter is fixed, and the clustered key leads with a Guid (fragmentation).
@@ -78,8 +93,10 @@ before the commit and a commit whose response was lost demand opposite recoverie
 `IdempotencyServiceTests`, `TransferTransientRetrySqlServerTests`, `ProvenCommitSourceTests`,
 `KestrelRequestSizeLimitTests`, `OversizedBodyDrainTests`, `MintOversizedBodyDrainTests`,
 `BalanceConcurrencySqlServerTests`, `BusyMoneyWriteSqlServerTests` (a busy account: the record
-is released, and the same key is a new execution), and `IdempotencyCleanupServiceTests` with
-`IdempotencyCleanupSqlServerTests` (the clean-up: what it deletes and what it keeps).
+is released, and the same key is a new execution), `IdempotencyCleanupServiceTests` with
+`IdempotencyCleanupSqlServerTests` (the clean-up: what it deletes and what it keeps), and
+`IdempotencyKeyOnTheLedgerSqlServerTests` with `TransactionsByIdempotencyKeyTests` (the key on the
+caller's own rows and never on the payee's, and the listing by it).
 
 ## Related
 

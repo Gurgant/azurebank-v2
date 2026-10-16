@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   MAIN_ACCOUNT_ID,
+  MOCK_PIN,
   SAVINGS_ACCOUNT_ID,
   mockState,
   resetMockState,
@@ -223,6 +224,144 @@ describe('GET /api/transactions honours AccountId', () => {
       // server would ever send.
       const res = await fetch(`/api/transactions?${query}`);
       expect(res.status).toBe(400);
+    },
+  );
+});
+
+/**
+ * The key of a money request on the rows it wrote, as `Transaction.IdempotencyKey` holds it on the
+ * API (ADR-0009): the mock stores it, `GET /api/transactions?IdempotencyKey=` lists by it, and no
+ * response carries it. The same listing runs against the real stack in
+ * `src/contract/money.contract.test.ts`.
+ */
+describe('GET /api/transactions honours IdempotencyKey', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const JSON_BODY = { 'Content-Type': 'application/json' };
+
+  /** Mints the authorisation a withdrawal or a transfer needs, failing loudly when refused. */
+  async function minted(url: string, body: Record<string, unknown>): Promise<string> {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: JSON_BODY,
+      body: JSON.stringify({ ...body, pin: MOCK_PIN }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()).data.authorizationId as string;
+  }
+
+  function send(url: string, key: string, body: unknown, authorizationId?: string) {
+    const headers: Record<string, string> = { ...JSON_BODY, 'Idempotency-Key': key };
+    if (authorizationId) headers['Step-Up-Authorization'] = authorizationId;
+    return fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  }
+
+  async function listedBy(key: string): Promise<{
+    data: { id: string; type: string; idempotencyKey: string | null }[];
+    pagination: { totalItems: number; totalPages: number };
+  }> {
+    const res = await fetch(
+      `/api/transactions?Page=1&PageSize=100&IdempotencyKey=${encodeURIComponent(key)}`,
+    );
+    expect(res.status).toBe(200);
+    return res.json();
+  }
+
+  it('lists the rows each money request wrote by the key it was sent with', async () => {
+    const [deposit, withdrawal, internal, external] = Array.from({ length: 4 }, () =>
+      crypto.randomUUID(),
+    );
+
+    const deposited = await send('/api/transactions/deposit', deposit, {
+      accountId: MAIN_ACCOUNT_ID,
+      amount: 25,
+    });
+    expect(deposited.status).toBe(201);
+    const depositId = (await deposited.json()).data.transaction.id;
+
+    const out = { accountId: MAIN_ACCOUNT_ID, amount: 5 };
+    const withdrawalAuth = await minted('/api/transactions/withdraw/authorizations', out);
+    expect((await send('/api/transactions/withdraw', withdrawal, out, withdrawalAuth)).status).toBe(
+      201,
+    );
+
+    const move = { fromAccountId: MAIN_ACCOUNT_ID, toAccountId: SAVINGS_ACCOUNT_ID, amount: 10 };
+    const moveAuth = await minted('/api/transfers/internal/authorizations', move);
+    expect((await send('/api/transfers/internal', internal, move, moveAuth)).status).toBe(201);
+
+    const payment = { fromAccountId: MAIN_ACCOUNT_ID, recipientAzureTag: 'friend', amount: 7 };
+    const paymentAuth = await minted('/api/transfers/authorizations', payment);
+    expect((await send('/api/transfers', external, payment, paymentAuth)).status).toBe(201);
+
+    const byDeposit = await listedBy(deposit);
+    expect(byDeposit.data.map((t) => t.id)).toEqual([depositId]);
+    expect(byDeposit.pagination).toMatchObject({ totalItems: 1, totalPages: 1 });
+    expect((await listedBy(withdrawal)).data.map((t) => t.type)).toEqual(['Withdrawal']);
+    // Both rows of a move between the caller's own accounts carry its key.
+    expect((await listedBy(internal)).data.map((t) => t.type).sort()).toEqual([
+      'TransferIn',
+      'TransferOut',
+    ]);
+    expect((await listedBy(external)).data.map((t) => t.type)).toEqual(['TransferOut']);
+  });
+
+  it('finds the rows by any spelling of the key Guid.TryParse reads as the same key', async () => {
+    const key = crypto.randomUUID();
+    await send('/api/transactions/deposit', key, { accountId: MAIN_ACCOUNT_ID, amount: 25 });
+
+    for (const spelling of [key.toUpperCase(), key.replace(/-/g, ''), `{${key}}`, `(${key})`]) {
+      expect((await listedBy(spelling)).pagination.totalItems, spelling).toBe(1);
+    }
+  });
+
+  it('answers a key no row carries with an empty page, not a refusal', async () => {
+    const page = await listedBy(crypto.randomUUID());
+
+    expect(page.data).toEqual([]);
+    expect(page.pagination).toMatchObject({ totalItems: 0, totalPages: 0 });
+  });
+
+  it('writes no second row when the same key and body are replayed', async () => {
+    const key = crypto.randomUUID();
+    const body = { accountId: MAIN_ACCOUNT_ID, amount: 25 };
+
+    expect((await send('/api/transactions/deposit', key, body)).status).toBe(201);
+    const again = await send('/api/transactions/deposit', key, body);
+
+    expect(again.headers.get('Idempotency-Replayed')).toBe('true');
+    expect(mockState.transactions.filter((t) => t.idempotencyKey === key)).toHaveLength(1);
+  });
+
+  it('ships the key on every row it answers with, and null on a row no request wrote', async () => {
+    const key = crypto.randomUUID();
+    const deposited = await send('/api/transactions/deposit', key, {
+      accountId: MAIN_ACCOUNT_ID,
+      amount: 25,
+    });
+
+    expect((await deposited.json()).data.transaction.idempotencyKey).toBe(key);
+    const found = (await listedBy(key)).data;
+    expect(found.map((row) => row.idempotencyKey)).toEqual([key]);
+    // The seeded history was written by no request.
+    const seeded = mockState.transactions.find((t) => t.idempotencyKey === null);
+    expect(seeded).toBeDefined();
+  });
+
+  it.each(['not-a-key', '', ' '])(
+    'refuses IdempotencyKey=%j the way the model binder does',
+    async (sent) => {
+      // `Guid? IdempotencyKey` on `TransactionFilter`, bound like AccountId, and an empty value is
+      // refused like garbage (EmptyQueryValueRejectingBinder). Measured through the API's own
+      // pipeline in TransactionsByIdempotencyKeyTests.
+      const res = await fetch(`/api/transactions?IdempotencyKey=${encodeURIComponent(sent)}`);
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).errors.IdempotencyKey).toEqual([
+        `The value '${sent}' is not valid for IdempotencyKey.`,
+      ]);
     },
   );
 });

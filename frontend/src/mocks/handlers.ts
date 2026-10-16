@@ -48,11 +48,11 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 /*
   `Guid.TryParse`, not "a UUID with hyphens".
 
-  Both places this is used bind through `Guid.TryParse` on the server — `Guid? AccountId` on the two
-  transaction filters, and `IdempotencyMiddleware.ReadKey`. That method accepts FIVE formats, and the
-  mock accepted one, so it answered 400 to requests the API answers 200 to. Measured against the
-  running stack rather than assumed: N, B, P and X all returned the correctly scoped total, and an
-  N-format Idempotency-Key was accepted on a deposit.
+  Every place this is used binds through `Guid.TryParse` on the server — `Guid? AccountId` on the two
+  transaction filters, `Guid? IdempotencyKey` on the list's, and `IdempotencyMiddleware.ReadKey`.
+  That method accepts FIVE formats, and the mock accepted one, so it answered 400 to requests the API
+  answers 200 to. Measured against the running stack rather than assumed: N, B, P and X all returned
+  the correctly scoped total, and an N-format Idempotency-Key was accepted on a deposit.
 
   Nothing in this app sends anything but D — ids come from the API — so no client could reach the
   gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
@@ -1493,13 +1493,15 @@ function queryParam(params: URLSearchParams, name: string): string | null {
 
 /**
  * GET /api/transactions — T1, one of the two BARE responses (no envelope, by
- * contract): a PaginatedResponse with real page math, newest first.
+ * contract): a PaginatedResponse with real page math, newest first. `IdempotencyKey` lists the
+ * rows the money request sent with that key wrote, which the four money handlers below store.
  */
 const listTransactions = api.get('/api/transactions', ({ request, response }) => {
   const params = new URL(request.url).searchParams;
   const page = Number(queryParam(params, 'Page') ?? 1);
   const pageSize = Number(queryParam(params, 'PageSize') ?? 20);
   const accountId = queryParam(params, 'AccountId');
+  const idempotencyKey = queryParam(params, 'IdempotencyKey');
 
   // `Number('')` is 0 and `Number('x')` is NaN, and either reached the page math: PageSize 0 makes
   // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
@@ -1541,9 +1543,9 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
 
   /*
     Every one of these is model-bound before the action body runs: `TransactionFilter` declares
-    `Guid? AccountId`, `DateTime? FromDate`, `DateTime? ToDate` and two `[Range]` ints. So a
-    malformed value of ANY of them is a 400 that the action never sees — which puts all of it
-    above the service's own 403, not interleaved with it.
+    `Guid? AccountId`, `DateTime? FromDate`, `DateTime? ToDate`, `Guid? IdempotencyKey` and two
+    `[Range]` ints. So a malformed value of ANY of them is a 400 that the action never sees — which
+    puts all of it above the service's own 403, not interleaved with it.
 
     The mock had the 403 in the middle: a request with both a foreign AccountId and an unparseable
     FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
@@ -1552,6 +1554,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // PRESENT, not truthy: `?AccountId=` is refused like `?AccountId=notaguid`, as the API refuses it
   // since 2026-09-24. Until then the API read an empty value as absent, and so did this.
   const canonicalAccountId = accountId !== null ? parseGuid(accountId) : null;
+  // The same binder as AccountId's, so present-but-empty is refused the same way too.
+  const canonicalIdempotencyKey = idempotencyKey !== null ? parseGuid(idempotencyKey) : null;
   /*
     ONE pass, all property-level errors together — measured, because the mock used to answer with
     whichever check happened to run first:
@@ -1563,6 +1567,9 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const bindingErrors: Record<string, string[]> = {
     ...pageErrors,
     ...(accountId !== null && !canonicalAccountId ? invalidValueError('AccountId', accountId) : {}),
+    ...(idempotencyKey !== null && !canonicalIdempotencyKey
+      ? invalidValueError('IdempotencyKey', idempotencyKey)
+      : {}),
     ...unparseableDateErrors(
       {
         FromDate: queryParam(params, 'FromDate'),
@@ -1612,6 +1619,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
 
   const ordered = [...visibleTransactions()]
     .filter((t) => !canonicalAccountId || t.accountId === canonicalAccountId)
+    // A key no row carries is an empty page, never a refusal, as on the API.
+    .filter((t) => !canonicalIdempotencyKey || t.idempotencyKey === canonicalIdempotencyKey)
     .filter((t) => {
       const at = Date.parse(t.createdAt);
       if (fromMs !== null && !Number.isNaN(fromMs) && at < fromMs) {
@@ -1935,6 +1944,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     status: 'Completed' as const,
     // Latest timestamp so it leads the newest-first history feed.
     createdAt: `2026-07-22T10:${String(index).padStart(2, '0')}:00.0000000Z`,
+    idempotencyKey: parsedKey,
   };
   // The account is guaranteed real by the 404 above, so this always files against something that
   // exists — which is the whole point: an entry whose `balanceAfter` belonged to no account would
@@ -2172,6 +2182,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     senderAzureTag: null,
     status: 'Completed' as const,
     createdAt: `2026-07-22T11:${String(index).padStart(2, '0')}:00.0000000Z`,
+    idempotencyKey: parsedKey,
   };
   mockState.transactions.push(transaction);
 
@@ -3598,6 +3609,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     senderAzureTag: null,
     status: 'Completed',
     createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
+    // The sender's row only. The payee's row, which this mock does not keep, carries no key.
+    idempotencyKey: parsedKey,
   });
 
   const payload = {
@@ -3847,6 +3860,8 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     senderAzureTag: null,
     status: 'Completed',
     createdAt: at,
+    // On both rows: both accounts are the caller's own.
+    idempotencyKey: parsedKey,
   });
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index + 1).toString(16).padStart(12, '0')}`,
@@ -3860,6 +3875,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     senderAzureTag: null,
     status: 'Completed',
     createdAt: at,
+    idempotencyKey: parsedKey,
   });
 
   const payload = {

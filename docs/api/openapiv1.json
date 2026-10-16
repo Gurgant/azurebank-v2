@@ -1814,6 +1814,15 @@
             }
           },
           {
+            "name": "IdempotencyKey",
+            "in": "query",
+            "description": "An `Idempotency-Key`: lists the rows on the caller's own open accounts that the money\r\nrequests sent with it wrote. A key is unique per endpoint and for 24 h only, so one key can\r\nlist the rows of more than one request; a row's type and time tell them apart. Another\r\nuser's key, or a key no row carries, gives an empty page. An empty page is not yet evidence\r\nthat nothing was applied: while the request's claim may still be live, about 2 minutes, it\r\ncan still commit (ADR-0022).",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "Page",
             "in": "query",
             "schema": {
@@ -5131,6 +5140,14 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The `Idempotency-Key` of the money request that wrote this row, so that a client\r\nthat lists by a key can check each row against it. Null on a row no keyed request wrote,\r\nand on the payee's row of a transfer from another user, which never carries the sender's\r\nkey (ADR-0009).",
+            "format": "uuid"
           }
         }
       },

@@ -79,6 +79,7 @@ public class TransactionService : ITransactionService
                 BalanceBefore = balanceBefore,
                 BalanceAfter = balanceAfter,
                 Description = request.Description,
+                IdempotencyKey = ConcurrencyRetry.ClaimedKey(_context),
                 Status = TransactionStatus.Completed,
                 CreatedAt = DateTime.UtcNow
             };
@@ -377,6 +378,7 @@ public class TransactionService : ITransactionService
                         BalanceBefore = balanceBefore,
                         BalanceAfter = balanceAfter,
                         Description = request.Description,
+                        IdempotencyKey = ConcurrencyRetry.ClaimedKey(_context),
                         Status = TransactionStatus.Completed,
                         CreatedAt = DateTime.UtcNow
                     };
@@ -596,6 +598,13 @@ public class TransactionService : ITransactionService
         if (filter.ToDate.HasValue)
         {
             query = query.Where(t => t.CreatedAt <= filter.ToDate.Value);
+        }
+
+        // Inside the scoping above, as every filter here: another user's key and a key no row
+        // carries both answer an empty page, and nothing tells a caller that a key exists elsewhere.
+        if (filter.IdempotencyKey.HasValue)
+        {
+            query = query.Where(t => t.IdempotencyKey == filter.IdempotencyKey.Value);
         }
 
         // Get total count

@@ -118,5 +118,12 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         // Related transaction lookup (filtered - only transfers)
         builder.HasIndex(t => t.RelatedTransactionId)
             .HasFilter("[RelatedTransactionId] IS NOT NULL");
+
+        // The rows one money request wrote, for GET /api/transactions?IdempotencyKey=. NOT unique:
+        // a move between the caller's own accounts writes two rows under one key, a key is unique
+        // per user and per endpoint only, and a key sent again after its 24 h executes again.
+        // Filtered, because the listing never asks for a row without one.
+        builder.HasIndex(t => t.IdempotencyKey)
+            .HasFilter("[IdempotencyKey] IS NOT NULL");
     }
 }

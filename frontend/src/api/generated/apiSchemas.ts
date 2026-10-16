@@ -112,6 +112,7 @@ export const TransactionResponse = z.object({
   senderAzureTag: z.string().nullable().optional(),
   status: TransactionStatus,
   createdAt: z.iso.datetime(),
+  idempotencyKey: z.uuid().nullable().optional(),
 });
 
 export type DepositResponse = z.infer<typeof DepositResponse>;

@@ -53,6 +53,11 @@ export interface MockTransaction {
   senderAzureTag: string | null;
   status: TransactionStatus;
   createdAt: string;
+  /**
+   * The `Idempotency-Key` of the money request that wrote the row; null on a row no request wrote
+   * (ADR-0009).
+   */
+  idempotencyKey: string | null;
 }
 
 /**
@@ -67,6 +72,11 @@ export interface MockTransaction {
  *
  * It is stripped on the way out by `toWire`, so the mock cannot let a client depend on a field the
  * real API will never send.
+ *
+ * `idempotencyKey`, which the wire shape does carry, is kept in the canonical form the key was
+ * parsed to. The API puts it on the caller's own rows and never on the payee's row of a transfer
+ * to another user, a row this mock does not keep. `GET /api/transactions?IdempotencyKey=` filters
+ * on it.
  */
 export interface MockLedgerEntry extends MockTransaction {
   accountId: string;
@@ -92,6 +102,7 @@ export function toWire(entry: MockLedgerEntry): MockTransaction {
     senderAzureTag: entry.senderAzureTag,
     status: entry.status,
     createdAt: entry.createdAt,
+    idempotencyKey: entry.idempotencyKey,
   };
 }
 
@@ -294,7 +305,7 @@ function defaultAccounts(): MockAccount[] {
  * `signedDelta`. The newest entry on an account therefore lands exactly on that account's balance,
  * by construction rather than by arithmetic somebody has to redo by hand after every edit.
  */
-type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
+type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter' | 'idempotencyKey'>;
 
 /**
  * Re-dates the seed into the CURRENT calendar month, preserving the authored order exactly.
@@ -464,7 +475,8 @@ function withRunningBalance(entries: SeedEntry[], accounts: MockAccount[]): Mock
     const balanceAfter = round2(running.get(entry.accountId) ?? 0);
     // Walking backwards in time: undo this entry to get the balance the PREVIOUS one left behind.
     running.set(entry.accountId, round2(balanceAfter - signedDelta(entry)));
-    return { ...entry, balanceAfter };
+    // No request wrote the seed, so no row of it carries a key: the demo's seeded history has none.
+    return { ...entry, balanceAfter, idempotencyKey: null };
   });
 }
 
