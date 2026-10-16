@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { enableDemoMode, rememberDemoCopy, resetDemoMode } from '../../test/demoMode';
 import {
+  demoCopyHasEnded,
   forgetDemoCopy,
   getDemoCopySnapshot,
   isDemoCopyOwner,
@@ -419,6 +420,21 @@ describe('the demo copy the browser keeps', () => {
       nobodySignedIn: false,
       withTheTagOff: false,
     });
+  });
+
+  it("a copy has ended once its end is this instant or behind it, by this browser's clock", () => {
+    vi.useFakeTimers({ now: Date.parse('2031-07-15T12:30:00.000Z') });
+    try {
+      const endingAt = (expiresAt: string) => demoCopyHasEnded({ ...copy, v: 1, expiresAt });
+
+      expect({
+        aSecondAhead: endingAt('2031-07-15T12:30:01.000Z'),
+        thisInstant: endingAt('2031-07-15T12:30:00.000Z'),
+        aSecondBehind: endingAt('2031-07-15T12:29:59.000Z'),
+      }).toStrictEqual({ aSecondAhead: false, thisInstant: true, aSecondBehind: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /*

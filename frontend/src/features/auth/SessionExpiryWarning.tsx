@@ -22,15 +22,25 @@ import {
   makeStyles,
 } from '@fluentui/react-components';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
-import { CONNECTION_FAILED, SERVICE_UNAVAILABLE, SIGN_OUT_FAILED } from '../../api/problemMessages';
+import {
+  CONNECTION_FAILED,
+  SERVICE_UNAVAILABLE,
+  SIGN_IN_PAUSES,
+  SIGN_OUT_FAILED,
+} from '../../api/problemMessages';
 import { WaitHint } from '../../components/feedback';
 import { useWaitLanding } from '../../hooks/useWaitLanding';
 import { atMedia } from '../../theme/breakpoints';
-import { formatLockHorizon } from '../../utils/format';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { apiSlice, useReauthenticateMutation } from '../api/apiSlice';
-import { getDemoCopySnapshot, isDemoCopyOwner, subscribeDemoCopy } from '../demo/demoCopyStorage';
-import { COPY_HAS_ENDED, STAY_SIGNED_IN } from '../demo/demoWords';
+import {
+  demoCopyHasEnded,
+  getDemoCopySnapshot,
+  isDemoCopyOwner,
+  subscribeDemoCopy,
+  type StoredDemoCopy,
+} from '../demo/demoCopyStorage';
+import { COPY_HAS_ENDED, COPY_STAY_PAUSED, STAY_SIGNED_IN } from '../demo/demoWords';
 import { selectAuthStatus, selectCurrentUser, sessionExpired, signedOut } from './authSlice';
 import {
   WARNING_LEAD_MS,
@@ -115,29 +125,28 @@ const useStyles = makeStyles({
 /**
  * What to say when re-authentication fails.
  *
- * `ACCOUNT_LOCKED` is a 429 and, per ADR-0012, the API returns it ONLY when the password was
- * CORRECT — a wrong password against a locked account still answers the generic 401, so the lock is
- * never an oracle for a guesser. That is why these two are separate messages and why neither hints
- * at the other's condition.
+ * A 401 is every refusal of the password, a lock's included. Re-authentication is the API's
+ * sign-in, which answers a locked account as it answers a wrong password, whatever password it is
+ * sent, so the lock is never an oracle for a guesser (ADR-0012 decision 3). No line here says that
+ * a lock stands, then, and each 401 says the rule that tells the holder of the right password to
+ * wait.
  *
- * `owner` says who asked: the owner of the demo copy this browser keeps, whose button sent the
- * kept password. It changes the 401's line and no other. A password nobody typed was not
- * mistyped: the API answers a copy that has ended as it answers a wrong password, so for the
- * owner that answer means the copy has ended. The copy stays kept all the same. Forgetting it
- * here would put a password field in front of the owner in the open dialog; the sign-in page
- * forgets it, when it is offered there and refused or once it is past its end.
+ * `kept` is the copy this browser keeps when its owner's button sent the kept password, and
+ * `null` when a password was typed. It changes the 401's line and no other. A password nobody
+ * typed was not mistyped: the API answers a copy that has ended, and one that is locked, as it
+ * answers a wrong password. The copy's own end tells which, by this browser's clock when the
+ * answer comes: past it the copy has ended; before it sign-in is paused, or the copy was closed
+ * early. The copy stays kept all the same. Forgetting it here would put a password field in front
+ * of whoever pressed the button, in the open dialog; the sign-in page forgets it, when it is
+ * offered there and refused past its end, or once it is past its end.
  */
-function reauthMessage(problem: ApiProblem, owner: boolean): string {
-  if (problem.errorCode === 'ACCOUNT_LOCKED') {
-    return `Too many failed attempts. Try again in about ${formatLockHorizon(
-      problem.retryAfterSeconds ?? 15 * 60,
-    )}.`;
-  }
+function reauthMessage(problem: ApiProblem, kept: StoredDemoCopy | null): string {
   if (problem.status === 401) {
-    return owner ? COPY_HAS_ENDED : "That password didn't match. Please try again.";
+    if (kept === null) return `That password didn't match. ${SIGN_IN_PAUSES}`;
+    return demoCopyHasEnded(kept) ? COPY_HAS_ENDED : COPY_STAY_PAUSED;
   }
   if (problem.status === 429) {
-    // The BFF's own auth rate limiter rather than the account lock: no unlock time to quote.
+    // The BFF's own auth rate limiter: the account's lock is a 401, above. No unlock time to quote.
     return 'Too many attempts just now. Wait a moment and try again.';
   }
   // Before the transport branch: a request with no answer in 65 s is `NETWORK` too, and it is the
@@ -364,12 +373,13 @@ export function SessionExpiryWarning() {
     setReauthError(null);
     setSignOutError(null);
     let sent = password;
+    let kept: StoredDemoCopy | null = null;
     if (owner) {
       // Read from the key now, and not taken from the last draw, which can be a second old.
       // Another tab may have started over since: the session is then the new copy's, and the
-      // password kept for the old one would be refused and worded as a copy that has ended, which
+      // password kept for the old one would be refused and worded as the old copy's answer, which
       // would be false. Nothing is sent then. The next draw, a tick away, asks for the password.
-      const kept = getDemoCopySnapshot();
+      kept = getDemoCopySnapshot();
       if (kept === null || !isDemoCopyOwner(kept, user)) return;
       sent = kept.password;
       // The press whose wait hands focus back when it ends.
@@ -381,7 +391,7 @@ export function SessionExpiryWarning() {
     } catch (caught) {
       // A 401 INVALID_CREDENTIALS is exempt from the global session-expiry rule (D3), which is what
       // lets a typo stay a typo instead of ending the session it was meant to save.
-      setReauthError(reauthMessage(caught as ApiProblem, owner));
+      setReauthError(reauthMessage(caught as ApiProblem, kept));
     }
   };
 

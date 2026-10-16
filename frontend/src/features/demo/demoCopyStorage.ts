@@ -174,6 +174,16 @@ export function isDemoCopyOwner(
   return isDemoMode() && copy !== null && user !== null && copy.email === user.email;
 }
 
+/**
+ * Has the copy's own end passed, by this browser's clock as it reads now? The server answers the
+ * kept password of a copy past its end and of a copy that is locked alike, as it answers a wrong
+ * password (ADR-0012 decision 3), and this is how the sign-in page and the dialog at a session's
+ * end tell the two apart. An end that is this very instant has passed, as on the sign-in page.
+ */
+export function demoCopyHasEnded(copy: StoredDemoCopy): boolean {
+  return Date.parse(copy.expiresAt) <= Date.now();
+}
+
 /** Tests only: the copy in memory, the last read and the key, so no test hands one to the next. */
 export function __resetDemoCopy(): void {
   refused = null;

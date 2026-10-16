@@ -47,7 +47,6 @@ interface BlockState {
   copy?: typeof KEPT | null;
   pending?: 'claim' | 'continue' | null;
   disabled?: boolean;
-  continueLocked?: boolean;
   forgotten?: boolean;
 }
 
@@ -58,7 +57,6 @@ function renderBlock(state: BlockState) {
       copy={now.copy ?? null}
       pending={now.pending ?? null}
       disabled={now.disabled ?? false}
-      continueLocked={now.continueLocked ?? false}
       forgotten={now.forgotten ?? false}
       onTry={told.onTry}
       onContinue={told.onContinue}
@@ -305,25 +303,6 @@ describe('the demo block of the sign-in page, for a browser that keeps a copy', 
       disabled: { [WORDS.continue]: true, [WORDS.getNew]: true, [WORDS.forget]: true },
       spinners: [0, 0],
       hinted: false,
-    });
-  });
-
-  it('a locked copy stops "Continue with my copy", and nothing else of the block', async () => {
-    const { control, disabled, spinners, toldOf } = renderBlock({
-      copy: KEPT,
-      continueLocked: true,
-    });
-
-    await userEvent.click(control(WORDS.continue));
-
-    expect({
-      disabled: disabled(),
-      spinners: spinners(WORDS.continue),
-      told: toldOf(),
-    }).toStrictEqual({
-      disabled: { [WORDS.continue]: true, [WORDS.getNew]: false, [WORDS.forget]: false },
-      spinners: 0,
-      told: { onTry: 0, onContinue: 0, onGetNew: 0, onForget: 0 },
     });
   });
 

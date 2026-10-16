@@ -16,11 +16,13 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { SIGN_IN_REFUSED } from '../api/problemMessages';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useClaimDemoCopyMutation, useLoginMutation } from '../features/api/apiSlice';
 import { DemoEntry, StartOverDialog } from '../features/demo';
 import {
+  demoCopyHasEnded,
   forgetDemoCopy,
   getDemoCopySnapshot,
   subscribeDemoCopy,
@@ -30,6 +32,7 @@ import {
   CLAIM_DAILY_LIMIT,
   CLAIM_POOL_EMPTY,
   COPY_NO_LONGER_AVAILABLE,
+  COPY_SIGN_IN_PAUSED,
   DEMO_SUBTITLE,
   HAVE_A_COPY_SIGN_IN,
 } from '../features/demo/demoWords';
@@ -171,8 +174,10 @@ export function LoginPage() {
     under the open page. That comparison is the browser's alone and it removes the copy: a browser
     whose clock is ahead of the server's by more than the copy has left forgets a living copy
     here, with nothing said, and offers "Try the demo". One whose clock is behind offers a copy
-    that has ended, and so does a page left open past the end: there the server's answer to
-    "Continue with my copy" is what says so.
+    that has ended, and so does a page left open past the end. The server's answer to "Continue
+    with my copy" cannot say so on its own, since it answers a locked copy alike: the page forgets
+    the copy on it only once the copy's end has passed by this browser's clock, read when the
+    answer comes (see `continueWithMyCopy`).
   */
   const stored = useSyncExternalStore(subscribeDemoCopy, getDemoCopySnapshot);
   const [openedAt] = useState(() => Date.now());
@@ -185,6 +190,9 @@ export function LoginPage() {
   // stops being said at the next "Continue with my copy", which is a press on a copy that came
   // back.
   const [forgotten, setForgotten] = useState(false);
+  // What the last "Continue with my copy" answered as a wrong password found: a copy past its end,
+  // which is forgotten, or one before it, which is kept (see `continueWithMyCopy`).
+  const [copyEnded, setCopyEnded] = useState(false);
   /*
     "Try the demo" was pressed here and its claim has not been refused: the page is waiting for
     the answer, or has it and is on its way to the dashboard.
@@ -212,7 +220,7 @@ export function LoginPage() {
   const navState: LoginNavState = navStateResult.success ? navStateResult.data : {};
   const problem = error as ApiProblem | undefined;
 
-  // D13: one ABSOLUTE deadline per lock/limit RESPONSE. Derived from the error object —
+  // D13: one ABSOLUTE deadline per limiter RESPONSE. Derived from the error object —
   // fresh identity on EVERY rejection — so a repeat lockout with the identical
   // retryAfterSeconds (fixed windows are common) still mints a fresh deadline instead
   // of staying pinned to the first, already-elapsed one.
@@ -221,16 +229,10 @@ export function LoginPage() {
     return seconds !== undefined ? retryDeadline(seconds) : null;
   }, [error]);
   const countdownActive = lockDeadline !== null && elapsedDeadline !== lockDeadline;
-  // The login form branches RATE_LIMIT_EXCEEDED vs ACCOUNT_LOCKED explicitly — never
-  // identical copy (D13): the first is per-IP throttling, the second is the credential
-  // lockout, and only the second replaces the submit entirely.
-  const accountLocked = problem?.errorCode === 'ACCOUNT_LOCKED' && countdownActive;
+  // The per-IP limiter's refusal: the one countdown on this page. A locked account has none since
+  // 2026-10-16: the API answers it with the 401 of a wrong password (ADR-0012 decision 3), so no
+  // answer says that a lock stands, or for how long, and the form keeps its "Sign in".
   const rateLimited = problem?.errorCode === 'RATE_LIMIT_EXCEEDED' && countdownActive;
-  // Whose lock it is. Met by the form, it takes the form's submit away, as before. Met by
-  // "Continue with my copy", it is the kept copy's: that button waits its countdown out, and the
-  // form keeps its submit, because the form may be for another address.
-  const formLocked = accountLocked && control === 'form';
-  const continueLocked = accountLocked && control === 'continue';
 
   const {
     register,
@@ -301,14 +303,19 @@ export function LoginPage() {
     to is the one the browser keeps now. If it keeps none any more, nothing is sent and the page
     is drawn again, which then offers "Try the demo".
 
-    Two answers mean something else here than they do for the form, and the control recorded
-    above is how the page tells them apart:
+    One answer means something else here than it does for the form, and the control recorded
+    above is how the page tells them apart: `INVALID_CREDENTIALS`. Nobody typed this pair, so it is
+    not a typing mistake. It is what a copy that has ended answers, and also a copy that is locked,
+    whatever password it is sent (ADR-0012 decision 3): somebody typed its password wrong five
+    times, on a phone, say. The answer cannot tell the two apart; the copy's own end can, by this
+    browser's clock, read when the answer comes:
 
-    - `INVALID_CREDENTIALS`. Nobody typed this pair, so it is not a typing mistake: a copy that
-      has ended, or was handed to someone else, answers exactly as a wrong password does. The copy
-      is forgotten, and the page says the copy is gone in the place of "Invalid email or
-      password.", and offers the demo again.
-    - `ACCOUNT_LOCKED`. The lock is the kept copy's: see `continueLocked` above.
+    - past the end, the copy is forgotten, the page says the copy is gone in the place of the
+      form's sentence, and offers the demo again;
+    - before it, the copy is kept, and the page says that sign-in pauses after repeated failures
+      and that a new copy is the other way on. Forgetting it would lose a copy that is alive: the
+      browser is the only place its password is kept. A copy closed before its end is answered so
+      too, and stays offered until its end, or until the visitor gets a new copy or forgets it.
   */
   const continueWithMyCopy = async () => {
     const kept = getDemoCopySnapshot();
@@ -326,9 +333,11 @@ export function LoginPage() {
       navigate(navState.from?.pathname ?? '/dashboard', { replace: true });
     } catch (refusal) {
       // Every other refusal is surfaced through the mutation's error state below, and so is this
-      // one: forgetting the copy is what it has beside its sentence.
+      // one: what it has beside its sentence is the copy's fate, decided by the copy's end.
       if ((refusal as Partial<ApiProblem> | undefined)?.errorCode === 'INVALID_CREDENTIALS') {
-        forgetDemoCopy();
+        const ended = demoCopyHasEnded(kept);
+        setCopyEnded(ended);
+        if (ended) forgetDemoCopy();
       }
     }
   };
@@ -351,7 +360,8 @@ export function LoginPage() {
       <MessageBar intent="warning" role="alert" className={demo ? styles.errorMessage : undefined}>
         <MessageBarBody>Too many attempts from your connection.</MessageBarBody>
       </MessageBar>
-      {/* Sibling, not child — see the account-lock banner below. */}
+      {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+          re-announce the whole banner every second. It carries its own polite region. */}
       <RetryCountdown deadline={lockDeadline} onElapsed={() => setElapsedDeadline(lockDeadline)} />
     </>
   );
@@ -389,38 +399,20 @@ export function LoginPage() {
       {problem?.errorCode === 'INVALID_CREDENTIALS' && (
         <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>
-            {control === 'continue' ? COPY_NO_LONGER_AVAILABLE : 'Invalid email or password.'}
+            {control !== 'continue'
+              ? SIGN_IN_REFUSED
+              : copyEnded
+                ? COPY_NO_LONGER_AVAILABLE
+                : COPY_SIGN_IN_PAUSED}
           </MessageBarBody>
         </MessageBar>
-      )}
-
-      {/* `role="alert"` because nothing else announces this. Fluent's MessageBar is `role="group"`,
-          not a live region, and the submit button unmounts when the lock lands (D13) — so focus
-          falls to <body> and a screen reader is told nothing at all. Making the button `disabled`
-          instead does NOT help: measured in Chrome, disabling a focused button also drops focus to
-          <body>. The announcement is the fix; the button's behaviour is not the problem. */}
-      {accountLocked && lockDeadline !== null && (
-        <>
-          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
-            <MessageBarBody>
-              Too many failed sign-in attempts — your account is temporarily locked.
-            </MessageBarBody>
-          </MessageBar>
-          {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
-              re-announce the whole banner every second. It carries its own polite region. */}
-          <RetryCountdown
-            deadline={lockDeadline}
-            onElapsed={() => setElapsedDeadline(lockDeadline)}
-          />
-        </>
       )}
 
       {/* A claim's two refusals of its own, worded here by their code and never in the server's
           words (backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs): the server's
           sentence for an empty pool does not say that copies come back, and its sentence for the
           day's limit ends on "later". Neither is counted down, although the day's limit names a
-          wait: the countdowns on this page belong to the lock and to the limiter, by their
-          codes. */}
+          wait: the countdown on this page belongs to the limiter, by its code. */}
       {problem?.errorCode === 'DEMO_POOL_EMPTY' && (
         <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>{CLAIM_POOL_EMPTY}</MessageBarBody>
@@ -438,7 +430,6 @@ export function LoginPage() {
       {problem &&
         ![
           'INVALID_CREDENTIALS',
-          'ACCOUNT_LOCKED',
           'RATE_LIMIT_EXCEEDED',
           'DEMO_POOL_EMPTY',
           'DEMO_DAILY_LIMIT',
@@ -461,7 +452,6 @@ export function LoginPage() {
             copy={offeredCopy}
             pending={claimSent || claiming ? 'claim' : continuing ? 'continue' : null}
             disabled={busy || rateLimited || claimSent}
-            continueLocked={continueLocked}
             forgotten={forgotten}
             onTry={() => void tryTheDemo()}
             onContinue={() => void continueWithMyCopy()}
@@ -520,20 +510,15 @@ export function LoginPage() {
           </div>
         </Field>
 
-        {/* ACCOUNT_LOCKED replaces the submit entirely (D13); the banner above
-            carries the countdown. The form's own lock, that is: a lock "Continue with my copy"
-            met leaves this button where it is. */}
-        {!formLocked && (
-          <Button
-            appearance="primary"
-            size="large"
-            className={styles.submitButton}
-            type="submit"
-            disabled={busy || rateLimited || claimSent}
-          >
-            {formSigningIn ? <Spinner size="tiny" /> : 'Sign in'}
-          </Button>
-        )}
+        <Button
+          appearance="primary"
+          size="large"
+          className={styles.submitButton}
+          type="submit"
+          disabled={busy || rateLimited || claimSent}
+        >
+          {formSigningIn ? <Spinner size="tiny" /> : 'Sign in'}
+        </Button>
         {/* Under the button that started the sign-in, and outside every alert. */}
         <WaitHint active={formSigningIn} kind="write" />
 

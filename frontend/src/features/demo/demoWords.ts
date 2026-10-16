@@ -1,3 +1,5 @@
+import { SIGN_IN_PAUSES } from '../../api/problemMessages';
+
 /*
   What the demo says to a visitor: each sentence once, under a name, and nothing else in this file.
 
@@ -91,12 +93,19 @@ export const FORGET_THIS_COPY = 'Forget this copy';
 export const COPY_FORGOTTEN = 'This browser no longer remembers the copy.';
 
 /**
- * "Continue with my copy" was answered as a wrong password is. For a pair the browser kept and
- * nobody typed, that answer means the copy is gone, and this is said in the place of "Invalid
- * email or password."
+ * "Continue with my copy" was answered as a wrong password is, past the copy's own end. For a pair
+ * the browser kept and nobody typed, that answer then means the copy is gone, and this is said in
+ * the place of the form's sentence.
  */
 export const COPY_NO_LONGER_AVAILABLE =
   'That demo copy is no longer available. Copies are closed after 24 hours. You can get a new one.';
+
+/**
+ * The same answer before the copy's end. A locked copy is answered so whatever password it is
+ * sent (ADR-0012 decision 3), and so is a copy closed early; the page cannot tell which, so the
+ * copy is kept, and this says the rule and both ways on: waiting, and a new copy.
+ */
+export const COPY_SIGN_IN_PAUSED = `Your copy did not sign in. ${SIGN_IN_PAUSES} Try again later, or get a new copy.`;
 
 // The dashboard's panel about the copy the visitor is signed in to.
 
@@ -160,8 +169,15 @@ export const demoPinHint = (pin: string) => `Demo PIN: ${pin}, unless you change
 export const STAY_SIGNED_IN = 'Stay signed in';
 
 /**
- * That button's request was answered as a wrong password is. For a password the browser kept and
- * nobody typed, that answer means the copy has ended, and this is said in the place of "That
- * password didn't match."
+ * That button's request was answered as a wrong password is, past the copy's own end. For a
+ * password the browser kept and nobody typed, that answer then means the copy has ended, and this
+ * is said in the place of "That password didn't match."
  */
 export const COPY_HAS_ENDED = 'This demo copy has ended. Sign out to get a new one.';
+
+/**
+ * The same answer before the copy's end: what a lock answers, whatever password it is sent
+ * (ADR-0012 decision 3), and what a copy closed early answers. Said in the place of
+ * `COPY_HAS_ENDED`; the copy is kept.
+ */
+export const COPY_STAY_PAUSED = `Your copy did not sign in. ${SIGN_IN_PAUSES} Try again later, or sign out to get a new copy.`;
