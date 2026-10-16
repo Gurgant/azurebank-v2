@@ -295,4 +295,72 @@ describe('contract: money', () => {
       }
     }
   });
+
+  it('lists the row a deposit wrote by the key it was sent with, and nothing by an unknown key', async () => {
+    /*
+      `GET /api/transactions?IdempotencyKey=` (ADR-0009): what a client whose answer was lost asks
+      to find the movement its request made. The row carries the key in the table and never on the
+      wire, so the only way to see it is to list by it.
+
+      On a probe account of its own, so the seeded first account's balance and history stay as they
+      were: drained and closed afterwards, the way the funded probe above is.
+    */
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Contract Keyed', type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    let probeId = '';
+
+    try {
+      probeId = (created.body as { data: { id: string } }).data.id;
+      const key = idempotencyKey();
+      const deposited = await call('/api/transactions/deposit', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': key },
+        body: JSON.stringify({
+          accountId: probeId,
+          amount: 25,
+          description: 'contract probe: found by its key',
+        }),
+      });
+      expect(deposited.status).toBe(201);
+      const row = (deposited.body as { data: { transaction: { id: string } } }).data.transaction;
+
+      const byKey = await call(`/api/transactions?IdempotencyKey=${key}`);
+      const found = byKey.body as ListedPage;
+      expect(byKey.status).toBe(200);
+      expect(found.data.map((t) => t.id)).toEqual([row.id]);
+      expect(found.pagination.totalItems).toBe(1);
+      expect(found.data[0]).not.toHaveProperty('idempotencyKey');
+
+      const byUnknown = await call(`/api/transactions?IdempotencyKey=${idempotencyKey()}`);
+      const empty = byUnknown.body as ListedPage;
+      expect(byUnknown.status).toBe(200);
+      expect(empty.data).toEqual([]);
+      expect(empty.pagination.totalItems).toBe(0);
+      expect(empty.pagination.totalPages).toBe(0);
+    } finally {
+      if (probeId) {
+        await withdrawViaMint(probeId, 25).catch(() => {});
+        await closeAccount(probeId);
+      }
+    }
+  });
+
+  it('refuses a key that is not a UUID in the binder’s words, before the listing runs', async () => {
+    // `Guid? IdempotencyKey` on `TransactionFilter` fails to bind, so the framework answers.
+    const { status, body } = await call('/api/transactions?IdempotencyKey=not-a-key');
+
+    expect(status).toBe(400);
+    expect(asProblem(body).errors?.IdempotencyKey).toEqual([
+      "The value 'not-a-key' is not valid for IdempotencyKey.",
+    ]);
+  });
 });
+
+/** The members of the listing these assertions read. */
+interface ListedPage {
+  data: { id: string }[];
+  pagination: { totalItems: number; totalPages: number };
+}

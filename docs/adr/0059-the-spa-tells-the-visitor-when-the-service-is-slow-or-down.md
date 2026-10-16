@@ -1,8 +1,9 @@
 # ADR-0059: The SPA tells the visitor when the service is slow or down
 
 **Status:** Accepted · **Date:** 2026-10-01 · **Amended:** 2026-10-01 (decisions 3 and 9: ADR-0009,
-ADR-0022) · **Decision Makers:** Vladislav Aleshaev · The client half of ADR-0058. **Amends**
-ADR-0022 decision 6, ADR-0057 §8 and the Consequences of ADR-0058.
+ADR-0022), 2026-10-16 (the consequences: ADR-0009) · **Decision Makers:** Vladislav Aleshaev · The
+client half of ADR-0058. **Amends** ADR-0022 decision 6, ADR-0057 §8 and the Consequences of
+ADR-0058.
 
 ## Context
 
@@ -88,8 +89,9 @@ only in the page (ADR-0022), so a visitor told the wrong thing sends again with 
   same on every surface and is never a sign-out. No backend behaviour changes.
 - Not covered: the key dies with the page. A reload or a new tab during a stuck send sends a new key
   and can pay twice (the FCA's 2022 Final Notice to TSB, ¶4.24(e)); the browser only asks first.
-- Not covered: nothing answers "did key X land?" without sending it again (no read-only status by
-  key is built), and a commit whose answer was lost answers `IDEMPOTENCY_IN_FLIGHT` for two minutes.
+- Not covered: the SPA does not ask whether key X landed without sending it again, though
+  `GET /api/transactions?IdempotencyKey=` lists what a key wrote without sending anything
+  (ADR-0009); and a commit whose answer was lost answers `IDEMPOTENCY_IN_FLIGHT` for two minutes.
 - Not covered: opening an account carries no key, so a second attempt can open a second account.
 - Not covered: nothing bounds retries across visitors (one read can reach the database ten times
   per operation, ADR-0058), and each page of an infinite query has its own 120 s.

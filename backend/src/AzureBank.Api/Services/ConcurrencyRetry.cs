@@ -169,6 +169,18 @@ internal static class ConcurrencyRetry
     }
 
     /// <summary>
+    /// The <c>Idempotency-Key</c> of the claim the request tracks, or null when it tracks none: the
+    /// key a money write puts on the ledger rows it creates on the caller's own accounts.
+    /// </summary>
+    /// <remarks>
+    /// The key is part of the record's primary key, so no reload and no re-arm of the claim changes
+    /// it: every attempt of a request reads the same one. A context that tracks no claim is a
+    /// service called without the middleware, and the rows it writes name no request.
+    /// </remarks>
+    internal static Guid? ClaimedKey(AzureBankDbContext context) =>
+        context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault()?.Entity.Key;
+
+    /// <summary>
     /// Retries only genuine Account RowVersion races (<see cref="IsAccountRace"/>): retrying a
     /// fenced-out claim would DOUBLE-EXECUTE — always rethrow.
     /// </summary>

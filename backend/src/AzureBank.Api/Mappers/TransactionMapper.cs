@@ -13,6 +13,8 @@ namespace AzureBank.Api.Mappers;
 /// Intentionally unmapped entity properties (by design):
 /// - AccountId, RelatedTransactionId: Internal FKs
 /// - BalanceBefore: Client has BalanceAfter, can calculate if needed
+/// - IdempotencyKey: what GET /api/transactions filters on. The caller sent it, so no response
+///   carries it
 /// - Account, RelatedTransaction: Navigation properties
 /// </remarks>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]

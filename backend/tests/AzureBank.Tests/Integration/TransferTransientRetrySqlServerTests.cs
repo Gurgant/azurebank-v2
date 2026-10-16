@@ -539,6 +539,81 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             new[] { StepUpAuthorizationStatus.Consumed }, "spent once, by the attempt that committed");
     }
 
+    // ---- The key of a request retried inside the API: on each row once, never on the payee's ----
+
+    /// <summary>
+    /// A transfer that the execution strategy runs again writes each of its rows once, and the key
+    /// of its request on the sender's row alone (ADR-0009). Before the commit was sent, or as it
+    /// started: the attempt that failed left no row, and the one that ran again wrote the key anew.
+    /// </summary>
+    [SqlServerTheory]
+    [InlineData(TransferFaultMode.AtFirstSaveChanges)]
+    [InlineData(TransferFaultMode.BeforeCommit)]
+    public async Task ExternalTransfer_RunAgainInsideTheApi_PutsItsKeyOnceOnTheSendersRowAlone(TransferFaultMode mode)
+    {
+        var fault = new TransferTransientFault(mode);
+        var client = CreateRetryingClient(fault);
+
+        var sender = await RegisterAsync(client, "sxk");
+        var recipient = await RegisterAsync(client, "rxk");
+        await DepositAsync(client, sender, 1000m);
+
+        fault.Arm();
+        var key = Guid.NewGuid();
+        var response = await TransferAsync(client, sender, new TransferRequest
+        {
+            FromAccountId = sender.AccountId,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m,
+            Description = "The key of a transfer run again"
+        }, key);
+        var rows = await TransferRowsAsync(sender.AccountId, recipient.AccountId);
+        _output.WriteLine($"{mode}: {(int)response.StatusCode}, rows: {string.Join("; ", rows)}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        fault.Fired.Should().BeTrue("the transient must actually have been injected, else nothing ran again");
+        rows.Should().BeEquivalentTo(new[]
+        {
+            (sender.AccountId, TransactionType.TransferOut, (Guid?)key),
+            (recipient.AccountId, TransactionType.TransferIn, (Guid?)null),
+        });
+        (await CountRowsCarryingAsync(key)).Should().Be(1, "one row in the whole table names the request");
+    }
+
+    [SqlServerTheory]
+    [InlineData(TransferFaultMode.AtFirstSaveChanges)]
+    [InlineData(TransferFaultMode.BeforeCommit)]
+    public async Task InternalTransfer_RunAgainInsideTheApi_PutsItsKeyOnceOnEachOfItsRows(TransferFaultMode mode)
+    {
+        var fault = new TransferTransientFault(mode);
+        var client = CreateRetryingClient(fault);
+
+        var user = await RegisterAsync(client, "sik");
+        var savingsId = await CreateSecondAccountAsync(client, user);
+        await DepositAsync(client, user, 1000m);
+
+        fault.Arm();
+        var key = Guid.NewGuid();
+        var response = await InternalTransferAsync(client, user, new InternalTransferRequest
+        {
+            FromAccountId = user.AccountId,
+            ToAccountId = savingsId,
+            Amount = 300m,
+            Description = "The key of a move run again"
+        }, key);
+        var rows = await TransferRowsAsync(user.AccountId, savingsId);
+        _output.WriteLine($"{mode}: {(int)response.StatusCode}, rows: {string.Join("; ", rows)}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        fault.Fired.Should().BeTrue("the transient must actually have been injected, else nothing ran again");
+        rows.Should().BeEquivalentTo(new[]
+        {
+            (user.AccountId, TransactionType.TransferOut, (Guid?)key),
+            (savingsId, TransactionType.TransferIn, (Guid?)key),
+        });
+        (await CountRowsCarryingAsync(key)).Should().Be(2, "the two rows of the move, and no row of a failed attempt");
+    }
+
     // ---- infrastructure ----
 
     private HttpClient CreateRetryingClient(TransferTransientFault fault)
@@ -875,6 +950,29 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         return await db.IdempotencyRecords
             .AsNoTracking()
             .SingleOrDefaultAsync(r => r.UserId == userId && r.Endpoint == endpoint && r.Key == key);
+    }
+
+    /// <summary>The transfer rows of the accounts named, with the key each carries, read from the table.</summary>
+    private async Task<List<(Guid AccountId, TransactionType Type, Guid? IdempotencyKey)>> TransferRowsAsync(
+        params Guid[] accountIds)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var rows = await db.Transactions
+            .AsNoTracking()
+            .Where(t => accountIds.Contains(t.AccountId)
+                && (t.Type == TransactionType.TransferOut || t.Type == TransactionType.TransferIn))
+            .Select(t => new { t.AccountId, t.Type, t.IdempotencyKey })
+            .ToListAsync();
+        return rows.Select(r => (r.AccountId, r.Type, r.IdempotencyKey)).ToList();
+    }
+
+    /// <summary>How many rows of the whole table carry the key.</summary>
+    private async Task<int> CountRowsCarryingAsync(Guid key)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Transactions.AsNoTracking().CountAsync(t => t.IdempotencyKey == key);
     }
 
     /// <summary>The status of every authorisation the user minted; each test here mints one.</summary>

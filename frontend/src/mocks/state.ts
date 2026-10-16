@@ -56,8 +56,8 @@ export interface MockTransaction {
 }
 
 /**
- * What the mock's ledger STORES: the wire shape plus the column the database has and the API does
- * not return.
+ * What the mock's ledger STORES: the wire shape plus the two columns the database has and the API
+ * does not return.
  *
  * `Transaction.AccountId` is a real column — `TransactionService` filters on it and 403s when the
  * account is not the caller's — but `TransactionResponse` has no such field, so a client cannot
@@ -65,11 +65,17 @@ export interface MockTransaction {
  * shows a running-balance column only when the feed is scoped to one account. A cross-account list
  * has rows whose `balanceAfter` cannot be attributed to anything.
  *
- * It is stripped on the way out by `toWire`, so the mock cannot let a client depend on a field the
- * real API will never send.
+ * `Transaction.IdempotencyKey` is the other: the `Idempotency-Key` of the money request that wrote
+ * the row, in the canonical form the key was parsed to, and null on a row no request wrote. The
+ * API puts it on the caller's own rows and never on the payee's row of a transfer to another user,
+ * a row this mock does not keep. `GET /api/transactions?IdempotencyKey=` filters on it.
+ *
+ * Both are stripped on the way out by `toWire`, so the mock cannot let a client depend on a field
+ * the real API will never send.
  */
 export interface MockLedgerEntry extends MockTransaction {
   accountId: string;
+  idempotencyKey: string | null;
 }
 
 /**
@@ -294,7 +300,7 @@ function defaultAccounts(): MockAccount[] {
  * `signedDelta`. The newest entry on an account therefore lands exactly on that account's balance,
  * by construction rather than by arithmetic somebody has to redo by hand after every edit.
  */
-type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
+type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter' | 'idempotencyKey'>;
 
 /**
  * Re-dates the seed into the CURRENT calendar month, preserving the authored order exactly.
@@ -464,7 +470,8 @@ function withRunningBalance(entries: SeedEntry[], accounts: MockAccount[]): Mock
     const balanceAfter = round2(running.get(entry.accountId) ?? 0);
     // Walking backwards in time: undo this entry to get the balance the PREVIOUS one left behind.
     running.set(entry.accountId, round2(balanceAfter - signedDelta(entry)));
-    return { ...entry, balanceAfter };
+    // No request wrote the seed, so no row of it carries a key: the demo's seeded history has none.
+    return { ...entry, balanceAfter, idempotencyKey: null };
   });
 }
 

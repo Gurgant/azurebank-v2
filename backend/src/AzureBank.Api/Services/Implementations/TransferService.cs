@@ -680,10 +680,13 @@ public class TransferService : ITransferService
                             BalanceAfter = fromAccount.Balance - request.Amount,
                             Description = request.Description ?? $"Transfer to @{recipient.AzureTag}",
                             RecipientAzureTag = recipient.AzureTag,
+                            IdempotencyKey = ConcurrencyRetry.ClaimedKey(_context),
                             Status = TransactionStatus.Completed
                         };
 
-                        // Create incoming transaction (recipient)
+                        // Create incoming transaction (recipient). No IdempotencyKey: the row is the
+                        // payee's, and the key is the sender's handle on its own request, which the
+                        // payee is never handed (ADR-0009).
                         var incomingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
@@ -985,6 +988,10 @@ public class TransferService : ITransferService
                         // No `now` here — same reason as the external transfer above:
                         // UpdateTimestamps owns the stamp, and ProcessedAt is read back below.
 
+                        // On both rows, where the external transfer puts it on one: both accounts
+                        // are the caller's own.
+                        var idempotencyKey = ConcurrencyRetry.ClaimedKey(_context);
+
                         // Create outgoing transaction. RelatedTransactionId
                         // stays null: mutual references cannot be inserted in
                         // one shot (circular FK); back-link written below.
@@ -999,6 +1006,7 @@ public class TransferService : ITransferService
                             BalanceBefore = fromAccount.Balance,
                             BalanceAfter = fromAccount.Balance - request.Amount,
                             Description = request.Description ?? $"Internal transfer to {toAccount.Name}",
+                            IdempotencyKey = idempotencyKey,
                             Status = TransactionStatus.Completed
                         };
 
@@ -1017,6 +1025,7 @@ public class TransferService : ITransferService
                             BalanceAfter = toAccount.Balance + request.Amount,
                             Description = request.Description ?? $"Internal transfer from {fromAccount.Name}",
                             RelatedTransactionId = outgoingTransaction.Id,
+                            IdempotencyKey = idempotencyKey,
                             Status = TransactionStatus.Completed
                         };
 

@@ -667,6 +667,9 @@ namespace AzureBank.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<Guid?>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("RecipientAzureTag")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
@@ -701,6 +704,9 @@ namespace AzureBank.Infrastructure.Migrations
 
                     b.HasIndex("CreatedAt")
                         .IsDescending();
+
+                    b.HasIndex("IdempotencyKey")
+                        .HasFilter("[IdempotencyKey] IS NOT NULL");
 
                     b.HasIndex("RelatedTransactionId")
                         .IsUnique()

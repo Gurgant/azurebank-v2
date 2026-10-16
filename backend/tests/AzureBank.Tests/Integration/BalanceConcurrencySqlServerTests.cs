@@ -96,7 +96,8 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
     /// More parallel deposits to one account than the retry carries: each is answered 201 and
     /// applied once, or answered the busy 503 and not applied. One of them loses the account's
     /// row on every attempt while the others race for it, and is answered busy. None is a 500.
-    /// Each key holds what its answer says: one record after a 201, none after a 503.
+    /// Each key holds what its answer says: one record after a 201, none after a 503; and one
+    /// ledger row carries it after a 201, whatever attempt wrote the row, and none after a 503.
     /// </summary>
     /// <remarks>
     /// THE BUSY ANSWER IS NOT LEFT TO THE RACE. How many of 24 free deposits spend their attempts
@@ -145,9 +146,11 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         var ledger = await ReadDepositsAsync(client, token, accountId);
         var auditRows = await CountDepositAuditRowsAsync(accountId);
         var recordsByKey = new Dictionary<Guid, List<IdempotencyStatus>>();
+        var rowsByKey = new Dictionary<Guid, int>();
         foreach (var answer in answers)
         {
             recordsByKey[answer.Key] = await ReadIdempotencyRecordsAsync(answer.Key);
+            rowsByKey[answer.Key] = await CountRowsCarryingAsync(answer.Key);
         }
 
         _output.WriteLine(
@@ -158,6 +161,8 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
             + $"balance {start} -> {balance}, the 201s sum to {applied.Sum(a => a.Amount)}; "
             + $"ledger rows {ledger.Length}, audit rows {auditRows}; "
             + $"records under the keys answered 201: {Tally(applied)}; under the keys answered 503: {Tally(refused)}; "
+            + $"ledger rows carrying the keys answered 201: {applied.Sum(a => rowsByKey[a.Key])}, "
+            + $"the keys answered 503: {refused.Sum(a => rowsByKey[a.Key])}; "
             + $"{conflicts.Length} conflicts retried, by attempt: "
             + string.Join(", ", conflicts.GroupBy(a => a).OrderBy(g => g.Key).Select(g => $"{g.Key}: {g.Count()}")));
 
@@ -176,11 +181,14 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
             AssertBusy503(answer);
             recordsByKey[answer.Key].Should().BeEmpty(
                 "the claim of a deposit answered 503 is released, so its key holds no record");
+            rowsByKey[answer.Key].Should().Be(0, "a deposit answered 503 wrote no ledger row");
         }
 
         foreach (var answer in applied)
         {
             recordsByKey[answer.Key].Should().HaveCount(1, "a key answered 201 holds exactly one record");
+            rowsByKey[answer.Key].Should().Be(
+                1, "a deposit answered 201 wrote one ledger row, which names its key, whatever attempt wrote it");
         }
 
         gaveUp.Should().Be(refused.Length, "each busy answer is one deposit that spent its attempts");
@@ -690,6 +698,14 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
             .Where(r => r.Key == key)
             .Select(r => r.Status)
             .ToListAsync();
+    }
+
+    /// <summary>How many rows of the whole ledger carry the key, read in a scope of its own.</summary>
+    private async Task<int> CountRowsCarryingAsync(Guid key)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Transactions.AsNoTracking().CountAsync(t => t.IdempotencyKey == key);
     }
 
     /// <summary>Every idempotency record under the key: its status and the claim that holds it.</summary>
