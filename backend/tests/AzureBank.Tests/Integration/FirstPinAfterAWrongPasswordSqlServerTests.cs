@@ -129,15 +129,17 @@ public sealed class FirstPinAfterAWrongPasswordSqlServerTests : IDisposable
         locked.AccessFailedCount.Should().Be(0, "ARRANGE: the lock replaced the count");
         locked.LockoutEnd.Should().BeAfter(DateTimeOffset.UtcNow, "ARRANGE: the account is locked");
 
+        // Behind a session the lock is answered to every password, unread, so that the answer
+        // cannot say whether the password was right (ADR-0012 decision 3).
         var wrongWhileLocked = await SetPinAsync(client, WrongPassword);
         wrongWhileLocked.Should().Be(
-            HttpStatusCode.Unauthorized, "a lock is not revealed to a caller that has not proved the password");
+            HttpStatusCode.TooManyRequests, "a wrong password meets the lock, as any password does");
         (await StoredAsync(azureTag)).LockoutEnd.Should().Be(
             locked.LockoutEnd, "a wrong password while locked does not extend the lock");
 
         var whileLocked = await SetPinAsync(client, Password);
         whileLocked.Should().Be(
-            HttpStatusCode.TooManyRequests, "the lock is revealed to a caller that proved the password");
+            HttpStatusCode.TooManyRequests, "the right password meets the same lock, unread");
         (await StoredAsync(azureTag)).PinHash.Should().BeNull("a locked account enrols nothing");
 
         await TheLockRanOutAsync(locked.Id);

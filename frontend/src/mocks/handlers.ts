@@ -534,16 +534,13 @@ const AUTH_WINDOW_MS = 60_000;
 /**
  * The BFF's per-IP rate limiter, which is MIDDLEWARE and therefore answers before the controller.
  *
- * Two 429s exist on the login route and they are NOT interchangeable — this one is the BFF's own,
- * the other (ACCOUNT_LOCKED) is the API's, forwarded. `instance` is the discriminator, and it is
- * measured, 2026-08-06:
+ * The one 429 on the login route, and the BFF's own. Measured 2026-08-06:
  *
  *   rate limit    instance "/bff/auth/login"   Content-Type application/json
  *                 Retry-After: 60, Cache-Control: no-store, NO retryAfterSeconds in the body
- *   account lock  instance "/api/auth/login"   retryAfterSeconds 900 + lockedUntil, NO Retry-After
  *
- * So: the limiter sets a header and no body field; the lockout sets body fields and no header. The
- * mock could produce neither.
+ * A locked account is no 429 here: since 2026-10-16 the API answers it with the 401 of a wrong
+ * password, whatever password was sent (ADR-0012 decision 3).
  */
 function authRateLimited(request: Request): Response | null {
   const now = Date.now();
@@ -584,20 +581,22 @@ interface LoginAccount {
 }
 
 /**
- * The password lockout, which announces itself ONLY when the password is right.
+ * The password lockout, which announces itself to nobody.
  *
- * Measured 2026-08-06 on a throwaway user: five wrong passwords each answer 401
- * INVALID_CREDENTIALS with no hint that a counter is running — that is ADR-0013's
- * enumeration-neutral shape, not an oversight. The SIXTH request, with the CORRECT password,
- * is the one that reveals the lock:
+ * Measured 2026-10-16 on SQL Server, through the API's own pipeline
+ * (`LoginGuessBoundSqlServerTests`), and forwarded verbatim by the BFF (`ForwardUpstreamError`):
+ * five wrong passwords each answer 401 INVALID_CREDENTIALS; from then on, for fifteen minutes,
+ * the CORRECT password and a wrong one are answered alike, and neither is compared:
  *
- *   429 {"detail":"Too many failed login attempts. Your account is temporarily locked; try again
- *        later.","instance":"/api/auth/login","errorCode":"ACCOUNT_LOCKED",
- *        "retryAfterSeconds":900,"lockedUntil":"2026-08-06T18:54:57.3924877+00:00"}
+ *   401 {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+ *        "detail":"Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.",
+ *        "instance":"/api/auth/login","errorCode":"INVALID_CREDENTIALS","traceId":"…"}
  *
- * No `Retry-After` HEADER: login is a BFF ACTION, so the body is forwarded by
- * `ForwardUpstreamError`, which copies no headers — the same asymmetry as the PIN lockout.
+ * The second sentence of the detail is in every refusal, so it says nothing about the account; it
+ * is how the holder of the right password learns that waiting is the way in (ADR-0012).
  */
+const SIGN_IN_REFUSED =
+  'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.';
 /**
  * WHICH ACCOUNT, IF ANY, AN ADDRESS NAMES — and the two properties that follow from it.
  *
@@ -606,16 +605,17 @@ interface LoginAccount {
  * directly on :7215 (which, unlike the BFF, does not rate-limit login) on 2026-08-07:
  *
  *   1. NO ROW, NO COUNTER. An address nobody registered never reaches
- *      `IncrementAndMaybeLockLoginAsync`, so it can never be locked — there is nothing to lock.
+ *      `ClaimLoginAttemptAsync`, so it can never be locked — there is nothing to lock.
  *
  *        ghost1593@azurebank.dev, eight wrong passwords
- *        -> 401 INVALID_CREDENTIALS every single time, no 429 at any point
+ *        -> 401 INVALID_CREDENTIALS every single time
  *
  *   2. THE LOOKUP IS CASE-INSENSITIVE, so every spelling shares ONE counter.
  *
  *        register casb2159@azurebank.dev
  *        CASB2159@AZUREBANK.DEV x5 wrong  -> 401 INVALID_CREDENTIALS
- *        casb2159@azurebank.dev, CORRECT  -> 429 ACCOUNT_LOCKED, retryAfterSeconds 900
+ *        casb2159@azurebank.dev, CORRECT  -> refused (the lock answered 429 then; since
+ *                                            2026-10-16 it answers the 401 of a wrong password)
  *
  *      The uppercase failures locked the lowercase account. A case-SENSITIVE mock would have
  *      answered 200 there, which is why this returns the canonical spelling to key state by
@@ -648,19 +648,34 @@ function accountForLogin(email: string | undefined): LoginAccount | null {
     : null;
 }
 
-function loginLockedProblem(email: string, now: number) {
+function loginLocked(email: string, now: number): boolean {
   const until = mockState.loginLockedUntil[email];
-  if (!until || Date.parse(until) <= now) return null;
-  return problem({
-    status: 429,
-    errorCode: 'ACCOUNT_LOCKED',
-    detail: 'Too many failed login attempts. Your account is temporarily locked; try again later.',
-    instance: '/api/auth/login',
-    extensions: {
-      retryAfterSeconds: Math.ceil((Date.parse(until) - now) / 1000),
-      lockedUntil: until,
-    },
-  });
+  return !!until && Date.parse(until) > now;
+}
+
+/**
+ * Counts one password attempt on the account BEFORE the password is compared, and latches the
+ * lock on the attempt that reaches the threshold (`ClaimLoginAttemptAsync`, ADR-0012 decision 2):
+ * false when a lock that has not expired refuses it, and then the password is not read. The
+ * sign-in, the re-authentication behind a session and the password proof of a first PIN all count
+ * on this one row, as on the API.
+ */
+function claimLoginAttempt(email: string, now: number): boolean {
+  if (loginLocked(email, now)) return false;
+  const failures = (mockState.loginFailures[email] ?? 0) + 1;
+  mockState.loginFailures[email] = failures;
+  if (failures >= MAX_LOGIN_ATTEMPTS) {
+    // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
+    mockState.loginFailures[email] = 0;
+    mockState.loginLockedUntil[email] = apiOffsetInstant(now + LOGIN_LOCKOUT_SECONDS * 1000);
+  }
+  return true;
+}
+
+/** A right password that was counted clears the count, and a lock its own attempt latched. */
+function clearLoginAttempts(email: string): void {
+  delete mockState.loginFailures[email];
+  delete mockState.loginLockedUntil[email];
 }
 
 /** `ValidationRules.PinLockoutMinutes` is 15. */
@@ -4044,8 +4059,11 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
       enrol, wrong password     -> 401 INVALID_CREDENTIALS (and it COUNTS toward the login lockout)
       enrol, correct password   -> 200
       change, password only     -> 422 PIN_REQUIRED  (the two proofs are not interchangeable)
-    The lockout half is deliberately NOT modelled here: this mock has no login-lockout state, and
-    inventing one would be a shape the real system does not have. The API integration tests own it.
+    The lockout half is the login's own (ADR-0012): the attempt is counted on the login's row before
+    the password is compared, and while that row is locked every password is answered 429
+    ACCOUNT_LOCKED without being read, the right one included. Measured 2026-10-16 on SQL Server
+    (`LoginGuessBoundSqlServerTests`): twenty wrong passwords sent together, five compared, 401 x5
+    and 429 x15; then the right one, 429, compared 0.
   */
   const password = authBody.body.password as string | undefined;
   const currentPin = authBody.body.currentPin as string | undefined;
@@ -4095,6 +4113,24 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
         detail: 'Your password is required to set a PIN.',
       });
     }
+    const account = mockState.session.email;
+    const nowMs = Date.now();
+    if (!claimLoginAttempt(account, nowMs)) {
+      // The API's body, with its own `instance`, and the API's `Retry-After` with it: the BFF
+      // copies that header onto every error it forwards (`KeepTheApisRetryHeaders` in
+      // backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      const lockedUntil = mockState.loginLockedUntil[account];
+      const retryAfterSeconds = Math.ceil((Date.parse(lockedUntil) - nowMs) / 1000);
+      return problem({
+        instance: '/api/auth/pin',
+        status: 429,
+        errorCode: 'ACCOUNT_LOCKED',
+        detail:
+          'Too many failed login attempts. Your account is temporarily locked; try again later.',
+        extensions: { retryAfterSeconds, lockedUntil },
+        headers: { 'Retry-After': String(retryAfterSeconds) },
+      });
+    }
     if (password !== MOCK_PASSWORD) {
       return problem({
         instance: '/api/auth/pin',
@@ -4103,6 +4139,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
         detail: 'Invalid password.',
       });
     }
+    clearLoginAttempts(account);
   }
 
   if (mockState.session.hasPin) {
@@ -4184,36 +4221,21 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   const nowMs = Date.now();
   // null for any address that names no account — see `accountForLogin` for the two measurements.
   const account = accountForLogin(email);
-  const locked = account ? loginLockedProblem(account.email, nowMs) : null;
   /*
-    ORDER IS THE SECURITY PROPERTY, and I had it backwards on the first pass.
+    THE ATTEMPT IS COUNTED BEFORE THE PASSWORD IS COMPARED, AND A LOCK READS NO PASSWORD
+    (ADR-0012 decisions 2 and 3, `ClaimLoginAttemptAsync`). Measured 2026-10-16:
 
-    A wrong password NEVER reveals the lock — it is the same 401 an unknown address gets, so the
-    lock cannot become an enumeration oracle for someone spraying passwords (ADR-0012 states this
-    as contract, and `AccountLockedException`'s own docblock repeats it). Only the CORRECT password
-    on a locked account gets the 429.
+      wrong x5   -> 401 INVALID_CREDENTIALS, the fifth latching the lock
+      CORRECT    -> 401 INVALID_CREDENTIALS   <- the body of a wrong password but for traceId
+      wrong      -> 401 INVALID_CREDENTIALS
 
-    Measured 2026-08-06, which is how the inverted version was caught before it shipped:
-
-      wrong x5 -> 401 INVALID_CREDENTIALS
-      6th WRONG -> 401 INVALID_CREDENTIALS   <- still hidden
-      CORRECT   -> 429 ACCOUNT_LOCKED        <- only here
-
-    And while locked the counter is NOT touched: `IncrementAndMaybeLockLoginAsync` is skipped
-    entirely (`AuthService.cs:130-134`), so a guesser cannot extend the window by keeping at it.
+    So an attempt on an unlocked account is counted first, and only then compared; the attempt that
+    reaches the threshold is counted, latches the lock and is still compared. While locked the
+    counter is NOT touched and the password is not read, so a guesser can neither extend the window
+    nor learn from it which password is right.
   */
-  if (!account || password !== account.password) {
-    if (account && !locked) {
-      const failures = (mockState.loginFailures[account.email] ?? 0) + 1;
-      mockState.loginFailures[account.email] = failures;
-      if (failures >= MAX_LOGIN_ATTEMPTS) {
-        // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
-        mockState.loginFailures[account.email] = 0;
-        mockState.loginLockedUntil[account.email] = apiOffsetInstant(
-          nowMs + LOGIN_LOCKOUT_SECONDS * 1000,
-        );
-      }
-    }
+  const counted = account ? claimLoginAttempt(account.email, nowMs) : false;
+  if (!account || !counted || password !== account.password) {
     return problem({
       status: 401,
       errorCode: 'INVALID_CREDENTIALS',
@@ -4227,17 +4249,17 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
               "detail":"Invalid email or password.","instance":"/api/auth/login",
               "errorCode":"INVALID_CREDENTIALS","traceId":"…"}
 
-        Note the trailing period the mock was missing, and that `instance` names the API's route
-        rather than the BFF's: the body was generated upstream and copied through verbatim.
+        Note that `instance` names the API's route rather than the BFF's: the body was generated
+        upstream and copied through verbatim. Since 2026-10-16 the detail carries a second
+        sentence, the same in every refusal (ADR-0012).
       */
-      detail: 'Invalid email or password.',
+      detail: SIGN_IN_REFUSED,
       instance: '/api/auth/login',
     });
   }
-  // The one path that reveals the lock: right password, locked account.
-  if (locked) return locked;
-  // A correct password clears the counter — an expired lock then starts a fresh window at 1.
-  delete mockState.loginFailures[account.email];
+  // A correct password that was counted clears the counter, and a lock its own attempt latched at
+  // the threshold: an expired lock then starts a fresh window at 1.
+  clearLoginAttempts(account.email);
   mockState.session = { ...account.user };
   /*
     A FRESH SESSION IS ALWAYS LEVEL 1. `SessionService.CreateSession` hardcodes
@@ -4451,21 +4473,31 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   // at sign-in (`accountForLogin`): no password is its password, and the answer is a wrong
   // password's. Read, not measured: that a running stack answers such a session this way.
   const outsideEveryCopy = !sessionCopy && mockDemoEnabled();
-  if (outsideEveryCopy || (parsed.body.password as string | undefined) !== sessionPassword) {
+  // The re-authentication is the API's login, so it counts on the account's own row before the
+  // password is compared, and a lock answers every password as a wrong one (ADR-0012).
+  const sessionEmail = mockState.session.email;
+  const counted = !outsideEveryCopy && claimLoginAttempt(sessionEmail, Date.now());
+  if (
+    outsideEveryCopy ||
+    !counted ||
+    (parsed.body.password as string | undefined) !== sessionPassword
+  ) {
     // Re-authentication calls the API's LOGIN endpoint and forwards its answer, so this is the
     // same body the login route produces — `instance` names `/api/auth/login`, not the BFF's own
     // path. Measured rather than assumed to match its sibling, on a throwaway user:
     //   POST /bff/auth/reauthenticate {"password":"wrong"} (live session)
     //   -> {…,"detail":"Invalid email or password.","instance":"/api/auth/login",
     //       "errorCode":"INVALID_CREDENTIALS"}
+    // The detail has carried a second sentence since 2026-10-16, as every refusal of the login does.
     return problem({
       status: 401,
       errorCode: 'INVALID_CREDENTIALS',
       title: 'Unauthorized',
-      detail: 'Invalid email or password.',
+      detail: SIGN_IN_REFUSED,
       instance: '/api/auth/login',
     });
   }
+  clearLoginAttempts(sessionEmail);
   mockState.sessionCreatedAt = Date.now();
   mockState.sessionLastActivity = Date.now();
   mockState.authLevel = 1;

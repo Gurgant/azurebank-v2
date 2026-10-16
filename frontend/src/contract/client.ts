@@ -97,10 +97,11 @@ export async function call(
  * `verify-pin` is NOT under the policy: `VerifyPin` carries no `[EnableRateLimiting]`, and twelve
  * calls in a row with a dead cookie answered 401 every time on 2026-09-03, never 429 (one
  * measured run). Short of the 300/min global
- * backstop, the 429s these routes do emit are the API's lockouts relayed by the BFF — PIN_LOCKED
- * on verify-pin (ADR-0010), ACCOUNT_LOCKED on login (ADR-0012) — so `elevate()` keeps the wrapper
- * and the message names the cause by errorCode rather than blaming the limiter for a locked
- * fixture.
+ * backstop, the 429 these routes do emit is the API's PIN lockout relayed by the BFF — PIN_LOCKED
+ * on verify-pin (ADR-0010) — so `elevate()` keeps the wrapper and the message names the cause by
+ * errorCode rather than blaming the limiter for a locked fixture. A locked fixture PASSWORD is no
+ * 429: the login answers it with the 401 of a wrong password, whose text says that sign-in pauses
+ * for fifteen minutes after five failures (ADR-0012).
  */
 function rejectIfRateLimited(result: Wire): Wire {
   if (result.status !== 429) return result;
@@ -109,13 +110,6 @@ function rejectIfRateLimited(result: Wire): Wire {
     throw new Error(
       "The fixture user's PIN is locked (429 PIN_LOCKED): three wrong PINs lock it for fifteen " +
         'minutes (ADR-0010). Wait it out or re-seed the user; the auth limiter is not involved.',
-    );
-  }
-  if (code === 'ACCOUNT_LOCKED') {
-    throw new Error(
-      "The fixture user's password is locked (429 ACCOUNT_LOCKED): repeated wrong passwords lock " +
-        'it for fifteen minutes (ADR-0012). Wait it out or re-seed the user; the auth limiter is ' +
-        'not involved.',
     );
   }
   const tag = code ? ' ' + code : '';

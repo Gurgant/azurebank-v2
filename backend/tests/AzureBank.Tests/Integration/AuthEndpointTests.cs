@@ -348,7 +348,7 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Login_AfterTooManyWrongPasswords_LocksAccount_Returns429()
+    public async Task Login_AfterTooManyWrongPasswords_LocksAccount_AndAnswersTheRightPasswordAlike()
     {
         var email = $"lockout{Guid.NewGuid():N}@example.com";
         const string password = "SecurePass123!";
@@ -371,18 +371,34 @@ public class AuthEndpointTests : IntegrationTestBase
                 .Should().Be(HttpStatusCode.Unauthorized);
         }
 
-        // The CORRECT password is now refused with 429 + Retry-After (account locked).
-        var blocked = await Client.PostAsJsonAsync("/api/auth/login",
+        // The account is now locked, and the CORRECT password is answered exactly as a wrong one
+        // and as an email nobody has: the same 401, the same headers and the same body apart from
+        // its trace id, with no Retry-After to say that a lock stands. Answered otherwise, the lock
+        // would tell a guesser which password is right, or that the account exists (ADR-0012
+        // decision 3).
+        var right = await Client.PostAsJsonAsync("/api/auth/login",
             new LoginRequest { Email = email, Password = password }, JsonOptions);
-        blocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
-        blocked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
-        blocked.Headers.RetryAfter!.Delta!.Value.Should().BeCloseTo(
-            TimeSpan.FromMinutes(ValidationRules.LoginLockoutMinutes), TimeSpan.FromSeconds(30));
-        (await blocked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+        var wrongAgain = await Client.PostAsJsonAsync("/api/auth/login", wrong, JsonOptions);
+        var unknown = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = $"nobody{Guid.NewGuid():N}@example.com", Password = password }, JsonOptions);
+        right.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        wrongAgain.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        unknown.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        right.Headers.RetryAfter.Should().BeNull("a Retry-After would say that the account is locked");
+        // Without braces, so that a failure can be read (ComparableText).
+        var rightBody = ComparableText.Of(ProblemBody.WithoutTraceId(await right.Content.ReadAsStringAsync()));
+        var wrongBody = ComparableText.Of(ProblemBody.WithoutTraceId(await wrongAgain.Content.ReadAsStringAsync()));
+        var unknownBody = ComparableText.Of(ProblemBody.WithoutTraceId(await unknown.Content.ReadAsStringAsync()));
+        rightBody.Should().Be(wrongBody);
+        rightBody.Should().Be(unknownBody);
+        AnswerHeaders.Of(right).Should().Be(AnswerHeaders.Of(wrongAgain));
+        AnswerHeaders.Of(right).Should().Be(AnswerHeaders.Of(unknown));
 
-        // A wrong password while locked is still the generic 401 (no enumeration signal).
-        (await Client.PostAsJsonAsync("/api/auth/login", wrong, JsonOptions)).StatusCode
-            .Should().Be(HttpStatusCode.Unauthorized);
+        // And the lock is real: the row holds it.
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await db.Users.AsNoTracking().SingleAsync(u => u.Email == email)).LockoutEnd
+            .Should().BeAfter(DateTimeOffset.UtcNow, "the fifth wrong password latched the lock");
     }
 
     #endregion
@@ -480,12 +496,17 @@ public class AuthEndpointTests : IntegrationTestBase
         (await Client.PostAsJsonAsync("/api/auth/pin", wrong, JsonOptions)).StatusCode
             .Should().Be(HttpStatusCode.Unauthorized);
 
-        // Proven by the CORRECT password now reporting the lock — the login path reveals it only
-        // once knowledge of the password is established, and so does this one.
+        // Proven by the lock's 429, which answers every password now, the CORRECT one included,
+        // without reading it: behind a session the lock is no secret, and an answer given without
+        // reading the password cannot tell which one is right (ADR-0012 decision 3).
         var correct = new SetPinRequest { Pin = "424242", Password = TestUserPassword };
         var locked = await Client.PostAsJsonAsync("/api/auth/pin", correct, JsonOptions);
         locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+
+        var lockedWrong = await Client.PostAsJsonAsync("/api/auth/pin", wrong, JsonOptions);
+        lockedWrong.StatusCode.Should().Be(HttpStatusCode.TooManyRequests, "a wrong password meets the same lock");
+        (await lockedWrong.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
     }
 
     [Fact]

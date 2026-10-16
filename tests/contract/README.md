@@ -23,8 +23,8 @@ pip install 'schemathesis==4.27.1'
   on six of the seven, so a run from elsewhere fails on them.
 - **Point it at a database you can throw away.** A run writes: one run on 2026-09-23 added 1
   user, 97 accounts and 137 audit events. Run as the seeded demo user, it also locks that user
-  out: after one run its next login answered 429 `ACCOUNT_LOCKED`. Reset and seed the database
-  before running as that user again.
+  out: after one run its next login was refused for 15 minutes. Reset and seed the database before
+  running as that user again.
 
 ## Quick Start
 

@@ -494,7 +494,7 @@ public sealed class DemoModeEndpointTests : IDisposable
         using (new AssertionScope())
         {
             body.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.InvalidCredentials);
-            body.RootElement.GetProperty("detail").GetString().Should().Be("Invalid email or password.");
+            body.RootElement.GetProperty("detail").GetString().Should().Be("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
             (await ShapeOfAsync(response)).Should().Be(
                 await ShapeOfAsync(withTheDemoOff), "the demo changes nothing in what an unknown email is answered");
         }

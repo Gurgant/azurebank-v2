@@ -73,8 +73,7 @@ public class AuthController : ControllerBase
     [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // ACCOUNT_LOCKED (ADR-0012)
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)] // also a locked account (ADR-0012)
     public async Task<ActionResult<ApiResponse<LoginResponse>>> Login(
         [FromBody] LoginRequest request, CancellationToken cancellationToken)
     {

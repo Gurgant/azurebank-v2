@@ -236,36 +236,53 @@ public class AuthServiceTests : IDisposable
         reloaded.LockoutEnd!.Value.Should().BeAfter(DateTimeOffset.UtcNow);
     }
 
-    [Fact]
-    public async Task LoginAsync_LockedAccount_CorrectPassword_ThrowsAccountLocked()
-    {
-        var user = SeedUserInContext(lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(10));
-        PasswordIs(user, "correct", right: true);
-
-        var ex = (await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" }))
-            .Should().ThrowAsync<AccountLockedException>()).Which;
-
-        ex.StatusCode.Should().Be(429);
-        ex.ErrorCode.Should().Be(ErrorCodes.AccountLocked);
-        ((int)ex.Details!["retryAfterSeconds"]).Should().BePositive();
-        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>(), It.IsAny<DateTime?>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task LoginAsync_LockedAccount_WrongPassword_ReturnsGeneric401_WithoutExtending()
+    [Theory]
+    [InlineData("correct", true)]
+    [InlineData("wrong", false)]
+    public async Task LoginAsync_LockedAccount_AnswersEveryPasswordWithTheGeneric401_AndReadsNone(
+        string password, bool right)
     {
         var lockUntil = DateTimeOffset.UtcNow.AddMinutes(10);
         var user = SeedUserInContext(failed: 0, lockoutEnd: lockUntil);
-        PasswordIs(user, "wrong", right: false);
+        PasswordIs(user, password, right);
 
-        // Generic 401 (NOT AccountLockedException) — no enumeration signal for a guesser.
-        await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
-            .Should().ThrowAsync<AuthenticationException>();
+        // The same exception, code and text as an unknown email: answered otherwise for the right
+        // password, the lock would tell a guesser which password is right (ADR-0012 decision 3).
+        var ex = (await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = password }))
+            .Should().ThrowAsync<AuthenticationException>()).Which;
+        ex.Should().NotBeOfType<AccountLockedException>();
+        ex.ErrorCode.Should().Be(ErrorCodes.InvalidCredentials);
+        ex.Message.Should().Be(
+            "Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
+
+        // The account's hash is not read: the equaliser spends the cost of a comparison instead.
+        _accountPasswordHasherMock.Verify(
+            x => x.VerifyHashedPassword(user, It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _timingEqualizerMock.Verify(x => x.SpendVerifyCost(password), Times.Once);
+        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>(), It.IsAny<DateTime?>()), Times.Never);
 
         // The window is not extended and the counter is not touched while already locked.
         var reloaded = await ReloadAsync(user.Id);
         reloaded.AccessFailedCount.Should().Be(0);
         reloaded.LockoutEnd.Should().BeCloseTo(lockUntil, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task LoginAsync_TheAttemptThatReachesTheThreshold_IsCompared_AndARightPasswordThereSignsIn()
+    {
+        // The claim of the fifth attempt latches the lock and that attempt is still compared: a
+        // window hands out exactly MaxLoginAttempts comparisons, and the right password clears it.
+        var user = SeedUserInContext(failed: ValidationRules.MaxLoginAttempts - 1);
+        PasswordIs(user, "correct", right: true);
+        _jwtServiceMock.Setup(x => x.GenerateToken(user, null))
+            .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
+
+        var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
+
+        result.Token.AccessToken.Should().Be("jwt");
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.AccessFailedCount.Should().Be(0);
+        reloaded.LockoutEnd.Should().BeNull("the right password clears the lock its own claim latched");
     }
 
     [Fact]
@@ -409,7 +426,7 @@ public class AuthServiceTests : IDisposable
         // Assert
         await act.Should()
             .ThrowAsync<AuthenticationException>()
-            .WithMessage("Invalid email or password.");
+            .WithMessage("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
         // The unknown-email path must spend the equalizing verify cost (anti-enumeration,
         // ADR-0012) — this pins that the timing mitigation is actually performed.
         _timingEqualizerMock.Verify(x => x.SpendVerifyCost(request.Password), Times.Once);
@@ -438,7 +455,7 @@ public class AuthServiceTests : IDisposable
         // Assert
         await act.Should()
             .ThrowAsync<AuthenticationException>()
-            .WithMessage("Invalid email or password.");
+            .WithMessage("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
     }
 
     [Fact]
@@ -616,7 +633,7 @@ public class AuthServiceTests : IDisposable
         using (new AssertionScope())
         {
             thrown.Should().BeOfType<AuthenticationException>("the right password signs nobody in past the gate");
-            (thrown?.Message).Should().Be("Invalid email or password.");
+            (thrown?.Message).Should().Be("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
             ((thrown as AppException)?.ErrorCode).Should().Be(ErrorCodes.InvalidCredentials);
 
             VerifyCostsSpentOn(GatePassword).Should().Be(
@@ -712,7 +729,7 @@ public class AuthServiceTests : IDisposable
         using (new AssertionScope())
         {
             thrown.Should().BeOfType<AuthenticationException>("a copy lives Demo:CopyLifetimeHours from its claim, and not a second more");
-            (thrown?.Message).Should().Be("Invalid email or password.");
+            (thrown?.Message).Should().Be("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
             VerifyCostsSpentOn(GatePassword).Should().Be(1);
             PasswordChecks().Should().Be(1, "the one check is the earlier sign-in's: the refusal looked at no password");
             _refreshTokenServiceMock.Invocations.Should().HaveCount(1, "the one grant is the earlier sign-in's");
@@ -815,7 +832,7 @@ public class AuthServiceTests : IDisposable
 
         using (new AssertionScope())
         {
-            refused.Should().BeOfType<AuthenticationException>().Which.Message.Should().Be("Invalid email or password.");
+            refused.Should().BeOfType<AuthenticationException>().Which.Message.Should().Be("Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.");
             PasswordChecks().Should().Be(3, "three have a hash to verify, and the fourth has none");
             (await ReloadAsync(withoutPassword.Id)).AccessFailedCount.Should().Be(
                 3, "the attempt on the user with no password is counted on top of the two it had");

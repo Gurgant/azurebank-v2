@@ -378,9 +378,9 @@ public class BffAuthController : ControllerBase
                 // The current session is left completely intact. A wrong password, a lockout or a
                 // rate limit must leave the user exactly where they were, still signed in, still
                 // counting down — free to try again. Forwarding verbatim also means this endpoint
-                // inherits the API's login semantics for nothing: 401 INVALID_CREDENTIALS (which
-                // the client's global 401 rule already exempts from "session expired"), the
-                // AccountLocked answer, and its Retry-After.
+                // inherits the API's login semantics for nothing: the one 401 INVALID_CREDENTIALS
+                // for every refused password, a locked account's included (ADR-0012), which the
+                // client's global 401 rule already exempts from "session expired".
                 return ForwardUpstreamError(response, content);
             }
 

@@ -57,7 +57,7 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
           "type": "https://tools.ietf.org/html/rfc9110#section-15.5.2",
           "title": "Unauthorized",
           "status": 401,
-          "detail": "Invalid email or password.",
+          "detail": "Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.",
           "errorCode": "INVALID_CREDENTIALS"
         }
         """;
