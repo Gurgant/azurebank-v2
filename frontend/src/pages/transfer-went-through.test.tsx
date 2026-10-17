@@ -5,6 +5,7 @@ import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { settle } from '../test/settle';
 import { TEST_PIN, enterPin } from '../test/pinFlow';
 import { COPY, committedAnswerLost, emulateFocusFixup } from '../test/outage';
 import { StepUpModal } from '../features/auth';
@@ -168,6 +169,7 @@ describe.each([
     await expectWentThroughView();
     expect(sent).toHaveLength(1);
 
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'View History' }));
     expect(await screen.findByText('HISTORY')).toBeInTheDocument();
     expect(sent).toHaveLength(1);
@@ -190,6 +192,7 @@ describe.each([
     expect(sent[1].key).toBe(sent[0].key);
     expect(sent[1].auth).toBe(sent[0].auth);
 
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
     expect(sent).toHaveLength(2);

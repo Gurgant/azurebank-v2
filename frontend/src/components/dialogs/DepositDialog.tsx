@@ -13,8 +13,11 @@ import { isUnconfirmedSend } from '../../api/moneyProblem';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
-import { formatCurrency } from '../../utils/format';
+import { useMovementCheck } from '../../hooks/useMovementCheck';
+import { useSettledPress } from '../../hooks/useSettledPress';
+import { formatCurrency, formatDateTime } from '../../utils/format';
 import { useAccountClosedToast, WaitHint } from '../feedback';
+import { MovementCheckStatus } from '../shared/MovementCheckStatus';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -26,7 +29,9 @@ import {
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
 import {
+  CHECK_AGAIN,
   CONNECTION_FAILED,
+  DEPOSIT_FOUND,
   DEPOSIT_OUTCOME_UNKNOWN,
   DEPOSIT_WENT_THROUGH,
   SERVICE_UNAVAILABLE_NOTHING_CHANGED,
@@ -96,8 +101,27 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const sayAccountClosed = useAccountClosedToast();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
-    useIdempotentMutation(depositTrigger);
+  const {
+    submit,
+    resetIntent,
+    verifyRequired,
+    wentThrough,
+    keyRetained,
+    requireVerify,
+    lastSent,
+    confirmWentThrough,
+  } = useIdempotentMutation(depositTrigger);
+  /*
+    Under the check view, the listing is asked by the key that was sent, on the account that was
+    sent: not the form's, which an edit has changed. A movement found there is the deposit going
+    through: the went-through view below, with its amount, reference and time.
+  */
+  const check = useMovementCheck(
+    lastSent,
+    (sent) => ({ first: { accountId: sent.accountId, type: 'Deposit' } }),
+    () => confirmWentThrough(),
+  );
+  const checkLanding = check.landingRef;
   /*
     The went-through sentence takes the focus the send lost. The Deposit button was disabled for
     the send and the browser handed its focus to `body`; a view drawn then is not read by a screen
@@ -105,6 +129,21 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     was mounted long before, so the landing is on the flag, not on the mount.
   */
   const wentThroughSentence = useFocusWhenLost<HTMLParagraphElement>(wentThrough);
+  /*
+    Under both views a press on their actions waits until what they draw has settled: each
+    verdict, the went-through block and the new-key action at the bound move the buttons
+    (`useSettledPress` has what was measured). And once more as the form comes back after "It
+    didn't go through — try again": the form keeps its values, so its Deposit is enabled at once,
+    and at 320×568 the second press of a double click on "try again" landed on it and sent a
+    second deposit under a new key, with the form never seen. The form's content waits with its
+    footer (`content`): its amounts and accounts change what that Deposit sends, and at 360×800
+    the same second press landed on the description field and took focus there.
+  */
+  const settledPress = useSettledPress(
+    verifyRequired,
+    `${wentThrough} ${check.verdict} ${check.canCheckAgain} ${check.pastLive}`,
+    { afterLeaving: true },
+  );
 
   const schema = useMemo(() => depositFormSchema(), []);
   const { control, handleSubmit, setValue, getValues, watch, formState } = useForm<
@@ -289,16 +328,23 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       tone="credit"
       onClose={requestClose}
       closeDisabled={keyLive}
-      // The went-through view and the check view are both shorter than the form: the second
-      // press of a double click on Deposit lands outside the dialog, and must not take their
-      // words away unread. A check view closed that way leaves the visitor on the dashboard,
-      // which has the Deposit tile to press for a second deposit (the tile is read in the
-      // dashboard's code; the run that measured the closing recorded no dialog and focus on
-      // `body`). `verifyRequired` is true under both views and under nothing else, so the receipt
-      // and the form close as they did. The hook latches it in two places: on the answer, where
-      // `wentThrough` is set with it when the payment is proven, and in `requireVerify`, which
-      // this dialog calls when the body is edited while a key is retained. The check view that
-      // edit brings up is kept the same way.
+      // Both views stand where the form was, and the second press of a double click on Deposit must
+      // not take their words away unread. Where it lands depends on the size and on the phase
+      // (`e2e/wentThrough.spec.ts` has what was measured). The went-through view, measured at
+      // 1280×900, is shorter than the form, and the press lands outside it. Before the listing
+      // answers, the check view leaves the point on the backdrop at 1280×900, 375×812 and 360×800,
+      // and on "Check recent transactions" at 320×568. Once it says "not yet", the point is in its
+      // footer's padding at 1280×900 and 375×812, on "Check recent transactions" at 360×800 and
+      // 375×640, and in the view's words at 320×568, where the view keeps its height and the
+      // surface scrolls. So a press outside closes nothing here, and the footer drops a press on
+      // its actions until the view has settled (`useSettledPress`), whatever is under the point.
+      // A check view closed by a press outside leaves the visitor on the dashboard, which has the
+      // Deposit tile to press for a second deposit (the tile is read in the dashboard's code; the
+      // run that measured the closing recorded no dialog and focus on `body`). `verifyRequired` is
+      // true under both views and under nothing else, so the receipt and the form close as they
+      // did. The hook latches it in two places: on the answer, where `wentThrough` is set with it
+      // when the payment is proven, and in `requireVerify`, which this dialog calls when the body
+      // is edited while a key is retained. The check view that edit brings up is kept the same way.
       keepOnOutsidePress={verifyRequired}
     >
       {/* Success */}
@@ -343,8 +389,26 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
           </div>
           <Text as="p" className={styles.outcomeSentence} ref={wentThroughSentence} tabIndex={-1}>
-            {DEPOSIT_WENT_THROUGH}
+            {check.movement ? DEPOSIT_FOUND : DEPOSIT_WENT_THROUGH}
           </Text>
+          {/* The listing found it by the key: what the receipt would have shown of it. */}
+          {check.movement && (
+            <>
+              <Text className={styles.successAmount}>+{formatCurrency(check.movement.amount)}</Text>
+              <div className={styles.detailsCard}>
+                <div className={styles.detailRow}>
+                  <Text className={styles.detailLabel}>Reference</Text>
+                  <Text className={styles.detailValue}>{check.movement.transactionNumber}</Text>
+                </div>
+                <div className={styles.detailRow}>
+                  <Text className={styles.detailLabel}>Date &amp; time</Text>
+                  <Text className={styles.detailValue}>
+                    {formatDateTime(check.movement.createdAt)}
+                  </Text>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -355,16 +419,21 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text className={styles.stateTitle}>We couldn&apos;t confirm your deposit</Text>
-          <Text className={styles.stateBody}>
-            The request may or may not have gone through. Check your recent transactions before
-            trying again — retrying blindly could deposit twice.
-          </Text>
+          {/* Hidden once the listing says it did not go through: "may or may not" is no longer
+              true. */}
+          {check.verdict !== 'none' && (
+            <Text className={styles.stateBody}>
+              The request may or may not have gone through. Check your recent transactions before
+              trying again — retrying blindly could deposit twice.
+            </Text>
+          )}
+          {check.verdict !== 'off' && <MovementCheckStatus check={check} />}
         </div>
       )}
 
       {/* Form */}
       {showForm && (
-        <div className={styles.content}>
+        <div className={styles.content} {...settledPress.content}>
           <div>
             <Text className={styles.sectionLabel}>Select Account</Text>
             <Controller
@@ -464,7 +533,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       )}
 
       {/* Footer */}
-      <div className={styles.footer}>
+      <div className={styles.footer} {...settledPress.actions}>
         {error && (
           <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>{error}</MessageBarBody>
@@ -513,23 +582,59 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             View History
           </Button>
         ) : verifyRequired ? (
+          /*
+            The check view's actions follow what the listing said (`useMovementCheck`): "Check
+            again" leads while asking can still tell more, and "try again", a new key, is drawn
+            only once nothing sent under the old one can commit any more. With nothing to ask
+            about (`off`) they are the two they always were.
+          */
           <>
+            {check.checkAgainFirst && (
+              <Button
+                key="check-again"
+                ref={checkLanding}
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                disabled={check.checking}
+                onClick={check.checkAgain}
+              >
+                {CHECK_AGAIN}
+              </Button>
+            )}
             <Button
-              appearance="primary"
+              key="check-transactions"
+              ref={check.checkAgainFirst ? undefined : checkLanding}
+              appearance={check.checkAgainFirst ? 'secondary' : 'primary'}
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => void navigate('/history')}
             >
               Check recent transactions
             </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={resetIntent}
-            >
-              It didn&apos;t go through — try again
-            </Button>
+            {!check.checkAgainFirst && check.offerCheckAgain && (
+              <Button
+                key="check-again"
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                disabled={check.checking}
+                onClick={check.checkAgain}
+              >
+                {CHECK_AGAIN}
+              </Button>
+            )}
+            {(check.verdict === 'off' || check.offerNewKey) && (
+              <Button
+                key="try-again"
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={resetIntent}
+              >
+                It didn&apos;t go through — try again
+              </Button>
+            )}
           </>
         ) : (
           <Button

@@ -1,8 +1,8 @@
 # ADR-0022: Client-side money-mutation protocol
 
 **Status:** Accepted · **Date:** 2026-07-25 · **Amended:** 2026-08-12, 2026-08-16 (ADR-0041,
-ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059), 2026-10-16 (ADR-0009) · **Decision
-Makers:** Vladislav Aleshaev
+ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059), 2026-10-16 (ADR-0009; decisions 1 and
+4, the listing by key) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -19,7 +19,10 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 1. **One key per user-intent.** `useIdempotentMutation` mints a lazy `crypto.randomUUID()` into a
    ref on the first submit. It lives in memory only: never Redux, never `sessionStorage`, and never
    minted inside `baseQuery`, inside an endpoint definition or on form mount, because a key created
-   before the user has expressed an intent is not tied to an intent.
+   before the user has expressed an intent is not tied to an intent. A key read back from the
+   ledger names a request that committed: every row of the listing carries the key that wrote it
+   (ADR-0009), so such keys can sit in the query cache. The listing by key keeps none in what it
+   stores and hands none to a flow, and a key read back is never sent again.
 2. **KEEP the key**, so that a user-driven Retry re-sends it byte-identically, on `409
    IDEMPOTENCY_IN_FLIGHT`, on `NETWORK`, on `PARSE` and on any `5xx`, because in each the server may
    have recorded the key or be recording it: a fresh key there is a client-made double-spend. A
@@ -34,10 +37,13 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 4. **`409 IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`.** Submit refuses
    to mint a new key until the owning flow, never the generic hook, hears the user say it did not go
    through, which calls `resetIntent`, because a new key armed automatically resubmits money the
-   server may already have moved. On this code the four money mutations invalidate the tags their
-   success invalidates. When the 409 says `applied: true` the commit is proven: the flow says the
-   payment went through and offers the history, and `resetIntent` does nothing, so no new key can
-   exist in that page or dialog.
+   server may already have moved. The flow offers that action only once nothing sent under the old
+   key can still commit: 3 min 5 s after the latest send under it began (the 65 s abort, then the
+   claim's 2-minute stale age), or at once when every authorisation presented under it was
+   refused. On this code the four money mutations invalidate the tags their success invalidates.
+   When the 409 says `applied: true` the commit is proven: the flow says the payment went through
+   and offers the history, and `resetIntent` does nothing, so no new key can exist in that page or
+   dialog. A movement the listing finds by the key is the same proof (`confirmWentThrough`).
 5. **Routing is on `errorCode`, never on HTTP status**, because two opposite 409s (`IN_FLIGHT` and
    `RESULT_UNKNOWN`) demand opposite behaviour and a status collapses them into one.
 6. **A body-affecting form edit calls `resetIntent` only while no key is held**, because an edited
@@ -90,22 +96,31 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 - Not covered: "the server never saw it" and "the server saw it and died" look the same: no answer
   (`NETWORK`) or a `5xx`. KEEP (decision 2) is the safe answer for both, so a lost request occupies
   its key until the TTL: correctness first. An abort by the caller is decision 3, not this.
-- Not covered: the client does not ask whether key X landed, though the API can be asked:
-  `GET /api/transactions?IdempotencyKey=` lists the rows on the caller's own accounts that the
-  requests sent with that key wrote, and the payee of a transfer never receives the sender's key
-  (ADR-0009). Each row the API answers with carries the key that wrote it, so a client takes only
-  the rows that carry the key it sent: an app that does not know the parameter, one put back by a
-  failed check (ADR-0061), answers the caller's latest page unfiltered, and its rows carry no key. A
-  key is unique per endpoint and for 24 h only, so a row's type and time tell which request of that
-  key wrote it. A record read as committed answers in the 409 itself (`applied: true`); otherwise
-  the user is asked to check: with the flag absent, a rejection with no HTTP status, a 409 naming no
-  code, an edit with a key held, or a closed account met under a held key by the mint of a new
-  authorisation or by the withdrawal dialog's check on Continue. When the record has vanished
-  another request may be about to commit, and "start over" mints a new key. An empty listing by key
-  is evidence that nothing was applied only once the claim is stale, 2 minutes after it was made, or
-  its record has expired, and only on an account still open. The 2 minutes rest on the request
-  deadline of ADR-0058, which a frozen API cannot enforce (its residual risk 4); the same key sent
-  again once the claim is stale is fenced, and applies the money at most once.
+- A record read as committed answers in the 409 itself (`applied: true`); otherwise the user is
+  asked to check: with the flag absent, a rejection with no HTTP status, a 409 naming no code, an
+  edit with a key held, or a closed account met under a held key by the mint of a new
+  authorisation or by the withdrawal dialog's check on Continue. The check view then asks the
+  ledger, by key and account: `GET /api/transactions?AccountId=&IdempotencyKey=` lists the rows on
+  that account that the requests sent with the key wrote (ADR-0009), and the payee of a transfer
+  never receives the sender's key. The page is read strictly, and only a row that carries the key
+  sent, of the type the send writes there, and `Completed`, counts: an app that does not know the
+  parameter, one put back by a failed check (ADR-0061), answers the account's latest page
+  unfiltered, and its rows carry no key. A key is unique per endpoint and for 24 h only, so a
+  row's type and time tell which request of that key wrote it. A row found is the payment going
+  through, shown with its amount, number and time. An empty page is evidence that nothing was
+  applied only once nothing under the key can commit (decision 4), or its record has expired, and
+  only on an account still open: the listing answers a closed account 403, and a move between the
+  caller's accounts then asks its other account, whose row carries the same key. Before then the
+  view says the payment may still go through, and asks again by itself at the bound. The bound
+  rests on the request deadline of ADR-0058, which a frozen API cannot enforce (its residual risk
+  4), nor a COMMIT that outlives its connection's cut; the same key sent again once the claim is
+  stale is fenced, and applies the money at most once. "Start over" mints a new key and does not
+  send the old one: the hook has dropped it (decision 4), a transfer or a withdrawal would need a
+  new authorisation (ADR-0042), and once the evidence holds a new key cannot pay twice.
+- Not covered: leaving the check view ends the check. Once the key is dropped its exits are open
+  (decision 7 bars them only while a key is live): the dialog's X and Escape, and "Check recent
+  transactions" on every flow. A visitor who leaves while a send under the old key may still
+  commit, then comes back and sends again, sends a new key, and both payments can land.
 - Not covered: the mutex bounds elevation to one retry. A second 403 after an elevation surfaces as
   an error: the session level is not sticking, which is a BFF defect to diagnose there.
 - Not covered: two browser tabs. Each mints its own key for its own intent; server-side velocity
@@ -117,8 +132,11 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
 
 `policies.test.tsx`, `idempotency.test.ts`, `stepup.test.ts`, `withdrawHandler.test.ts` and
 `stepup-interceptor.test.tsx` under `frontend/src`; for the `applied: true` case of behaviour 6 also
-`useMoneyWizard.blocker.test.tsx` and `transfer-went-through.test.tsx`. Deleting one of them
-reverses this decision. The six behaviours they hold:
+`useMoneyWizard.blocker.test.tsx` and `transfer-went-through.test.tsx`; for behaviour 7 also
+`movementByKey.test.ts`, `movementLookup.test.tsx`, `timeoutChain.test.ts`,
+`useMovementCheck.test.tsx`, `ResultUnknownView.test.tsx`, `deposit.test.tsx`, `withdraw.test.tsx`
+and `transfer-found.test.tsx`. Deleting one of them reverses this decision. The seven behaviours
+they hold:
 
 1. The same key survives a 503 and a user-driven Retry; a new key appears only after a 422 and an
    edit.
@@ -128,6 +146,10 @@ reverses this decision. The six behaviours they hold:
 5. Withdraw with a wrong PIN does not dispatch `sessionExpired`, and drops the key.
 6. `IN_FLIGHT` keeps the key across a Retry; `RESULT_UNKNOWN` forces the verify dialog before any
    new key can exist, and with `applied: true` no new key can exist in that page or dialog at all.
+7. The check view asks the listing by the key that was sent, on the account it was sent for: a
+   movement found is "went through" and no new key can exist; the new-key action is offered only
+   once nothing under the key can commit, or at once when every authorisation presented under it
+   was refused; and the stored lookup holds no key.
 
 ## Related
 

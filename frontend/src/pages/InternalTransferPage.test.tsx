@@ -7,6 +7,8 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { settle } from '../test/settle';
+import { COPY } from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
@@ -450,7 +452,9 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await confirmWithPin();
     await screen.findByText("We couldn't confirm your transfer");
+    await screen.findByText(COPY.movementNotYet);
 
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Check recent transactions' }));
 
     expect(await screen.findByText('HISTORY')).toBeInTheDocument();
@@ -784,6 +788,13 @@ describe('an account of the move is closed under the page', () => {
     expect(seen.mints).toBe(2);
     expect(keys).toHaveLength(1);
 
+    /*
+      The source is closed, so the listing asks the destination, which is open and has no row of
+      the key. Every authorisation presented under it was refused, so nothing under it can land:
+      that empty page says the move did not go through, at once.
+    */
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
     await userEvent.click(
       screen.getByRole('button', { name: "It didn't go through — start over" }),
     );
@@ -796,6 +807,7 @@ describe('an account of the move is closed under the page', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
 
     // The move made next is another one: it does not carry the key that was let go.
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'From Holiday' }));
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await confirmWithPin();

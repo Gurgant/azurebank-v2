@@ -1,12 +1,14 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { confirmWithPin } from '../test/pinFlow';
-import { describe, expect, it } from 'vitest';
+import { TEST_PIN, confirmWithPin } from '../test/pinFlow';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { settle } from '../test/settle';
+import { COPY, advance, advanceUntil, fakeClockUser, installFakeClock } from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
@@ -107,6 +109,12 @@ async function externalToReview() {
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
 }
 
+// Unmount first, then restore the clock: withdraw.test.tsx has the reason.
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
 describe('money flows — the behaviour the unification must preserve', () => {
   describe('RESULT_UNKNOWN: the screen that stands between a user and a double-spend', () => {
     /*
@@ -141,8 +149,11 @@ describe('money flows — the behaviour the unification must preserve', () => {
       expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
 
+      // While a send under the key may still land, the way on is to look again, not a new key.
+      expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
       expect(screen.getByRole('button', { name: 'Check recent transactions' })).toBeEnabled();
-      expect(screen.getByRole('button', { name: /didn't go through/ })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /didn't go through/ })).not.toBeInTheDocument();
     });
 
     it('internal: the same screen, the same absence of exits', async () => {
@@ -157,7 +168,10 @@ describe('money flows — the behaviour the unification must preserve', () => {
       expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /didn't go through/ })).toBeEnabled();
+      expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Check recent transactions' })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /didn't go through/ })).not.toBeInTheDocument();
     });
 
     it('"start over" re-arms the flow and mints a NEW key — the opposite of a retry', async () => {
@@ -180,27 +194,173 @@ describe('money flows — the behaviour the unification must preserve', () => {
       */
       const keys: (string | null)[] = [];
       let calls = 0;
+      let sentAt = 0;
       server.use(
         http.post('*/api/transfers', ({ request }) => {
           keys.push(request.headers.get('Idempotency-Key'));
+          sentAt = Date.now();
           calls += 1;
           return calls === 1 ? unknown() : transferOk();
         }),
       );
       await externalToReview();
-      await confirmWithPin();
+      // The clock is the client's, from before the send: the mock cannot say when a claim is stale.
+      installFakeClock();
+      const user = fakeClockUser();
+      const confirmOnTheFakeClock = async () => {
+        await user.click(screen.getByRole('button', { name: 'Continue' }));
+        await user.click(screen.getByLabelText('Digit 1 of 6'));
+        await user.paste(TEST_PIN);
+      };
+      await confirmOnTheFakeClock();
       await screen.findByText("We couldn't confirm your transfer");
+      await screen.findByText(COPY.movementNotYet);
 
-      await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+      // "Start over" is offered once nothing sent under the key can still land.
+      await advanceUntil(sentAt, 185_000);
+      expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+      await settle();
+      await user.click(screen.getByRole('button', { name: /didn't go through/ }));
 
       // Back on the form with the confirmed recipient intact — only the INTENT was reset.
       expect(await screen.findByText('A. Friend')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await confirmWithPin();
+      await settle();
+      await user.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmOnTheFakeClock();
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(keys).toHaveLength(2);
       expect(keys[0]).not.toBe(keys[1]);
+    });
+
+    /*
+      The second press of a double click on "It didn't go through — start over" lands on the
+      form it brings back, and an account card, a quick amount or "Use max" there would change
+      the transfer the visitor goes on to review, with the form never seen. The page's own wait
+      (`useSettledPress`) covers that form's content and its actions. Timed in one task, as the
+      dialogs' tests of the same wait are.
+    */
+    it('external: drops a press on the accounts, the amounts, "Use max" and Review for 500 ms after "start over", and acts on one after', async () => {
+      let sentAt = 0;
+      server.use(
+        http.post('*/api/transfers', () => {
+          sentAt = Date.now();
+          return unknown();
+        }),
+      );
+      await externalToReview();
+      installFakeClock();
+      const user = fakeClockUser();
+      await user.click(screen.getByRole('button', { name: 'Continue' }));
+      await user.click(screen.getByLabelText('Digit 1 of 6'));
+      await user.paste(TEST_PIN);
+      expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+      await advanceUntil(sentAt, 185_000);
+      expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+      await settle();
+
+      fireEvent.click(screen.getByRole('button', { name: "It didn't go through — start over" }));
+      const ten = screen.getByRole('button', { name: '€10' });
+      const rainyDay = screen.getByRole('button', { name: 'From Rainy Day' });
+      const useMax = () => screen.getByRole('button', { name: /^Use maximum/ });
+      const review = () => screen.getByRole('button', { name: 'Review Transfer' });
+      fireEvent.click(ten);
+      fireEvent.click(rainyDay);
+      fireEvent.click(useMax());
+      act(() => void vi.advanceTimersByTime(499));
+      fireEvent.click(useMax());
+      fireEvent.click(rainyDay);
+      fireEvent.click(ten);
+      fireEvent.click(review());
+      expect(screen.getByLabelText('Transfer amount')).toHaveValue('50');
+      expect(screen.getByRole('button', { name: 'From Main Account' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(rainyDay).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Send Money');
+      // Refused its focus as well, as a press on the actions is, the recipient's field included.
+      expect(fireEvent.mouseDown(ten)).toBe(false);
+      expect(fireEvent.mouseDown(screen.getByLabelText('Recipient handle'))).toBe(false);
+
+      await advance(1);
+      fireEvent.click(rainyDay);
+      fireEvent.click(ten);
+      await advance(0);
+      expect(rainyDay).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByLabelText('Transfer amount')).toHaveValue('10');
+      fireEvent.click(review());
+      expect(await screen.findByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    });
+
+    it('internal: drops a press on either account, the amounts, "Use max" and Review for 500 ms after "start over", and acts on one after', async () => {
+      let sentAt = 0;
+      server.use(
+        http.post('*/api/transfers/internal', () => {
+          sentAt = Date.now();
+          return unknown();
+        }),
+      );
+      renderInternal();
+      await screen.findByRole('button', { name: 'From Main Account' });
+      await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      installFakeClock();
+      const user = fakeClockUser();
+      await user.click(screen.getByRole('button', { name: 'Continue' }));
+      await user.click(screen.getByLabelText('Digit 1 of 6'));
+      await user.paste(TEST_PIN);
+      expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+      await advanceUntil(sentAt, 185_000);
+      expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+      await settle();
+
+      fireEvent.click(screen.getByRole('button', { name: "It didn't go through — start over" }));
+      const ten = screen.getByRole('button', { name: '€10' });
+      const fromRainyDay = screen.getByRole('button', { name: 'From Rainy Day' });
+      const toRainyDay = screen.getByRole('button', { name: 'To Rainy Day' });
+      const useMax = () => screen.getByRole('button', { name: /^Use maximum/ });
+      const review = () => screen.getByRole('button', { name: 'Review Transfer' });
+      fireEvent.click(ten);
+      fireEvent.click(fromRainyDay);
+      fireEvent.click(useMax());
+      act(() => void vi.advanceTimersByTime(499));
+      fireEvent.click(useMax());
+      fireEvent.click(fromRainyDay);
+      fireEvent.click(ten);
+      fireEvent.click(review());
+      expect(screen.getByLabelText('Transfer amount')).toHaveValue('50');
+      expect(screen.getByRole('button', { name: 'From Main Account' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(fromRainyDay).toHaveAttribute('aria-pressed', 'false');
+      expect(toRainyDay).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Move Money');
+      expect(fireEvent.mouseDown(ten)).toBe(false);
+      // The To section waits too: with these two accounts no To press can change the choice, so
+      // the refused mousedown is what shows it.
+      expect(fireEvent.mouseDown(toRainyDay)).toBe(false);
+
+      await advance(1);
+      fireEvent.click(ten);
+      await advance(0);
+      expect(screen.getByLabelText('Transfer amount')).toHaveValue('10');
+      fireEvent.click(review());
+      expect(await screen.findByRole('button', { name: 'Continue' })).toBeInTheDocument();
+      // The source is the destination's account: choosing it lets the destination go.
+      fireEvent.click(screen.getAllByRole('button', { name: 'Back' })[0]);
+      fireEvent.click(await screen.findByRole('button', { name: 'From Rainy Day' }));
+      await advance(0);
+      expect(screen.getByRole('button', { name: 'From Rainy Day' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByRole('button', { name: 'To Rainy Day' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
     });
   });
 

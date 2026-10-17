@@ -184,3 +184,37 @@ export const DEPOSIT_WENT_THROUGH = "Your deposit went through, but we couldn't 
 /** A withdrawal. */
 export const WITHDRAWAL_WENT_THROUGH =
   "Your withdrawal went through, but we couldn't show its receipt.";
+
+/*
+  The check view, once it has asked the listing by key what the send whose answer was lost wrote
+  (ADR-0009, ADR-0022). Said in the view's own status region, under its title, whose noun "it" is.
+  None promises anything about charges: the read sends nothing (ADR-0059 decision 8).
+*/
+
+/** Not in the listing, asked while the request may still commit. */
+export const MOVEMENT_NOT_YET =
+  "It isn't in your transactions yet, and it may still go through. Keep this page open: we'll look again.";
+
+/** Not in the listing, asked once nothing under the key can commit, on an account still open. */
+export const MOVEMENT_NONE = "It isn't in your transactions, so it didn't go through.";
+
+/** The listing could not answer, and the request may still commit. */
+export const MOVEMENT_UNCHECKED_NOT_YET =
+  "We couldn't check your transactions for it, and it may still go through. Keep this page open: we'll look again.";
+
+/** The listing could not answer: a failure, a closed account, or an app that ignores the key. */
+export const MOVEMENT_UNCHECKED = "We couldn't check your transactions for it.";
+
+/** The transfer pages' same-key re-send and the check view's new read: the same next step. */
+export const CHECK_AGAIN = 'Check again';
+
+/* A send the listing found by its key: one sentence per flow, the same but for the noun. */
+
+/** A transfer, to another person or between the visitor's own accounts. */
+export const TRANSFER_FOUND = 'Your transfer went through.';
+
+/** A deposit. */
+export const DEPOSIT_FOUND = 'Your deposit went through.';
+
+/** A withdrawal. */
+export const WITHDRAWAL_FOUND = 'Your withdrawal went through.';

@@ -25,6 +25,15 @@ import { colors, transitions } from '../../theme/tokens';
  * where shared things live.
  */
 export const useMoneyDialogStyles = makeStyles({
+  /*
+    Scrolls as a whole when what it holds is taller than its `maxHeight`, and only then. The form's
+    `content` gives up its height first and scrolls inside, with the footer in place, so a form
+    that fits that way leaves the surface still. A state view is no scroll box (`centeredView`
+    has why), so its words come first, its buttons after them, and every one is reached by
+    scrolling the surface. `overflowX` stays hidden: what the surface draws is still cut to its
+    16 px corners. Fluent's own rule already scrolls the surface at 359 px tall or less
+    (`useDialogSurfaceStyles`); this does it at every height.
+  */
   surface: {
     width: '100%',
     maxWidth: '480px',
@@ -33,7 +42,8 @@ export const useMoneyDialogStyles = makeStyles({
     borderRadius: '16px',
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
   },
   header: {
     display: 'flex',
@@ -217,6 +227,21 @@ export const useMoneyDialogStyles = makeStyles({
   },
 
   // ===== STATE VIEWS =====
+  /*
+    No scroll box of its own, so it keeps the height of its words, and the surface scrolls instead
+    (`surface`). Measured in Chromium on the running stack. With the surface cut (`overflow:
+    hidden`) and nothing scrolling, at 320×568 the check view drew "Check recent transactions"
+    below the surface's edge once it said "not yet", where neither a pointer nor a finger could
+    reach it. With this view a scroll box instead, the column took its height away before
+    anything else's: at 320×256 it was cut to its 64 px of padding, with 390 px of words passing
+    through that strip, and with three buttons eight of its thirteen lines were never wholly in
+    sight, by the wheel or by a finger. As it is, at 320×568, 320×256, 568×320 and 360×400 the
+    check view and the view of a deposit found by its key keep their heights, and every line and
+    every button came wholly into sight by the wheel and by a finger; the delete warning and the
+    withdrawal's check view keep theirs too, and came into sight by the wheel. At 1280×900 and
+    375×812, where nothing is cut, the deposit form and both views are drawn pixel for pixel as
+    before.
+  */
   centeredView: {
     display: 'flex',
     flexDirection: 'column',

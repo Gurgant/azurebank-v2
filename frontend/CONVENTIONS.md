@@ -27,11 +27,13 @@ sentence is said in the root `<Toaster>`. When the mint of a new authorisation u
 idempotency key answers `ACCOUNT_NOT_FOUND`, the check view comes first, and lets the key go
 (ADR-0022, decision 6). A transfer page shows it on that answer, and says the sentence once the
 visitor is back on the form. The withdrawal dialog shows it on that answer and on its check on
-Continue under a held key, and closes with the sentence from the view's "try again" or its X;
-"Check recent transactions" leaves for the history on either, with nothing more said. A send
-that answers `ACCOUNT_NOT_FOUND` holds no key: the page or the dialog says the sentence at once.
-The move between the visitor's own accounts has three sentences of its own beside it, for which
-of its two accounts is closed.
+Continue under a held key, and closes with the sentence from its X or from the view's last
+button: "Close" while the withdrawal may still go through, "It didn't go through — try again"
+once nothing under the key can commit. "Check recent transactions" leaves for the history on
+either, with nothing more said. A send that answers `ACCOUNT_NOT_FOUND` holds no key: the page
+or the dialog says the sentence at once. The move between the visitor's own accounts has three
+sentences of its own beside it, for which of its two accounts is closed. Under the check view
+the listing by key answers a closed account 403, and the move then asks its other account.
 
 **An endpoint that answers with data in an envelope unwraps it through
 `unwrap(envelope, schema?)`, and typing is not validation.** Two endpoints answer with no
@@ -45,7 +47,9 @@ answers with data, which has no OpenAPI contract behind it. One endpoint under `
 not among them: the AzureTag rename has a schema generated from the API's contract and passes
 `devOnly(schema)`, as does the rest of `/api/*` that answers with data, checked in development
 and test only. Where `unwrap` runs, a 2xx whose `data` is null throws (ADR-0023); set-primary,
-account deletion, sign-out and set-PIN answer with no data and do not call it.
+account deletion, sign-out and set-PIN answer with no data and do not call it. One more page
+is checked fail-closed: the listing by key that the check view asks (`movementsPageSchema`, both
+members required), which says nothing from a page it cannot read.
 
 **Route a 422 on `errorCode`, never on the status alone.** Several unrelated rules share 422, and
 the rule that failed decides the message and the field (`src/api/moneyProblem.ts`).
@@ -94,7 +98,9 @@ that started it, never as a page-level overlay.
   from the start, never into an alert that mounts already filled. One slot for each page; a
   check whose line sits under its own field, as the recipient check's does, keeps its own.
 - Stop and Retry arm `useWaitLanding`, which puts focus on the bar's Retry unless the visitor
-  has moved it meanwhile.
+  has moved it meanwhile. The check view's "Check again" arms it too, and so does the view's own
+  ask at the bound when focus was on the view's first button: that ask disables "Check again".
+  Either lands on the view's first button as it is once the answer is drawn.
 
 **The view that says a send went through with no receipt puts lost focus on its sentence.** The
 control that sent is disabled during the send, so the view appears with focus on `body`, and a
@@ -104,9 +110,25 @@ a status as well, and no button's `aria-describedby` points at it: each would sa
 second time. `WentThroughView` does this on the two transfer pages, and the same block in the
 deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node and
 the dialog passes `keepOnOutsidePress`: a press outside closes nothing, the X and Escape do.
-Known limits: the landing does not run when another dialog holds focus or the visitor moved it
-during the wait; the check view ("We couldn't confirm …") lands no focus; and what is spoken on
-a focused paragraph depends on the screen reader (ADR-0059, Validation).
+The actions of that view and of the check view, in the dialogs and on the transfer pages, drop a
+press, a key's included, for 500 ms after the view appears and after each change of what it
+draws: of its verdict and what that offers, of the size of the actions, of the box that holds them
+or of a box beside them, of the viewport where that moves the actions, or of where the actions
+are when the press comes. They stay enabled and named meanwhile, and a dropped press takes no
+focus (`useSettledPress`): at 360×800 the second press of a double click on Deposit landed on
+"Check recent transactions" once the check view had grown to say "not yet". The form that "It
+didn't go through — try again" brings back in a dialog, or "It didn't go through — start over"
+on a transfer page, waits once too, on its actions and on its accounts and amounts: the
+deposit's Deposit sends what they hold, and the withdrawal's Continue and the transfer pages'
+Review Transfer lead to confirming them. In the dialogs a view keeps the height of its words,
+and when it and its actions are taller than the dialog the surface scrolls as a whole: every word
+and every action is reached by scrolling, at 320×256 too, and the words come before the actions.
+The view of a movement the listing found by key is that view with the movement under the
+sentence, and lands focus the same way. Known limits: the landing does not run when another dialog
+holds focus or the visitor moved it during the wait; the check view ("We couldn't confirm …")
+lands no focus when it appears, only after an ask of its own (above), and says what the listing
+by key answered in a `role="status"` region of its own (`MovementCheckStatus`); and what is
+spoken on a focused paragraph depends on the screen reader (ADR-0059, Validation).
 
 **A dialog gives focus back to the control that opened it.** The Fluent dialogs here are opened
 by a state, so Fluent has no trigger to go back to. A component that is mounted for as long as

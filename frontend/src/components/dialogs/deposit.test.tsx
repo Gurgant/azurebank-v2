@@ -1,13 +1,29 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { problem } from '../../mocks/problem';
+import { problem, serviceUnavailable } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
-import { COPY, committedAnswerLost, emulateFocusFixup } from '../../test/outage';
+import { settle } from '../../test/settle';
+import { expectNoNestedLiveRegions } from '../../test/liveRegions';
+import {
+  COPY,
+  advance,
+  advanceUntil,
+  committedAnswerLost,
+  emulateFocusFixup,
+  expectTheUnreadableAnswerLogged,
+  fakeClockUser,
+  installFakeClock,
+  lookupsSeen,
+  loseAnswerAfterCommit,
+  notKnown,
+  whenListedByKey,
+} from '../../test/outage';
+import { formatDateTime } from '../../utils/format';
 import { DepositDialog } from './DepositDialog';
 
 /**
@@ -16,6 +32,12 @@ import { DepositDialog } from './DepositDialog';
  * verify-first on a body edit while a key is held, RESULT_UNKNOWN verify-first flow, and the
  * generic (never-raw) message for a client-protocol KEY_REUSE bug (ADR-0022).
  */
+
+// Unmount first, then restore the clock: withdraw.test.tsx has the reason.
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const MAIN = mockState.accounts[0]; // seed: id a1, balance 1250.5
 
@@ -119,9 +141,11 @@ describe('deposit (T3 — idempotent mutation)', () => {
 
   it('asks for a check, and sends no second key, when the amount is edited while a key is held', async () => {
     const keys: (string | null)[] = [];
+    let sentAt = 0;
     server.use(
       http.post('*/api/transactions/deposit', ({ request }) => {
         keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
         // The first attempt KEEPS its key: that deposit may still land.
         return keys.length === 1
           ? problem({
@@ -135,20 +159,32 @@ describe('deposit (T3 — idempotent mutation)', () => {
     renderDeposit();
 
     await userEvent.click(screen.getByRole('button', { name: '€100' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
     await screen.findByText(/Still processing/);
 
     // A new key for the edited amount would be a second deposit beside one that may still land.
-    await userEvent.click(screen.getByRole('button', { name: '€200' }));
+    await user.click(screen.getByRole('button', { name: '€200' }));
     expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
     // "Tap Deposit again" goes with the button it pointed at.
     expect(screen.queryByText(/Still processing/)).not.toBeInTheDocument();
     expect(keys).toHaveLength(1);
+    // The listing has nothing yet, and the first deposit may still land: no new key yet.
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /didn't go through/ })).not.toBeInTheDocument();
+
+    // Once nothing sent under that key can land, the listing's empty page says it did not.
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
 
     // Only the explicit "it didn't go through" starts a new intent, and so a new key.
-    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Deposit €200.00' }));
+    await settle();
+    await user.click(screen.getByRole('button', { name: /didn't go through/ }));
+    // The form that comes back waits too, before its Deposit sends.
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Deposit €200.00' }));
     expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
@@ -172,6 +208,8 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
     // The blind Deposit button is gone; only verify actions remain.
     expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Check recent transactions' }));
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
   });
@@ -454,6 +492,7 @@ describe('deposit — the server says it went through', () => {
     expect(viewHistory).not.toHaveAttribute('aria-describedby');
 
     expect(keys).toHaveLength(1);
+    await settle();
     await userEvent.click(viewHistory);
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
     expect(keys).toHaveLength(1);
@@ -509,18 +548,26 @@ describe('deposit — the server says it went through', () => {
 
   it('a press outside the dialog leaves the check view on screen too, and the form that "try again" brings back closes as before', async () => {
     /*
-      The check view is shorter than the form as well. Measured in Chromium on the running stack,
-      the send answered 409 with no `applied`: the second press of a double click on Deposit
-      landed on the backdrop and closed the dialog. Recorded after it: no dialog, the dashboard's
-      address, focus on `body`, no alert. So "We couldn't confirm your deposit" went unread, and
-      the dashboard has the Deposit tile (read in its code, not recorded by that run) to press
-      again: the second deposit this view is there to prevent.
+      The check view stands where the form was as well. Measured in Chromium at 1280×900, 375×812
+      and 360×800, until the listing answers, the second press of a double click on Deposit lands on
+      the backdrop. (Once the view says "not yet", it lands in the footer's padding at 1280×900 and
+      375×812, and on "Check recent transactions" at 360×800, 375×640 and 320×568, where the footer
+      drops it while the view settles: `e2e/wentThrough.spec.ts` has what was measured, and the test
+      in this file that drops a press on the check view.) Measured in Chromium on the running stack
+      with the code as it was before this branch, when the view did not ask the listing by key, the
+      send answered 409 with no `applied`: the second press landed on the backdrop and closed the
+      dialog. Recorded after it: no dialog, the dashboard's address, focus on `body`, no alert. So
+      "We couldn't confirm your deposit" went unread, and the dashboard has the Deposit tile (read
+      in its code, not recorded by that run) to press again: the second deposit this view is there
+      to prevent.
     */
     const closed = vi.fn();
     const keys: (string | null)[] = [];
+    let sentAt = 0;
     server.use(
       http.post('*/api/transactions/deposit', ({ request }) => {
         keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
         return problem({
           status: 409,
           errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN',
@@ -540,17 +587,20 @@ describe('deposit — the server says it went through', () => {
     expect(closed).toHaveBeenCalledTimes(1);
 
     await userEvent.click(screen.getByRole('button', { name: '€100' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
     await answerDrawn(keys);
     expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     // This view lands no focus. The test puts it on an action, as a visitor who has reached one
     // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
     // Close, measured; jsdom is not asked where a Tab goes.)
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
     checkTransactions.focus();
 
-    await userEvent.click(backdrop());
+    await user.click(backdrop());
     expect(closed).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('dialog', { name: 'Deposit Money' })).toBeInTheDocument();
     expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
@@ -559,16 +609,20 @@ describe('deposit — the server says it went through', () => {
     expect(checkTransactions).toHaveFocus();
 
     // The exits nobody presses by accident are open: the view is not a trap.
-    await userEvent.keyboard('{Escape}');
+    await user.keyboard('{Escape}');
     expect(closed).toHaveBeenCalledTimes(2);
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Close' }));
     expect(closed).toHaveBeenCalledTimes(3);
 
-    // Only this view is kept. "Try again" brings the form back, and a press outside the form
-    // closes the dialog as it did before the send.
-    await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
+    // Only this view is kept. Once the listing says the deposit did not land, "try again"
+    // brings the form back, and a press outside the form closes the dialog as it did before
+    // the send.
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
+    await user.click(screen.getByRole('button', { name: /didn't go through/ }));
     expect(screen.getByLabelText('Deposit amount')).toBeInTheDocument();
-    await userEvent.click(backdrop());
+    await user.click(backdrop());
     expect(closed).toHaveBeenCalledTimes(4);
     expect(keys).toHaveLength(1);
   });
@@ -661,6 +715,7 @@ describe('deposit — the server says it went through', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
 
     await answerDrawn(keys);
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     expect(screen.queryByText(/Deposit failed/)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
@@ -668,6 +723,532 @@ describe('deposit — the server says it went through', () => {
     // Not proven either: this is the check view, not the went-through one.
     expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
     expect(keys).toHaveLength(1);
+  });
+});
+
+/**
+ * A deposit whose answer was lost, and what the listing by its key then says (ADR-0022). The
+ * mock cannot model a claim that is still live, so the clock is the client's: installed before
+ * the send, and counted from the instant the send reached the mock.
+ */
+describe('deposit — the listing by key after a lost answer', () => {
+  // The Deposit button is disabled during the send, and a browser hands its focus to `body`.
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  const names = (buttons: HTMLElement[]) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent);
+
+  /** The buttons of the dialog's footer and body, without the shell's X. */
+  const actions = () => names(screen.getAllByRole('button')).filter((name) => name !== 'Close');
+
+  /*
+    The three ways the answer of a deposit that was made is lost, each of which latches the check:
+    a 409 that names no outcome, a 409 whose body names no code, and a 201 whose envelope carries
+    no data (which RTK logs, once).
+  */
+  it.each([
+    ['a 409 that names no outcome', () => notKnown('/api/transactions/deposit'), false],
+    [
+      'a 409 that names no code',
+      () => HttpResponse.json({ title: 'Conflict', status: 409 }, { status: 409 }),
+      false,
+    ],
+    [
+      'a 201 with no data',
+      () => HttpResponse.json({ data: null, message: 'Done.' }, { status: 201 }),
+      true,
+    ],
+  ])(
+    'answered %s, finds the deposit the server made, and says so with its amount, reference and time',
+    async (_name, lost, logged) => {
+      const expectLogged = logged ? expectTheUnreadableAnswerLogged() : () => {};
+      const sentAt = loseAnswerAfterCommit('/api/transactions/deposit', lost);
+      const seen = lookupsSeen();
+      renderDeposit();
+
+      await userEvent.click(screen.getByRole('button', { name: '€100' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+      const sentence = await screen.findByText(COPY.depositFound);
+      const row = mockState.transactions.find((entry) => entry.idempotencyKey === seen[0]?.key);
+      expect(row).toBeDefined();
+      const dialog = screen.getByRole('dialog', { name: 'Deposit Complete' });
+      await waitFor(() => expect(sentence).toHaveFocus());
+      expect(within(dialog).getByText('+€100.00')).toBeInTheDocument();
+      expect(within(dialog).getByText('Reference').nextSibling).toHaveTextContent(
+        row?.transactionNumber ?? '(no row)',
+      );
+      expect(within(dialog).getByText('Date & time').nextSibling).toHaveTextContent(
+        formatDateTime(row?.createdAt ?? ''),
+      );
+      expect(names(within(dialog).getAllByRole('button'))).toEqual(['Close', 'View History']);
+      expect(screen.queryByText("We couldn't confirm your deposit")).not.toBeInTheDocument();
+      expect(screen.queryByText(/didn't go through/)).not.toBeInTheDocument();
+      // One deposit, asked about once on the account it was sent to.
+      expect(sentAt).toHaveLength(1);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].accountId).toBe(MAIN.id);
+      expectLogged();
+    },
+  );
+
+  it('says "not yet" while the deposit may still land, then "it didn\'t go through" once nothing can, and only then a new key', async () => {
+    const keys: (string | null)[] = [];
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
+        return keys.length === 1 ? notKnown('/api/transactions/deposit') : undefined;
+      }),
+    );
+    const seen = lookupsSeen();
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    const beforeClick = Date.now();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(actions()).toEqual(['Check again', 'Check recent transactions']);
+    expect(screen.getByText(/may or may not have gone through/)).toBeInTheDocument();
+    expectNoNestedLiveRegions();
+
+    // A second short of the bound: still not yet, and nothing more asked.
+    await advanceUntil(beforeClick, 184_000);
+    expect(screen.getByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(seen).toHaveLength(1);
+    expect(actions()).toEqual(['Check again', 'Check recent transactions']);
+
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(seen).toHaveLength(2);
+    expect(actions()).toEqual(['Check recent transactions', "It didn't go through — try again"]);
+    // "May or may not" is no longer true, and is no longer said.
+    expect(screen.queryByText(/may or may not have gone through/)).not.toBeInTheDocument();
+
+    await settle();
+    await user.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('offers no new key while the listing cannot answer and the deposit may still land, and offers it once nothing can', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sentAt = Date.now();
+        return HttpResponse.error();
+      }),
+    );
+    whenListedByKey(() => serviceUnavailable({ via: 'api', instance: '/api/transactions' }));
+    const seen = lookupsSeen();
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    const beforeClick = Date.now();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await screen.findByText(/Couldn't reach the server/);
+
+    // The key is held after no connection; an edit asks for the check over it.
+    await user.click(screen.getByRole('button', { name: '€200' }));
+    expect(await screen.findByText(COPY.movementUncheckedNotYet)).toBeInTheDocument();
+    expect(actions()).toEqual(['Check again', 'Check recent transactions']);
+
+    await advanceUntil(beforeClick, 184_000);
+    expect(screen.queryByRole('button', { name: /didn't go through/ })).not.toBeInTheDocument();
+    expect(seen).toHaveLength(1);
+
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+    expect(seen).toHaveLength(2);
+    expect(actions()).toEqual([
+      'Check recent transactions',
+      'Check again',
+      "It didn't go through — try again",
+    ]);
+  });
+
+  it('a 503 that says nothing was applied is no proof: after an edit the listing says "not yet"', async () => {
+    server.use(
+      http.post('*/api/transactions/deposit', () =>
+        serviceUnavailable({ via: 'api', applied: false, instance: '/api/transactions/deposit' }),
+      ),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await screen.findByText(COPY.nothingChanged);
+
+    await userEvent.click(screen.getByRole('button', { name: '€200' }));
+
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /didn't go through/ })).not.toBeInTheDocument();
+  });
+
+  it('after an edit, asks about the account the deposit was sent to, not the one now chosen', async () => {
+    server.use(http.post('*/api/transactions/deposit', () => HttpResponse.error()));
+    const seen = lookupsSeen();
+    const savings = mockState.accounts[1];
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DepositDialog
+              isOpen
+              onClose={() => {}}
+              accounts={[
+                seedAccount(),
+                {
+                  id: savings.id,
+                  name: 'Rainy Day',
+                  accountNumber: 'AB-****-****-34',
+                  balance: 830,
+                },
+              ]}
+            />
+          }
+        />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await screen.findByText(/Couldn't reach the server/);
+
+    await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
+
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(seen.map((ask) => ask.accountId)).toEqual([MAIN.id]);
+  });
+
+  it('"Check again" asks about the same key and account again, and gives lost focus back to the first button', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sentAt = Date.now();
+        return notKnown('/api/transactions/deposit');
+      }),
+    );
+    // One answer per ask: the listing fails, answers, fails again at the bound, then answers.
+    const failures = [true, false, true, false];
+    whenListedByKey(() =>
+      failures.shift()
+        ? serviceUnavailable({ via: 'api', instance: '/api/transactions' })
+        : undefined,
+    );
+    const seen = lookupsSeen();
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementUncheckedNotYet)).toBeInTheDocument();
+    expect(actions()).toEqual(['Check again', 'Check recent transactions']);
+
+    // Before the bound it is the first button. It is disabled while it asks, which drops its
+    // focus, and the answer gives the focus back to it.
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ key: seen[0].key, accountId: MAIN.id });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toHaveFocus());
+
+    // The view asks by itself at the bound, and the listing fails: "Check again" comes second.
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+    expect(seen).toHaveLength(3);
+    expect(actions()).toEqual([
+      'Check recent transactions',
+      'Check again',
+      "It didn't go through — try again",
+    ]);
+
+    // Pressed there, it lands on the first button as the answer leaves the view.
+    await settle();
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(seen).toHaveLength(4);
+    expect(seen[3]).toMatchObject({ key: seen[0].key, accountId: MAIN.id });
+    expect(actions()).toEqual(['Check recent transactions', "It didn't go through — try again"]);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check recent transactions' })).toHaveFocus(),
+    );
+  });
+
+  it('the ask at the bound gives a visitor who waited on "Check again" the first button back', async () => {
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sentAt = Date.now();
+        return notKnown('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    // A keyboard visitor's place: the view's first button, which the ask at the bound disables.
+    screen.getByRole('button', { name: 'Check again' }).focus();
+
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check recent transactions' })).toHaveFocus(),
+    );
+  });
+
+  it('drops a press on the check view for 500 ms after it appears and after its verdict changes, and acts on one after', async () => {
+    /*
+      `useSettledPress`. Measured in Chromium on the running stack at 360×800: the second press of
+      a double click on Deposit came once the view had grown to say "not yet", and landed on
+      "Check recent transactions", which took the visitor to the history with the view unread.
+
+      The fake clock also runs with real time (`installFakeClock`), so the time this test takes to
+      see each change adds to it. The presses meant to be dropped therefore come at most 100 ms of
+      the clock after the change they follow, which leaves 400 ms for that, and the one meant to
+      act comes 500 ms after it, which real time can only make later.
+    */
+    server.use(
+      http.post('*/api/transactions/deposit', () => notKnown('/api/transactions/deposit')),
+    );
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    whenListedByKey(async () => {
+      await held;
+      return undefined;
+    });
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    const checkTransactions = () =>
+      screen.getByRole('button', { name: 'Check recent transactions' });
+
+    // The view has just appeared, and the listing is being asked.
+    await user.click(checkTransactions());
+    await advance(100);
+    await user.click(checkTransactions());
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Deposit Money' })).toBeInTheDocument();
+    // From here a press would act, were it not for the next change.
+    await advance(400);
+
+    // The listing answers, and the view says "not yet": the wait starts again.
+    answer();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await user.click(checkTransactions());
+    await advance(100);
+    await user.click(checkTransactions());
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+    // Neither disabled nor renamed while it waits: a screen reader hears the same button.
+    expect(checkTransactions()).toBeEnabled();
+    expect(checkTransactions()).not.toHaveAttribute('aria-disabled');
+
+    await advance(400);
+    await user.click(checkTransactions());
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+  });
+
+  it('a press the check view drops takes no focus, and one after the wait does', async () => {
+    /*
+      Measured in Chromium on the running stack at 360×800 and 375×640, with the wait but without
+      this: the second press of a double click on Deposit was dropped on "Check recent
+      transactions" and left focus there, where a later Enter would take the visitor to the
+      history. Its `mousedown` is refused, as the backdrop refuses its own. The press comes as
+      soon as "not yet" is seen, as in the test above.
+    */
+    server.use(
+      http.post('*/api/transactions/deposit', () => notKnown('/api/transactions/deposit')),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
+    // Where the send left focus (`emulateFocusFixup`).
+    expect(document.body).toHaveFocus();
+
+    await user.click(checkTransactions);
+    expect(document.body).toHaveFocus();
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+
+    // After the wait, the press takes focus as a press does, and its click acts.
+    await settle();
+    await user.pointer({ keys: '[MouseLeft>]', target: checkTransactions });
+    expect(checkTransactions).toHaveFocus();
+    await user.pointer({ keys: '[/MouseLeft]', target: checkTransactions });
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+  });
+
+  it('drops a press on Deposit for 500 ms after "try again" brings the form back, and sends on one after', async () => {
+    /*
+      The form keeps its values, so its Deposit is enabled as it comes back. Measured in Chromium
+      on the running stack at 320×568 without this: the second press of a double click on "It
+      didn't go through — try again" landed on "Deposit €1.00" and sent a second deposit under a
+      new key, with the form never seen. The presses that must be dropped are made in the same
+      task as the press that brought the form back: the fake clock follows real time only between
+      tasks (`installFakeClock`), so it moves between them only as the test moves it.
+    */
+    let sentAt = 0;
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
+        return keys.length === 1 ? notKnown('/api/transactions/deposit') : undefined;
+      }),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+    const deposit = screen.getByRole('button', { name: 'Deposit €100.00' });
+    expect(deposit).toBeEnabled();
+    fireEvent.click(deposit);
+    act(() => void vi.advanceTimersByTime(400));
+    fireEvent.click(deposit);
+    // Neither disabled nor renamed while it waits.
+    expect(deposit).toBeEnabled();
+    expect(deposit).not.toHaveAttribute('aria-disabled');
+    // A send that was not dropped would be on its way by now.
+    await advance(0);
+    expect(keys).toHaveLength(1);
+    expect(screen.getByLabelText('Deposit amount')).toBeInTheDocument();
+
+    act(() => void vi.advanceTimersByTime(100));
+    fireEvent.click(deposit);
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('drops a press on the amounts and the accounts for 500 ms after "try again" brings the form back, and acts on one after', async () => {
+    /*
+      The second press of a double click on "It didn't go through — try again" can land in the
+      form's content as well as on its Deposit: on a quick amount or an account card, which would
+      change what the next Deposit sends. The same wait covers that content (`useSettledPress`).
+      Timed in one task, as the test above is.
+    */
+    let sentAt = 0;
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/deposit', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        sentAt = Date.now();
+        return notKnown('/api/transactions/deposit');
+      }),
+    );
+    const savings = mockState.accounts[1]; // seed: id a2, "Rainy Day", balance 830
+    renderWithProviders(
+      <DepositDialog
+        isOpen
+        onClose={() => {}}
+        accounts={[
+          seedAccount(),
+          { id: savings.id, name: 'Rainy Day', accountNumber: 'AB-****-****-34', balance: 830 },
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+    const fifty = screen.getByRole('button', { name: '€50' });
+    const rainyDay = screen.getByRole('button', { name: /Rainy Day/ });
+    fireEvent.click(fifty);
+    fireEvent.click(rainyDay);
+    act(() => void vi.advanceTimersByTime(499));
+    fireEvent.click(fifty);
+    fireEvent.click(rainyDay);
+    expect(screen.getByRole('button', { name: 'Deposit €100.00' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Main Account/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(rainyDay).toHaveAttribute('aria-pressed', 'false');
+    // Refused its focus as well, as a press on the actions is.
+    expect(fireEvent.mouseDown(fifty)).toBe(false);
+
+    act(() => void vi.advanceTimersByTime(1));
+    fireEvent.click(rainyDay);
+    fireEvent.click(fifty);
+    // The form validates what was chosen after the press, in later tasks.
+    await advance(0);
+    expect(rainyDay).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Deposit €50.00' })).toBeInTheDocument();
+    expect(keys).toHaveLength(1);
+  });
+
+  it('drops a key pressed on the button an answer gave focus to, until the view has settled', async () => {
+    /*
+      The view lands no focus when it appears, but an ask lands it on the view's first button once
+      the answer is drawn, and that can be another button than the one the key was meant for:
+      "Check again", focused, gives way at the bound to "Check recent transactions".
+    */
+    let sentAt = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        sentAt = Date.now();
+        return notKnown('/api/transactions/deposit');
+      }),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Check again' }).focus();
+
+    await advanceUntil(sentAt, 185_000);
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
+    await waitFor(() => expect(checkTransactions).toHaveFocus());
+
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
+
+    await settle();
+    await user.keyboard('{Enter}');
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
   });
 });
 

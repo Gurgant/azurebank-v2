@@ -10,6 +10,7 @@ import {
   login,
   withdrawViaMint,
 } from './client';
+import { FIXTURES } from './target';
 
 /** The committed contract, read as a third party would — the number the client promises. */
 const SPEC_URL = new URL('../../../docs/api/openapiv1.json', import.meta.url);
@@ -351,6 +352,98 @@ describe('contract: money', () => {
     }
   });
 
+  it('lists by key on one account at a time: the row there, nothing on another, and 403 once it is closed', async () => {
+    /*
+      What the SPA asks after a money send whose answer was lost (ADR-0022): the key it sent, on
+      the account it sent it for. The key filter applies inside the account's scope, so another of
+      the caller's accounts lists nothing by it; a closed account is outside the scope, refused
+      403 ACCESS_DENIED. A move between the caller's accounts wrote a row of the key on each: its
+      TransferOut on the source, its TransferIn on the destination.
+
+      On two probe accounts of their own, drained and closed afterwards as the probes above are.
+    */
+    const probe = async (name: string) => {
+      const created = await call('/api/accounts', {
+        method: 'POST',
+        body: JSON.stringify({ name, type: 'Savings' }),
+      });
+      expect(created.status).toBe(201);
+      return (created.body as { data: { id: string } }).data.id;
+    };
+    const listed = async (accountId: string, key: string) =>
+      call(`/api/transactions?AccountId=${accountId}&IdempotencyKey=${key}`);
+    let source = '';
+    let destination = '';
+
+    try {
+      source = await probe('Contract Keyed Source');
+      destination = await probe('Contract Keyed Destination');
+
+      const depositKey = idempotencyKey();
+      const deposited = await call('/api/transactions/deposit', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': depositKey },
+        body: JSON.stringify({ accountId: source, amount: 25 }),
+      });
+      expect(deposited.status).toBe(201);
+      const depositRow = (deposited.body as { data: { transaction: { id: string } } }).data
+        .transaction;
+
+      const onItsAccount = await listed(source, depositKey);
+      expect(onItsAccount.status).toBe(200);
+      expect((onItsAccount.body as ListedPage).data.map((t) => t.id)).toEqual([depositRow.id]);
+
+      const onAnother = await listed(destination, depositKey);
+      expect(onAnother.status).toBe(200);
+      expect((onAnother.body as ListedPage).data).toEqual([]);
+      expect((onAnother.body as ListedPage).pagination.totalItems).toBe(0);
+
+      const minted = await call('/api/transfers/internal/authorizations', {
+        method: 'POST',
+        body: JSON.stringify({
+          fromAccountId: source,
+          toAccountId: destination,
+          amount: 10,
+          pin: FIXTURES.pin,
+        }),
+      });
+      expect(minted.status).toBe(201);
+      const moveKey = idempotencyKey();
+      const moved = await call('/api/transfers/internal', {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': moveKey,
+          'Step-Up-Authorization': (minted.body as { data: { authorizationId: string } }).data
+            .authorizationId,
+        },
+        body: JSON.stringify({ fromAccountId: source, toAccountId: destination, amount: 10 }),
+      });
+      expect(moved.status).toBe(201);
+
+      const out = (await listed(source, moveKey)).body as ListedPage;
+      const inward = (await listed(destination, moveKey)).body as ListedPage;
+      expect(out.data.map((t) => [t.type, t.idempotencyKey])).toEqual([['TransferOut', moveKey]]);
+      expect(inward.data.map((t) => [t.type, t.idempotencyKey])).toEqual([['TransferIn', moveKey]]);
+
+      // Drained and closed: the account is no longer one of the caller's open ones.
+      await withdrawViaMint(source, 15).catch(() => {});
+      await closeAccount(source);
+      const closed = await listed(source, depositKey);
+      expect(closed.status).toBe(403);
+      expect(asProblem(closed.body).errorCode).toBe('ACCESS_DENIED');
+      source = '';
+    } finally {
+      if (source) {
+        await withdrawViaMint(source, 15).catch(() => {});
+        await closeAccount(source);
+      }
+      if (destination) {
+        await withdrawViaMint(destination, 10).catch(() => {});
+        await closeAccount(destination);
+      }
+    }
+  });
+
   it('refuses a key that is not a UUID in the binder’s words, before the listing runs', async () => {
     // `Guid? IdempotencyKey` on `TransactionFilter` fails to bind, so the framework answers.
     const { status, body } = await call('/api/transactions?IdempotencyKey=not-a-key');
@@ -364,6 +457,6 @@ describe('contract: money', () => {
 
 /** The members of the listing these assertions read. */
 interface ListedPage {
-  data: { id: string; idempotencyKey: string | null }[];
+  data: { id: string; type: string; idempotencyKey: string | null }[];
   pagination: { totalItems: number; totalPages: number };
 }

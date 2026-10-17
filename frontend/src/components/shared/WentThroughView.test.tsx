@@ -1,8 +1,10 @@
-import { screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/renderWithProviders';
-import { COPY } from '../../test/outage';
+import { COPY, installFakeClock } from '../../test/outage';
+import { settle } from '../../test/settle';
+import { formatDateTime } from '../../utils/format';
 import { WentThroughView } from './WentThroughView';
 
 /**
@@ -36,6 +38,9 @@ describe('WentThroughView', () => {
   afterEach(() => {
     outside?.remove();
     outside = null;
+    // Unmount first, then restore the clock a test installed: withdraw.test.tsx has the reason.
+    cleanup();
+    vi.useRealTimers();
   });
 
   it("carries the flow's success title as the page's one heading, and the sentence as a paragraph", () => {
@@ -67,6 +72,7 @@ describe('WentThroughView', () => {
     const onDone = vi.fn();
     render({ onViewHistory, onDone });
 
+    await settle();
     await userEvent.click(screen.getByRole('button', { name: 'View History' }));
     expect(onViewHistory).toHaveBeenCalledTimes(1);
     expect(onDone).not.toHaveBeenCalled();
@@ -131,6 +137,54 @@ describe('WentThroughView', () => {
     for (const button of screen.getAllByRole('button')) {
       expect(button).not.toHaveAttribute('aria-describedby');
     }
+  });
+
+  it('shows the movement the listing found by the key: its amount, reference and time, and still nothing that sends', () => {
+    const movement = {
+      id: '019f7b3f-0000-7000-8000-000000000f01',
+      type: 'TransferOut' as const,
+      transactionNumber: 'TXN-20260722-000031',
+      amount: 50,
+      createdAt: '2026-07-22T10:31:00.0000000Z',
+    };
+    expect(document.body).toHaveFocus();
+
+    render({ sentence: COPY.transferFound, movement, sign: '-' });
+
+    expect(screen.getByText(COPY.transferFound)).toHaveFocus();
+    expect(screen.getByText('-€50.00')).toBeInTheDocument();
+    expect(screen.getByText('Reference').nextSibling).toHaveTextContent('TXN-20260722-000031');
+    // The row's own time, as the detail page words it: never compared with the browser's clock.
+    expect(screen.getByText('Date & time').nextSibling).toHaveTextContent(
+      formatDateTime(movement.createdAt),
+    );
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'View History',
+      'Done',
+    ]);
+    expect(screen.queryByText(/start over|try again/i)).not.toBeInTheDocument();
+  });
+
+  it('drops a press for 500 ms after it appears, as the check view it can replace does, and acts on one after', () => {
+    // `useSettledPress`: the press may have been meant for the view this one took the place of.
+    installFakeClock();
+    const onViewHistory = vi.fn();
+    const onDone = vi.fn();
+    render({ onViewHistory, onDone });
+    const viewHistory = screen.getByRole('button', { name: 'View History' });
+
+    fireEvent.click(viewHistory);
+    act(() => void vi.advanceTimersByTime(400));
+    fireEvent.click(viewHistory);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onViewHistory).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    // The landing is not taken from the sentence by the wait.
+    expect(sentence()).toHaveFocus();
+
+    act(() => void vi.advanceTimersByTime(100));
+    fireEvent.click(viewHistory);
+    expect(onViewHistory).toHaveBeenCalledTimes(1);
   });
 
   it("says the caller's sentence", () => {

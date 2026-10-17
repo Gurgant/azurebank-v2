@@ -11,6 +11,7 @@ import { expectNoNestedLiveRegions } from '../../test/liveRegions';
 import {
   COPY,
   advanceUntil,
+  expectTheUnreadableAnswerLogged,
   fakeClockUser,
   hintRegion,
   hintShownAt,
@@ -238,6 +239,7 @@ describe('deposit during an outage', () => {
 
     expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     expect(sends).toBe(1);
   });
 
@@ -269,6 +271,7 @@ describe('deposit during an outage', () => {
 
       expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Deposit/ })).not.toBeInTheDocument();
+      expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
       expect(sends).toBe(1);
     },
   );
@@ -320,18 +323,6 @@ describe('a money send whose answer arrives but cannot be read', () => {
   */
   const unreadable = () => HttpResponse.json({ data: null, message: 'Done.' }, { status: 201 });
 
-  /**
-   * RTK logs a response transform that throws, once, on console.error — which this suite treats as
-   * a failure. Here that error is the scenario, so it is stubbed, and asserted to be that one.
-   */
-  function expectTheUnreadableAnswerLogged() {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-    return () => {
-      expect(logged).toHaveBeenCalledTimes(1);
-      expect(String(logged.mock.calls[0][0])).toMatch(/An unhandled error occurred processing/);
-    };
-  }
-
   it('deposit: asks for a check, and says nothing failed', async () => {
     const expectLogged = expectTheUnreadableAnswerLogged();
     server.use(http.post('*/api/transactions/deposit', unreadable));
@@ -340,6 +331,7 @@ describe('a money send whose answer arrives but cannot be read', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
 
     expect(await screen.findByText("We couldn't confirm your deposit")).toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expectLogged();
   });
@@ -352,6 +344,7 @@ describe('a money send whose answer arrives but cannot be read', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
     expect(await screen.findByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expectLogged();
   });

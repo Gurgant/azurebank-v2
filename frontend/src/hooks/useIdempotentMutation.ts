@@ -49,6 +49,54 @@ function shouldKeepKey(problem: ApiProblem): boolean {
 }
 
 /**
+ * What the sends under a key carried, left behind when the check view latches with the key
+ * dropped, for the flow to ask the listing what they wrote (ADR-0022). Read-only: `submit` reads
+ * only its own key, so this copy can never be sent.
+ */
+export interface SentRequest<TBody> {
+  /** The key every send under this intent carried. */
+  readonly key: string;
+  /** The body it carried: the form as sent, which an edit since then is not. */
+  readonly body: TBody;
+  /** `performance.now()` when the latest send under the key began. */
+  readonly lastSentAt: number;
+  /**
+   * Every send carried an authorisation, and every one presented was refused
+   * (`AUTHORIZATION_EXPIRED` or `AUTHORIZATION_INVALID`): nothing under the key can commit any
+   * more (ADR-0022, decision 6).
+   */
+  readonly everyAuthorisationRefused: boolean;
+}
+
+/** The sends made under the key currently held. */
+interface SendRecord<TBody> {
+  key: string;
+  body: TBody;
+  lastSentAt: number;
+  presented: Set<string>;
+  refused: Set<string>;
+  everySendCarriedOne: boolean;
+}
+
+function copyOf<TBody>(record: SendRecord<TBody>): SentRequest<TBody> {
+  return {
+    key: record.key,
+    body: record.body,
+    lastSentAt: record.lastSentAt,
+    everyAuthorisationRefused:
+      record.everySendCarriedOne &&
+      record.presented.size > 0 &&
+      [...record.presented].every((id) => record.refused.has(id)),
+  };
+}
+
+function isAuthorisationRefusal(problem: ApiProblem): boolean {
+  return (
+    problem.errorCode === 'AUTHORIZATION_EXPIRED' || problem.errorCode === 'AUTHORIZATION_INVALID'
+  );
+}
+
+/**
  * Client half of the idempotency protocol, one instance per money-intent. The key is
  * lazy (`crypto.randomUUID()` on first submit), in-memory only, and re-keyed on
  * `errorCode` — never on HTTP status. A body-affecting form edit calls `resetIntent`
@@ -70,11 +118,19 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  * through" action. Whatever the flow offers, `resetIntent` does nothing then: this instance never
  * mints another key. (Until 2026-10-01 the member was not read, and `resetIntent` re-armed the
  * send after every `IDEMPOTENCY_RESULT_UNKNOWN`.)
+ *
+ * When the latch drops a key without that proof, `lastSent` keeps a copy of what was sent under
+ * it, for the flow to ask the listing by key. A movement found that way is the same proof:
+ * `confirmWentThrough` sets `wentThrough`, and `resetIntent` then does nothing either.
  */
 export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger<TBody, TResult>) {
   const keyRef = useRef<string | null>(null);
   const verifyRequiredRef = useRef(false);
   const [verifyRequired, setVerifyRequired] = useState(false);
+  // What the sends under the held key carried; null while no key is held.
+  const attempts = useRef<SendRecord<TBody> | null>(null);
+  // The copy the check view reads, set when the latch drops a key that was sent and not proven.
+  const [lastSent, setLastSent] = useState<SentRequest<TBody> | null>(null);
   // The API said the payment under this key was committed. Set only with the latch, never without
   // it, and never cleared: a new payment needs a new mount. The ref is what `resetIntent` reads,
   // so a call made in the same tick as the answer is refused too.
@@ -111,10 +167,22 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
       the latch stays, and `submit` keeps refusing.
     */
     if (wentThroughRef.current) return;
+    attempts.current = null;
+    setLastSent(null);
     keyRef.current = null;
     verifyRequiredRef.current = false;
     setVerifyRequired(false);
     setKeyRetained(false);
+  }, []);
+
+  /*
+    The listing found the movement the dropped key wrote: the same proof as `applied: true`, so
+    the same lock. Only over the latch, which is the one state a lookup is made in.
+  */
+  const confirmWentThrough = useCallback(() => {
+    if (!verifyRequiredRef.current) return;
+    wentThroughRef.current = true;
+    setWentThrough(true);
   }, []);
 
   const submit = useCallback(
@@ -132,6 +200,27 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         throw new Error('Previous result unknown — verify before submitting again.');
       }
       keyRef.current ??= crypto.randomUUID();
+      /*
+        Every send under the key is recorded, the latest one's start above all: each could make a
+        new claim (a takeover of a stale one, or a claim after a refusal or a busy 503), so the
+        time from which nothing under the key can commit counts from the latest (ADR-0009).
+      */
+      if (attempts.current?.key !== keyRef.current) {
+        attempts.current = {
+          key: keyRef.current,
+          body,
+          lastSentAt: 0,
+          presented: new Set(),
+          refused: new Set(),
+          everySendCarriedOne: true,
+        };
+      }
+      const record = attempts.current;
+      const carried = extras?.stepUpAuthorizationId;
+      record.body = body;
+      if (carried) record.presented.add(carried);
+      else record.everySendCarriedOne = false;
+      record.lastSentAt = performance.now();
       setKeyRetained(true);
       try {
         const result = await trigger({
@@ -139,11 +228,13 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           body,
           ...extras,
         }).unwrap();
+        attempts.current = null;
         keyRef.current = null;
         setKeyRetained(false);
         return result;
       } catch (error) {
         const problem = error as ApiProblem;
+        if (carried && isAuthorisationRefusal(problem)) record.refused.add(carried);
         /*
           A rejection with NO HTTP status is not a refusal: `problemBaseQuery` gives every answer
           and every transport failure a status, so what is left is a 2xx whose body failed its
@@ -158,6 +249,9 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           `isUnconfirmedSend` is those two and RESULT_UNKNOWN, in one place for every reader.
         */
         if (isUnconfirmedSend(problem)) {
+          // A proven commit needs no lookup: nothing is left behind to ask about.
+          setLastSent(isProvenCommit(problem) ? null : copyOf(record));
+          if (isProvenCommit(problem)) attempts.current = null;
           keyRef.current = null;
           verifyRequiredRef.current = true;
           setVerifyRequired(true);
@@ -169,6 +263,7 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
             setWentThrough(true);
           }
         } else if (!shouldKeepKey(problem)) {
+          attempts.current = null;
           keyRef.current = null;
           setKeyRetained(false);
         }
@@ -198,11 +293,23 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
     through the money.
   */
   const requireVerify = useCallback(() => {
+    // The key held, if any, was sent and never answered for certain: the check view asks after it.
+    const record = attempts.current;
+    setLastSent(keyRef.current !== null && record?.key === keyRef.current ? copyOf(record) : null);
     keyRef.current = null;
     verifyRequiredRef.current = true;
     setVerifyRequired(true);
     setKeyRetained(false);
   }, []);
 
-  return { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify };
+  return {
+    submit,
+    resetIntent,
+    verifyRequired,
+    wentThrough,
+    keyRetained,
+    requireVerify,
+    lastSent,
+    confirmWentThrough,
+  };
 }

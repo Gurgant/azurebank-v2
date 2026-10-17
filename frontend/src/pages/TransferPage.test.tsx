@@ -7,10 +7,12 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { settle } from '../test/settle';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
+import { COPY } from '../test/outage';
 
 /**
  * PR-11 — the external transfer end to end, PIN collected in the page (ADR-0041/0042): pick an
@@ -588,15 +590,25 @@ describe('external transfer (PR-11)', () => {
       async (errorCode) => {
         const { seen, keys } = await reachTheCheckViewUnderAKeptKey(errorCode);
 
-        await userEvent.click(
-          screen.getByRole('button', { name: "It didn't go through — start over" }),
-        );
+        /*
+          Every authorisation presented under the key was refused, so nothing under it can land:
+          "start over" is offered as soon as the listing has answered. The account is closed, so
+          the listing is refused, and asking it again would be refused too.
+        */
+        const startOver = await screen.findByRole('button', {
+          name: "It didn't go through — start over",
+        });
+        expect(screen.getByText(COPY.movementUnchecked)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+        await settle();
+        await userEvent.click(startOver);
         const words = await screen.findByText(ACCOUNT_CLOSED);
         expect(words.closest('[role="alert"]')).not.toBeNull();
         expectTheChoiceCleared();
         expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
 
         // The transfer made next is another one: it does not carry the key that was let go.
+        await settle();
         await userEvent.click(screen.getByRole('button', { name: 'From Main Account' }));
         await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
         await confirmWithPin();
@@ -610,7 +622,9 @@ describe('external transfer (PR-11)', () => {
     it('lets the key go at the check view: "Check recent transactions" leaves for the history, unasked', async () => {
       // A key still held would keep the visitor on the page: every exit refuses under one.
       const { keys } = await reachTheCheckViewUnderAKeptKey('AUTHORIZATION_EXPIRED');
+      expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
 
+      await settle();
       await userEvent.click(screen.getByRole('button', { name: 'Check recent transactions' }));
 
       expect(await screen.findByText('HISTORY')).toBeInTheDocument();

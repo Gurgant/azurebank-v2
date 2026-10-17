@@ -26,7 +26,8 @@ type Schemas = components['schemas'];
  * - **B is the source**: nothing here is hand-written; regenerating from the spec keeps the
  *   validators drift-proof by construction.
  * - **A is where to enforce**: the MONEY surfaces (the four mutation receipts, the accounts
- *   list, the monthly summary) and the four step-up authorisations export STRICT schemas —
+ *   list, the monthly summary, the listing by key) and the four step-up authorisations export
+ *   STRICT schemas —
  *   validated fail-closed in every environment, because a silent drift there means wrong money
  *   on screen, or an operation refused for no reason shown.
  * - **C is when to validate the rest**: every other `/api/*` response that carries data
@@ -40,6 +41,13 @@ type Schemas = components['schemas'];
  */
 
 type AssertExtends<A extends B, B> = A;
+
+/**
+ * A page of the listing with both of its members, for the listing by idempotency key (ADR-0022).
+ * The generated page has them optional, as the contract does; derived here, not written by hand,
+ * so that it follows the contract's rows.
+ */
+const MovementsPage = PaginatedResponseOfTransactionResponse.required();
 
 /**
  * Exported so tsc's noUnusedLocals sees a use — the tuple's only job is to force every
@@ -81,6 +89,14 @@ export type _GeneratedSchemasMatchSpec = [
   */
   AssertExtends<DemoCopyInfo, Schemas['DemoCopyInfo']>,
   AssertExtends<Schemas['DemoCopyInfo'], DemoCopyInfo>,
+  AssertExtends<
+    z.infer<typeof MovementsPage>,
+    Required<Schemas['PaginatedResponseOfTransactionResponse']>
+  >,
+  AssertExtends<
+    Required<Schemas['PaginatedResponseOfTransactionResponse']>,
+    z.infer<typeof MovementsPage>
+  >,
 ];
 
 // ===== A — STRICT schemas, money and step-up authorisations (fail-closed everywhere) =====
@@ -104,6 +120,16 @@ export const transactionSummarySchema = TransactionSummaryResponse as ZodType<
 */
 export const stepUpAuthorizationResponseSchema = StepUpAuthorizationResponse as ZodType<
   Schemas['StepUpAuthorizationResponse']
+>;
+
+/*
+  STRICT, though no money moves on it. The listing by key decides whether a send whose answer was
+  lost is said to have gone through (ADR-0022), so a drifted page is "we couldn't check", never
+  a verdict read from a shape nobody checked. Both members are required: a page with no
+  `pagination` cannot say that it is empty.
+*/
+export const movementsPageSchema = MovementsPage as ZodType<
+  Required<Schemas['PaginatedResponseOfTransactionResponse']>
 >;
 
 // ===== C — soft schemas (dev + test only; undefined in production = skip) =====

@@ -23,9 +23,12 @@ import { isProvenCommit, isUnconfirmedSend, type MoneyPhase } from '../../api/mo
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
+import { useMovementCheck } from '../../hooks/useMovementCheck';
+import { useSettledPress } from '../../hooks/useSettledPress';
 import { selectCurrentUser } from '../../features/auth/authSlice';
-import { formatCurrency } from '../../utils/format';
+import { formatCurrency, formatDateTime } from '../../utils/format';
 import { RetryCountdown, WaitHint, retryDeadline, useAccountClosedToast } from '../feedback';
+import { MovementCheckStatus } from '../shared/MovementCheckStatus';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -41,10 +44,12 @@ import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
 import { PinInput } from '../PinInput';
 import {
+  CHECK_AGAIN,
   CONNECTION_FAILED,
   NO_DOUBLE_CHARGE,
   SERVICE_UNAVAILABLE_NOTHING_CHANGED,
   SERVICE_UNAVAILABLE_NO_MONEY_MOVED,
+  WITHDRAWAL_FOUND,
   WITHDRAWAL_OUTCOME_UNKNOWN,
   WITHDRAWAL_WENT_THROUGH,
 } from '../../api/problemMessages';
@@ -155,8 +160,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const [authoriseWithdrawal, { isLoading: isMinting }] = useAuthoriseWithdrawalMutation();
   const [withdrawTrigger] = useWithdrawMutation();
-  const { submit, resetIntent, verifyRequired, wentThrough, keyRetained, requireVerify } =
-    useIdempotentMutation(withdrawTrigger);
+  const {
+    submit,
+    resetIntent,
+    verifyRequired,
+    wentThrough,
+    keyRetained,
+    requireVerify,
+    lastSent,
+    confirmWentThrough,
+  } = useIdempotentMutation(withdrawTrigger);
   // The went-through sentence takes the focus the send lost: the Withdraw button was disabled for
   // the send, and a view drawn while focus is on `body` is not read. DepositDialog has the note.
   const wentThroughSentence = useFocusWhenLost<HTMLParagraphElement>(wentThrough);
@@ -198,6 +211,41 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // The account is closed and the check view is up over the key that was held: see
   // `accountIsClosed`. From then on every way the dialog closes says the sentence.
   const [closedUnderKey, setClosedUnderKey] = useState(false);
+
+  /*
+    Under the check view, the listing is asked by the key that was sent, on the account that was
+    sent. A movement found there is the withdrawal going through: the went-through view, and the
+    dialog's own copies of the PIN and of the authorisation go with it, as on `applied: true`.
+  */
+  const check = useMovementCheck(
+    lastSent,
+    (sent) => ({ first: { accountId: sent.accountId, type: 'Withdrawal' } }),
+    () => {
+      confirmWentThrough();
+      setPin('');
+      lastAuthorization.current = null;
+    },
+  );
+  const checkLanding = check.landingRef;
+  // The check view's "It didn't go through — try again": as it always was with nothing to ask
+  // about, and otherwise once nothing under the key can commit.
+  const newKeyOffered = check.verdict === 'off' || check.offerNewKey;
+  /*
+    As in DepositDialog: a press on the views' actions waits until what they draw has settled, and
+    once more as the form comes back after "It didn't go through — try again", on its footer and
+    on its content (`content`). Nothing there sends: Continue leads to the PIN step, which names
+    the amount and the account, and Withdraw waits for six digits. But a quick amount, an account
+    card or "Use max" under the second press of a double click on "try again" would change the
+    withdrawal the visitor goes on to confirm, with the form never seen. Measured without this
+    wait, two clicks with a 130 ms wait between them put the second press 155 ms after the first
+    at 320×568 and 164 ms after it at 360×800: at 320×568 it landed on Continue and brought up the
+    PIN step over a form never seen, and at 360×800 on the description field, which took focus.
+  */
+  const settledPress = useSettledPress(
+    verifyRequired,
+    `${wentThrough} ${check.verdict} ${check.canCheckAgain} ${check.pastLive} ${closedUnderKey}`,
+    { afterLeaving: true },
+  );
 
   const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
   const [resolvedBalanceOf, setResolvedBalanceOf] = useState(defaultAccountId);
@@ -684,8 +732,26 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
           </div>
           <Text as="p" className={styles.outcomeSentence} ref={wentThroughSentence} tabIndex={-1}>
-            {WITHDRAWAL_WENT_THROUGH}
+            {check.movement ? WITHDRAWAL_FOUND : WITHDRAWAL_WENT_THROUGH}
           </Text>
+          {/* The listing found it by the key: what the receipt would have shown of it. */}
+          {check.movement && (
+            <>
+              <Text className={styles.successAmount}>-{formatCurrency(check.movement.amount)}</Text>
+              <div className={styles.detailsCard}>
+                <div className={styles.detailRow}>
+                  <Text className={styles.detailLabel}>Reference</Text>
+                  <Text className={styles.detailValue}>{check.movement.transactionNumber}</Text>
+                </div>
+                <div className={styles.detailRow}>
+                  <Text className={styles.detailLabel}>Date &amp; time</Text>
+                  <Text className={styles.detailValue}>
+                    {formatDateTime(check.movement.createdAt)}
+                  </Text>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -696,10 +762,15 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text className={styles.stateTitle}>We couldn&apos;t confirm your withdrawal</Text>
-          <Text className={styles.stateBody}>
-            The request may or may not have gone through. Check your recent transactions before
-            trying again — retrying blindly could withdraw twice.
-          </Text>
+          {/* Hidden once the listing says it did not go through: "may or may not" is no longer
+              true. */}
+          {check.verdict !== 'none' && (
+            <Text className={styles.stateBody}>
+              The request may or may not have gone through. Check your recent transactions before
+              trying again — retrying blindly could withdraw twice.
+            </Text>
+          )}
+          {check.verdict !== 'off' && <MovementCheckStatus check={check} />}
         </div>
       )}
 
@@ -719,7 +790,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
       {/* Form step */}
       {showForm && (
-        <div className={styles.content}>
+        <div className={styles.content} {...settledPress.content}>
           <div>
             <Text className={styles.sectionLabel}>Select Account</Text>
             <Controller
@@ -867,7 +938,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       )}
 
       {/* Footer */}
-      <div className={styles.footer}>
+      <div className={styles.footer} {...settledPress.actions}>
         {/* The div below is an `aria-describedby` target, NOT a live region. The role used to live
             there, back when MessageBar carried none; now each banner announces itself (the pattern
             LoginPage set), and a role there too would give one message two atomic announceable
@@ -936,33 +1007,71 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             View History
           </Button>
         ) : verifyRequired ? (
+          /*
+            The check view's actions follow what the listing said (`useMovementCheck`), as in
+            DepositDialog. Over a closed account the last button mints nothing: it only closes
+            the dialog with the sentence, so it is drawn whatever the listing said. It is named
+            "Close" until it could be the new-key action: before then "It didn't go through"
+            would say the opposite of the words above it, that the withdrawal may still go
+            through.
+          */
           <>
+            {check.checkAgainFirst && (
+              <Button
+                key="check-again"
+                ref={checkLanding}
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                disabled={check.checking}
+                onClick={check.checkAgain}
+              >
+                {CHECK_AGAIN}
+              </Button>
+            )}
             <Button
-              appearance="primary"
+              key="check-transactions"
+              ref={check.checkAgainFirst ? undefined : checkLanding}
+              appearance={check.checkAgainFirst ? 'secondary' : 'primary'}
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => void navigate('/history')}
             >
               Check recent transactions
             </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => {
-                // No form to go back to when the account is closed: the dialog closes, and
-                // the sentence is said where the visitor lands.
-                if (closedUnderKey) {
-                  closeOverClosedAccount();
-                  return;
-                }
-                resetIntent();
-                setPin('');
-                goToStep('form');
-              }}
-            >
-              It didn&apos;t go through — try again
-            </Button>
+            {!check.checkAgainFirst && check.offerCheckAgain && (
+              <Button
+                key="check-again"
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                disabled={check.checking}
+                onClick={check.checkAgain}
+              >
+                {CHECK_AGAIN}
+              </Button>
+            )}
+            {(closedUnderKey || newKeyOffered) && (
+              <Button
+                key="try-again"
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => {
+                  // No form to go back to when the account is closed: the dialog closes, and
+                  // the sentence is said where the visitor lands.
+                  if (closedUnderKey) {
+                    closeOverClosedAccount();
+                    return;
+                  }
+                  resetIntent();
+                  setPin('');
+                  goToStep('form');
+                }}
+              >
+                {newKeyOffered ? "It didn't go through — try again" : 'Close'}
+              </Button>
+            )}
           </>
         ) : needsPinSetup ? (
           <>

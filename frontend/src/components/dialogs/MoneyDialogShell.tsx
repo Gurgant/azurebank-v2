@@ -28,13 +28,18 @@ import { useMoneyDialogStyles } from './moneyDialogStyles';
  * **A press outside the dialog does not close it while `keepOnOutsidePress` is set.** The caller
  * sets it while the form that sent is replaced by words the visitor must read: that the payment
  * went through and its receipt cannot be shown, or that it could not be confirmed and is to be
- * checked first. Either view is shorter than the form, so the dialog shrinks under the pointer,
- * and the second press of a double click on the send button lands on the backdrop. Measured in
- * Chromium on the running stack, on each: the dialog was gone before anybody could read it, on
- * the first a tenth of a second after its sentence appeared. On the second, what was recorded
- * after the press is no dialog, the dashboard's address, focus on `body` and no alert; that the
- * dashboard has the tile that opens the dialog again is read in its code. The press changes
- * nothing then: it closes nothing, and it leaves focus where it was. The X still closes the
+ * checked first. Either view can be shorter than the form, so the dialog shrinks under the
+ * pointer, and the second press of a double click on the send button can land on the backdrop.
+ * Measured in Chromium on the running stack at 1280×900, on each, with the code as it was before
+ * this branch, when the check view did not ask the listing by key: the dialog was gone before
+ * anybody could read it, on the first a tenth of a second after its sentence appeared. On the
+ * second, what was recorded after the press is no dialog, the dashboard's address, focus on
+ * `body` and no alert; that the dashboard has the tile that opens the dialog again is read in its
+ * code. Where that press lands now depends on the size and on what the check view says, and it
+ * can land on one of the view's own actions (`e2e/wentThrough.spec.ts` has what was measured):
+ * dropping that one is the caller's, which owns the actions (`useSettledPress`), and refuses that
+ * press its focus as the backdrop's handler below refuses its own. A press on the backdrop
+ * changes nothing: it closes nothing, and leaves focus where it was. The X still closes the
  * dialog, and so does Escape from wherever in the dialog focus is, since nobody presses those by
  * accident. The receipt of a send that succeeded is not kept, and neither is the form: a press
  * outside closes those as it did.
