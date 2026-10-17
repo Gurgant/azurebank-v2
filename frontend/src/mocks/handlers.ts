@@ -696,20 +696,20 @@ function apiOffsetInstant(ms: number): string {
 }
 
 /**
- * The 429 both PIN paths produce — and the one thing they do NOT share.
+ * The 429 both PIN paths produce, and the one thing they do NOT share: `instance`.
  *
- * The body is the API's in both cases; what differs is how it reaches the browser:
+ * The body is the API's in both cases, and so is its `Retry-After`:
  *
- *   POST /api/transactions/withdraw   YARP-PROXIED. Response headers are forwarded verbatim, so
- *                                     the `Retry-After` that `AppExceptionHandler` sets survives.
- *   POST /bff/auth/verify-pin         A BFF ACTION. `ForwardUpstreamError` is
- *                                     `StatusCode(status, body)` (BffAuthController.cs:670-703) —
- *                                     it copies no headers, so `Retry-After` is DROPPED.
+ *   POST /api/transactions/withdraw   YARP-PROXIED. Response headers are forwarded verbatim.
+ *   POST /bff/auth/verify-pin         A BFF ACTION. `ForwardUpstreamError` forwards the body, and
+ *                                     `KeepTheApisRetryHeaders` copies the API's `Retry-After`
+ *                                     and `Cache-Control` onto it (BffAuthController.cs).
  *
- * Measured 2026-08-05 on a throwaway user, because reaching a lockout costs three wrong PINs and
- * fifteen minutes, and the seeded admin account is what the e2e suite drives:
+ * Measured 2026-10-17 through the BFF on a throwaway user, on the local stack: three wrong PINs,
+ * the third answered 429 PIN_LOCKED with `Retry-After: 900` and `Cache-Control: no-store,
+ * no-cache`, instance "/api/auth/pin/verify". Measured 2026-08-05, before the BFF kept the header:
  *
- *   verify-pin -> 429, Retry-After ABSENT,  instance "/api/auth/pin/verify"
+ *   verify-pin -> 429, no Retry-After,      instance "/api/auth/pin/verify"
  *   withdraw   -> 429, Retry-After: 853,    instance "/api/transactions/withdraw"
  *   both       -> detail "Too many incorrect PIN attempts. Your PIN is temporarily locked; try
  *                 again later.", retryAfterSeconds 853, lockedUntil "…+00:00"
@@ -721,10 +721,10 @@ function apiOffsetInstant(ms: number): string {
  * verify-pin it is the API's own `/api/auth/pin/verify`, which the browser never requested.
  */
 /**
- * BFF ACTIONS forward the upstream problem through `ForwardUpstreamError`, which is
- * `StatusCode(status, body)` — status and JSON body only, **never a header**. Read at the source,
- * so it holds for every action alike: no `Retry-After` survives that hop, and `instance` stays the
- * API's own path. Proxied routes keep the header because YARP copies it.
+ * BFF ACTIONS forward the upstream problem through `ForwardUpstreamError`: the API's status and
+ * body, so `instance` stays the API's own path, and the API's `Retry-After` through
+ * `KeepTheApisRetryHeaders`. Proxied routes keep the header because YARP copies it. The mock sends
+ * no `Cache-Control` on either, as on its other answers.
  */
 const BFF_ACTION_INSTANCES: Record<string, string> = {
   'verify-pin': '/api/auth/pin/verify',
@@ -741,7 +741,7 @@ function pinLockedProblem(lockedUntil: string, now: number, source: 'verify-pin'
     detail: 'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
     instance: viaBffAction ? actionInstance : source,
     extensions: { retryAfterSeconds, lockedUntil },
-    ...(viaBffAction ? {} : { headers: { 'Retry-After': String(retryAfterSeconds) } }),
+    headers: { 'Retry-After': String(retryAfterSeconds) },
   });
 }
 
