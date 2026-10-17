@@ -559,6 +559,15 @@ public class TransactionService : ITransactionService
             .Select(a => a.Id)
             .ToListAsync(cancellationToken);
 
+        // An account outside the caller's scope is refused before anything else, so the answer to
+        // an AccountId never depends on whether the caller still has an open account. Answered
+        // with an empty page instead, a closed account and an open one with no rows would read
+        // alike to a client that lists by account.
+        if (filter.AccountId.HasValue && !userAccountIds.Contains(filter.AccountId.Value))
+        {
+            throw new AuthorizationException("You do not have access to this account.");
+        }
+
         if (!userAccountIds.Any())
         {
             return new PaginatedResponse<TransactionResponse>
@@ -579,13 +588,9 @@ public class TransactionService : ITransactionService
             .AsNoTracking()
             .Where(t => userAccountIds.Contains(t.AccountId));
 
-        // Filter by specific account if provided
+        // Filter by specific account if provided: its scope was checked above.
         if (filter.AccountId.HasValue)
         {
-            if (!userAccountIds.Contains(filter.AccountId.Value))
-            {
-                throw new AuthorizationException("You do not have access to this account.");
-            }
             query = query.Where(t => t.AccountId == filter.AccountId.Value);
         }
 
