@@ -324,7 +324,9 @@ describe('GET /api/transactions honours IdempotencyKey', () => {
     // 0x: the API reads each as the same key.
     const xShort = x.replace(/0x0+(?=[0-9a-f])/g, '0x');
     const xPlus = x.replace(/0x/g, '0x+0x');
-    const spellings = [key.toUpperCase(), n, `{${key}}`, `(${key})`, x, xShort, xPlus];
+    // The second and third components keep their last 4 of up to 8 digits.
+    const xWide = `{0x${n.slice(0, 8)},0x1${n.slice(8, 12)},0xffff${n.slice(12, 16)},{${bytes}}}`;
+    const spellings = [key.toUpperCase(), n, `{${key}}`, `(${key})`, x, xShort, xPlus, xWide];
     for (const spelling of spellings) {
       expect((await listedBy(spelling)).pagination.totalItems, spelling).toBe(1);
     }

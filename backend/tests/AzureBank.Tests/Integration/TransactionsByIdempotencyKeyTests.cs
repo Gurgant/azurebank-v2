@@ -68,6 +68,7 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
     [InlineData("X")]
     [InlineData("X-short")]
     [InlineData("X-plus")]
+    [InlineData("X-wide")]
     public async Task AKey_IsFoundUnderEverySpellingTheBinderTakes(string spelling)
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
@@ -91,6 +92,8 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
             "X-short" => Regex.Replace(key.ToString("X"), "0x0+(?=[0-9a-f])", "0x"),
             // A + and a second 0x after each 0x: the parser skips both.
             "X-plus" => key.ToString("X").Replace("0x", "0x+0x"),
+            // The second and third components keep their last 4 of up to 8 digits.
+            "X-wide" => WidenTheShortComponents(key.ToString("X")),
             _ => key.ToString(spelling),
         };
         var response = await Client.GetAsync($"/api/transactions?IdempotencyKey={Uri.EscapeDataString(sent)}");
@@ -98,6 +101,14 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.OK, sent);
         (await response.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions))!
             .Pagination.TotalItems.Should().Be(1, sent);
+    }
+
+    private static string WidenTheShortComponents(string x)
+    {
+        var parts = x.Split(',');
+        parts[1] = "0x1" + parts[1][2..];
+        parts[2] = "0xffff" + parts[2][2..];
+        return string.Join(',', parts);
     }
 
     [Fact]
