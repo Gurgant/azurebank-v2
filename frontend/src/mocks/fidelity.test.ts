@@ -1117,7 +1117,7 @@ describe('a session that DIED answers exactly like one that never was', () => {
   });
 });
 
-describe('the PIN lockout, and the header only one path keeps', () => {
+describe('the PIN lockout, and its header on both paths', () => {
   beforeEach(() => {
     resetMockState();
     seedMockSession();
@@ -1129,7 +1129,7 @@ describe('the PIN lockout, and the header only one path keeps', () => {
    * drives. The real values below were measured on a THROWAWAY registered user
    * (`PinAccessFailedCount` is per-user), which is what made U38 affordable at all.
    *
-   *   verify-pin -> 429, Retry-After ABSENT,  instance "/api/auth/pin/verify"
+   *   verify-pin -> 429, Retry-After: 900,    instance "/api/auth/pin/verify"   (2026-10-17)
    *   withdraw   -> 429, Retry-After: 853,    instance "/api/transactions/withdraw"
    *   both       -> "Too many incorrect PIN attempts. Your PIN is temporarily locked; try again
    *                  later.", retryAfterSeconds 853, lockedUntil "2026-08-05T12:10:14.3341758+00:00"
@@ -1141,21 +1141,18 @@ describe('the PIN lockout, and the header only one path keeps', () => {
       body: JSON.stringify({ pin: '000000' }),
     });
 
-  it('locks on the THIRD attempt, and drops Retry-After on the BFF action', async () => {
+  it('locks on the THIRD attempt, and keeps Retry-After on the BFF action', async () => {
     expect((await wrongPin()).status).toBe(200);
     expect((await wrongPin()).status).toBe(200);
 
     const locked = await wrongPin();
     expect(locked.status).toBe(429);
     /*
-      `ForwardUpstreamError` is `StatusCode(status, body)` — it copies no headers, so the
-      `Retry-After` the API set is lost between the API and the browser. Asserting its ABSENCE is
-      the whole point: a client that read the header here would work in tests and silently fall
-      back to a default in production.
+      The BFF copies the API's `Retry-After` onto the error it forwards (`KeepTheApisRetryHeaders`),
+      so the header matches the body's `retryAfterSeconds`.
     */
-    expect(locked.headers.get('Retry-After')).toBeNull();
-
     const body = await locked.json();
+    expect(locked.headers.get('Retry-After')).toBe(String(body.retryAfterSeconds));
     expect(body.errorCode).toBe('PIN_LOCKED');
     expect(body.detail).toBe(
       'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
