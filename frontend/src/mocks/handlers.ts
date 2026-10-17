@@ -72,9 +72,15 @@ const GUID_RE = new RegExp(`^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D
  * included; `0X` is read as `0x`; a component may be shorter than its width, or longer with
  * leading zeros (`0x000000001`, `0x004`), but not hold a larger value (`0x100000001` is a 400);
  * `0x` with no digit, a component with no `0x`, and seven bytes are each a 400.
+ *
+ * After its `0x`, a component may also carry a `+`, then a second `0x`, in that order, and then
+ * no digit at all, which reads as zero. Measured the same day on the API's own test host, with
+ * the listing's `IdempotencyKey`, `AccountId` and the `Idempotency-Key` header alike: `0x+1`,
+ * `0X+1`, `0x0x1`, `0x0X1` and `0x+0x1` each read as 1; `0x+` and `0x0x` as 0; `0x++1` and `0x-1`
+ * are a 400.
  */
 const X_WIDTHS = [8, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2];
-const X_PART = `0x(${HEX}+)`;
+const X_PART = `0x(\\+?(?:0x)?${HEX}*)`;
 const GUID_X_RE = new RegExp(
   `^\\{${[X_PART, X_PART, X_PART].join(',')},\\{${Array(8).fill(X_PART).join(',')}\\}\\}$`,
   'i',
@@ -86,7 +92,9 @@ function hexOfGuidX(value: string): string | null {
   if (!parts) return null;
   let hex = '';
   for (const [i, width] of X_WIDTHS.entries()) {
-    const digits = parts[i + 1].replace(/^0+(?=.)/, '');
+    // `0x` and nothing else is a 400; after a `+` or a second `0x`, nothing reads as zero.
+    if (parts[i + 1] === '') return null;
+    const digits = parts[i + 1].replace(/^\+/, '').replace(/^0x/i, '').replace(/^0+/, '');
     if (digits.length > width) return null;
     hex += digits.padStart(width, '0');
   }

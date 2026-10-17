@@ -67,6 +67,7 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
     [InlineData("P")]
     [InlineData("X")]
     [InlineData("X-short")]
+    [InlineData("X-plus")]
     public async Task AKey_IsFoundUnderEverySpellingTheBinderTakes(string spelling)
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
@@ -88,6 +89,8 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
             "D-upper" => key.ToString("D").ToUpperInvariant(),
             // Every component without its leading zeros: the binder pads them back.
             "X-short" => Regex.Replace(key.ToString("X"), "0x0+(?=[0-9a-f])", "0x"),
+            // A + and a second 0x after each 0x: the parser skips both.
+            "X-plus" => key.ToString("X").Replace("0x", "0x+0x"),
             _ => key.ToString(spelling),
         };
         var response = await Client.GetAsync($"/api/transactions?IdempotencyKey={Uri.EscapeDataString(sent)}");

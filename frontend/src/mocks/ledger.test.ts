@@ -320,9 +320,12 @@ describe('GET /api/transactions honours IdempotencyKey', () => {
 
     const bytes = (n.slice(16).match(/../g) as string[]).map((b) => `0x${b}`).join(',');
     const x = `{0x${n.slice(0, 8)},0x${n.slice(8, 12)},0x${n.slice(12, 16)},{${bytes}}}`;
-    // The X spelling with every leading zero left out: the API reads it as the same key.
+    // The X spelling with every leading zero left out, and with a + or a second 0x after each
+    // 0x: the API reads each as the same key.
     const xShort = x.replace(/0x0+(?=[0-9a-f])/g, '0x');
-    for (const spelling of [key.toUpperCase(), n, `{${key}}`, `(${key})`, x, xShort]) {
+    const xPlus = x.replace(/0x/g, '0x+0x');
+    const spellings = [key.toUpperCase(), n, `{${key}}`, `(${key})`, x, xShort, xPlus];
+    for (const spelling of spellings) {
       expect((await listedBy(spelling)).pagination.totalItems, spelling).toBe(1);
     }
   });
