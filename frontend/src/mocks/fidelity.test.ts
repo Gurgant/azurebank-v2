@@ -504,6 +504,36 @@ describe('model binding runs before the action, and the action before the servic
     }
   });
 
+  it('reads the X spelling as the server does: short, padded, spaced, any case of 0x', async () => {
+    // Each measured on the running API on 2026-10-17, through the BFF, as the listing's
+    // `IdempotencyKey`: these are one key, read as 00000001-0002-0003-0405-060708090a0b, and each
+    // was a 200.
+    const accepted = [
+      '{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}',
+      '{0X1,0X2,0X3,{0X4,0X5,0X6,0X7,0X8,0X9,0XA,0XB}}',
+      ' { 0x1 , 0x2 , 0x3 , { 0x4 , 0x5 , 0x6 , 0x7 , 0x8 , 0x9 , 0xa , 0xb } } ',
+      '{0x1 2,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}',
+      '{0x000000001,0x2,0x3,{0x004,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}',
+      '{0x1,\t0x2,\n0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}',
+    ];
+    for (const form of accepted) {
+      const listed = await fetch(`/api/transactions?IdempotencyKey=${encodeURIComponent(form)}`);
+      expect(listed.status, form).toBe(200);
+    }
+  });
+
+  it.each([
+    ['a value too big for its width', '{0x100000001,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
+    ['0x with no digit', '{0x,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
+    ['a component with no 0x', '{1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
+    ['seven bytes', '{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa}}'],
+    ['a space inside the D spelling', '00000001-0002-0003-0405-060708090a 0b'],
+  ])('refuses %s, as the server does', async (_name, form) => {
+    // Each a 400 from the running API on 2026-10-17, from the binder.
+    const listed = await fetch(`/api/transactions?IdempotencyKey=${encodeURIComponent(form)}`);
+    expect(listed.status).toBe(400);
+  });
+
   it('tolerates the whitespace Guid.TryParse tolerates', async () => {
     // Also measured against the running API before being written: a padded id came back 200 with
     // the same scoped total as the bare one. Cheap to get wrong in the other direction — the regex

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -64,17 +65,31 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
     [InlineData("N")]
     [InlineData("B")]
     [InlineData("P")]
+    [InlineData("X")]
+    [InlineData("X-short")]
     public async Task AKey_IsFoundUnderEverySpellingTheBinderTakes(string spelling)
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
-        var key = Guid.NewGuid();
+        // Every component starts with a zero, so that the short X spelling is not the full one.
+        var digits = Guid.NewGuid().ToString("N").ToCharArray();
+        foreach (var at in new[] { 0, 8, 12, 16, 18, 20, 22, 24, 26, 28, 30 })
+        {
+            digits[at] = '0';
+        }
+        var key = Guid.ParseExact(new string(digits), "N");
         SetAuthHeader(token);
         (await PostMonetaryAsync(
             "/api/transactions/deposit",
             new DepositRequest { AccountId = accountId, Amount = 25m },
             key)).StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var sent = spelling == "D-upper" ? key.ToString("D").ToUpperInvariant() : key.ToString(spelling);
+        var sent = spelling switch
+        {
+            "D-upper" => key.ToString("D").ToUpperInvariant(),
+            // Every component without its leading zeros: the binder pads them back.
+            "X-short" => Regex.Replace(key.ToString("X"), "0x0+(?=[0-9a-f])", "0x"),
+            _ => key.ToString(spelling),
+        };
         var response = await Client.GetAsync($"/api/transactions?IdempotencyKey={Uri.EscapeDataString(sent)}");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK, sent);

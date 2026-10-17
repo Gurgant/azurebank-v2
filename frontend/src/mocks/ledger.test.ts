@@ -309,10 +309,20 @@ describe('GET /api/transactions honours IdempotencyKey', () => {
   });
 
   it('finds the rows by any spelling of the key Guid.TryParse reads as the same key', async () => {
-    const key = crypto.randomUUID();
+    // Every component starts with a zero, so that the short X spelling is not the full one.
+    const n = [...crypto.randomUUID().replace(/-/g, '')]
+      .map((digit, at) =>
+        at === 0 || at === 8 || at === 12 || (at >= 16 && at % 2 === 0) ? '0' : digit,
+      )
+      .join('');
+    const key = `${n.slice(0, 8)}-${n.slice(8, 12)}-${n.slice(12, 16)}-${n.slice(16, 20)}-${n.slice(20)}`;
     await send('/api/transactions/deposit', key, { accountId: MAIN_ACCOUNT_ID, amount: 25 });
 
-    for (const spelling of [key.toUpperCase(), key.replace(/-/g, ''), `{${key}}`, `(${key})`]) {
+    const bytes = (n.slice(16).match(/../g) as string[]).map((b) => `0x${b}`).join(',');
+    const x = `{0x${n.slice(0, 8)},0x${n.slice(8, 12)},0x${n.slice(12, 16)},{${bytes}}}`;
+    // The X spelling with every leading zero left out: the API reads it as the same key.
+    const xShort = x.replace(/0x0+(?=[0-9a-f])/g, '0x');
+    for (const spelling of [key.toUpperCase(), n, `{${key}}`, `(${key})`, x, xShort]) {
       expect((await listedBy(spelling)).pagination.totalItems, spelling).toBe(1);
     }
   });
