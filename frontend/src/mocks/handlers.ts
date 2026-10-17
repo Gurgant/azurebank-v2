@@ -63,12 +63,48 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 // first, and the P form silently became a capturing group — the format test caught it as a 400.
 const HEX = '[0-9a-f]';
 const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
-const GUID_X =
-  `\\{0x${HEX}{1,8},0x${HEX}{1,4},0x${HEX}{1,4},` + `\\{(?:0x${HEX}{1,2},){7}0x${HEX}{1,2}\\}\\}`;
-const GUID_RE = new RegExp(
-  `^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\)|${GUID_X})$`,
+const GUID_RE = new RegExp(`^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\))$`, 'i');
+
+/**
+ * The X spelling, `{0xdddddddd,0xdddd,0xdddd,{0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd}}`, read as
+ * the API reads it. Measured on 2026-10-17 on the local stack, through the BFF, with the listing's
+ * `IdempotencyKey`: white space anywhere is dropped, inside a number too, tabs and line breaks
+ * included; `0X` is read as `0x`; a component may be shorter than its width, or longer with
+ * leading zeros (`0x000000001`, `0x004`); the first may not hold more than 8 digits
+ * (`0x100000001` is a 400); `0x` with no digit, a component with no `0x`, and seven bytes are
+ * each a 400.
+ *
+ * After its `0x`, a component may also carry a `+`, then a second `0x`, in that order, and then
+ * no digit at all, which reads as zero. Measured the same day on the API's own test host, with
+ * the listing's `IdempotencyKey`, `AccountId` and the `Idempotency-Key` header alike: `0x+1`,
+ * `0X+1`, `0x0x1`, `0x0X1` and `0x+0x1` each read as 1; `0x+` and `0x0x` as 0; `0x++1` and `0x-1`
+ * are a 400. The second and third components take up to 8 digits, as the first does, and keep
+ * their last 4: `0x10002` and `0xffff0002` read as 0002, `0x100000002` is a 400. A byte larger than
+ * `0xff` (`0x104`) is a 400.
+ */
+const X_WIDTHS = [8, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2];
+/** How many digits each component may hold, leading zeros apart, before it is a 400. */
+const X_DIGITS = [8, 8, 8, 2, 2, 2, 2, 2, 2, 2, 2];
+const X_PART = `0x(\\+?(?:0x)?${HEX}*)`;
+const GUID_X_RE = new RegExp(
+  `^\\{${[X_PART, X_PART, X_PART].join(',')},\\{${Array(8).fill(X_PART).join(',')}\\}\\}$`,
   'i',
 );
+
+/** The 32 hex digits of an X-spelled GUID, or `null` (see `X_WIDTHS` and `X_DIGITS`). */
+function hexOfGuidX(value: string): string | null {
+  const parts = GUID_X_RE.exec(value.replace(/\s/g, ''));
+  if (!parts) return null;
+  let hex = '';
+  for (const [i, width] of X_WIDTHS.entries()) {
+    // `0x` and nothing else is a 400; after a `+` or a second `0x`, nothing reads as zero.
+    if (parts[i + 1] === '') return null;
+    const digits = parts[i + 1].replace(/^\+/, '').replace(/^0x/i, '').replace(/^0+/, '');
+    if (digits.length > X_DIGITS[i]) return null;
+    hex += digits.slice(-width).padStart(width, '0');
+  }
+  return hex;
+}
 
 /**
  * Parse to the CANONICAL form, or `null`.
@@ -83,9 +119,10 @@ function parseGuid(value: string): string | null {
   // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
   // scoped total from the running API. Without this the mock 400s a request the server answers.
   const trimmed = value.trim();
-  if (!GUID_RE.test(trimmed)) return null;
-  const hex = trimmed.replace(/0x|[^0-9a-f]/gi, '').toLowerCase();
-  if (hex.length !== 32) return null;
+  const hex = (
+    GUID_RE.test(trimmed) ? trimmed.replace(/[^0-9a-f]/gi, '') : hexOfGuidX(value)
+  )?.toLowerCase();
+  if (hex?.length !== 32) return null;
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
