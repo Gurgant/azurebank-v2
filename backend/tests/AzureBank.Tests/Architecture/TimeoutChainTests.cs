@@ -1,7 +1,7 @@
 extern alias bff;
 
-using System.Reflection;
 using System.Text.Json;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 using BackendApiOptions = bff::AzureBank.Bff.Options.BackendApiOptions;
@@ -93,14 +93,7 @@ public class TimeoutChainTests
 
     private static JsonDocument Settings(string project)
     {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the test reads the settings each host ships");
-        var path = Path.Combine(dir!.FullName, "backend", "src", project, "appsettings.json");
+        var path = RepositoryFiles.ExistingFile("backend", "src", project, "appsettings.json");
         return JsonDocument.Parse(
             File.ReadAllText(path),
             new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });

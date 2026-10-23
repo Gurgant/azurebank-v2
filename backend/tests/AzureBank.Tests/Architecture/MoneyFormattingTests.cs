@@ -1,6 +1,6 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -32,19 +32,6 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class MoneyFormattingTests
 {
-    /// <summary>Walks up from the test assembly until it finds the solution file.</summary>
-    private static DirectoryInfo RepoBackendRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     /// <summary>
     /// Every project that can put a sentence in front of a person or into the published contract:
     /// the API and Shared (its responses and the contract), Infrastructure (since ADR-0048 it
@@ -140,7 +127,7 @@ public class MoneyFormattingTests
     [Fact]
     public void NoSourceFormatsMoneyWithTheProcessCulture()
     {
-        var root = RepoBackendRoot();
+        var root = RepositoryFiles.Backend();
         SourceFiles(root).Should().HaveCountGreaterThan(100,
             "a scan that reads nothing reports clean forever; this is the liveness check that "
             + "separates a working guard from one whose path filter quietly ate every file");
@@ -182,7 +169,7 @@ public class MoneyFormattingTests
         // of this guard missed it — found by sweeping my own regex the way the currency one was swept,
         // not by anyone reporting it.
         var symbolBeforeAmount = new Regex(@"(?<!\})[$€£¥]\s*(\{|\d)", RegexOptions.Compiled);
-        var root = RepoBackendRoot();
+        var root = RepositoryFiles.Backend();
         SourceFiles(root).Should().HaveCountGreaterThan(100,
             "a scan that reads nothing reports clean forever; this is the liveness check that "
             + "separates a working guard from one whose path filter quietly ate every file");
@@ -276,7 +263,7 @@ public class MoneyFormattingTests
           distinguishable from ordinary text by a regex, and pretending otherwise would buy a guard
           that fires on comments and gets switched off.
         */
-        var root = RepoBackendRoot();
+        var root = RepositoryFiles.Backend();
         SourceFiles(root).Should().HaveCountGreaterThan(100,
             "a scan that reads nothing reports clean forever; this is the liveness check that "
             + "separates a working guard from one whose path filter quietly ate every file");

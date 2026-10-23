@@ -1,5 +1,5 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -42,21 +42,9 @@ public class ProvenCommitSourceTests
 
     private static readonly Regex SaveCall = new(@"SaveChanges(Async)?\(", RegexOptions.CultureInvariant);
 
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     private static string Read(string relativePath)
     {
-        var path = Path.Combine(RepoRoot().FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(RepositoryFiles.Root().FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).Should().BeTrue(because: $"the guard scans {relativePath}; a moved file must move this line too");
 
         var text = File.ReadAllText(path);
@@ -103,7 +91,7 @@ public class ProvenCommitSourceTests
     /// <summary>The source files that hold the call, each with how many times it holds it.</summary>
     private static List<(string Name, int Calls)> SourceCalls(Regex call)
     {
-        var root = Path.Combine(RepoRoot().FullName, "backend", "src");
+        var root = Path.Combine(RepositoryFiles.Root().FullName, "backend", "src");
         var all = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                            && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Controllers;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Http;
@@ -67,26 +68,10 @@ public class PublishedErrorContractTests
     private static readonly string[] HttpMethods =
         ["get", "post", "put", "patch", "delete", "head", "options", "trace"];
 
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     [Fact]
     public void ProblemDetails_component_declares_errorCode_and_traceId()
     {
-        var properties = Document()
+        var properties = RepositoryFiles.PublishedContract()
             .GetProperty("components").GetProperty("schemas")
             .GetProperty("ProblemDetails").GetProperty("properties");
 
@@ -100,7 +85,7 @@ public class PublishedErrorContractTests
     [Fact]
     public void ProblemDetails_leaves_errorCode_optional()
     {
-        var schema = Document()
+        var schema = RepositoryFiles.PublishedContract()
             .GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails");
 
         var required = schema.TryGetProperty("required", out var r)
@@ -193,7 +178,7 @@ public class PublishedErrorContractTests
         // ADR-0058: any request can meet the database being down or the request deadline, and the
         // answer is a 503 with errorCode SERVICE_UNAVAILABLE. Before, one operation declared it
         // (revoke, whose 503 predates this), so a generated client had no type for the other 29.
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var operations = Operations(document).ToList();
         operations.Should().HaveCount(31, "the API's 31 operations; fewer means the scan broke");
 
@@ -214,7 +199,7 @@ public class PublishedErrorContractTests
         // account and the rename. The sentence is on those operations only: on another it would
         // promise an answer the code does not send, and missing from one of the seven it would
         // leave a cause of its 503 unnamed.
-        var naming = Operations(Document())
+        var naming = Operations(RepositoryFiles.PublishedContract())
             .Where(o => o.Value.GetProperty("responses").TryGetProperty("503", out var outage)
                 && outage.GetProperty("description").GetString()!
                     .Contains("lost the account to another write", StringComparison.Ordinal))
@@ -238,7 +223,7 @@ public class PublishedErrorContractTests
         // operation answers nothing but 404: the framework's own, as for a path with no route.
         // Measured through the test host (DemoModeEndpointTests): application/problem+json with
         // type, title, status and traceId, and no errorCode.
-        var paths = Document().GetProperty("paths");
+        var paths = RepositoryFiles.PublishedContract().GetProperty("paths");
         paths.TryGetProperty("/api/auth/demo/claim", out var path).Should().BeTrue("the claim is published");
         path.TryGetProperty("post", out var claim).Should().BeTrue();
         var responses = claim.GetProperty("responses");
@@ -268,7 +253,8 @@ public class PublishedErrorContractTests
         // answers the BFF's own client nothing but 403: registration is closed there. Measured
         // through the test host (DemoModeEndpointTests): the application's own refusal,
         // application/json with errorCode REGISTRATION_CLOSED, one sentence and a traceId.
-        var register = Document().GetProperty("paths").GetProperty("/api/auth/register").GetProperty("post");
+        var register = RepositoryFiles.PublishedContract()
+            .GetProperty("paths").GetProperty("/api/auth/register").GetProperty("post");
         var responses = register.GetProperty("responses");
 
         responses.EnumerateObject().Select(r => r.Name).Should().BeEquivalentTo(
@@ -319,7 +305,8 @@ public class PublishedErrorContractTests
     [Fact]
     public void ProblemDetails_declares_retryAfterSeconds_as_an_optional_integer()
     {
-        var schema = Document().GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails");
+        var schema = RepositoryFiles.PublishedContract()
+            .GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails");
 
         schema.GetProperty("properties").TryGetProperty("retryAfterSeconds", out var retryAfter).Should().BeTrue(
             "the SPA reads when to retry from the body: the Retry-After header does not always reach it");
@@ -336,7 +323,7 @@ public class PublishedErrorContractTests
     [Fact]
     public void Applied_is_declared_on_the_503s_of_the_four_money_operations_only()
     {
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
 
         PropertiesOf(document, document.GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails"))
             .Should().NotContain("applied", "the shared component would claim it for 26 operations that never send it");
@@ -416,7 +403,7 @@ public class PublishedErrorContractTests
         // from the database as executed. Only the four keyed money operations hold such a record.
         // The member is true or absent: `false` on a 409 would say "nothing moved" where nothing is
         // known, so the declared values are exactly [true], as the 503's are exactly [false].
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var conflicts = Operations(document)
             .Select(o => (o.Operation, Schema: ConflictSchema(o.Value)))
             .Where(o => o.Schema is not null)
@@ -458,7 +445,7 @@ public class PublishedErrorContractTests
     [Fact]
     public void The_money_409_describes_both_codes_and_what_applied_true_means()
     {
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var described = 0;
 
         foreach (var (operation, value) in Operations(document).Where(o => MoneyOperations.Contains(o.Operation)))
@@ -508,7 +495,7 @@ public class PublishedErrorContractTests
         // one a response declares, and a response can declare two (eight 404s did on 2026-10-01):
         // a member published under the second is published all the same. The declared values are
         // read with it, so a second media type cannot say false on a 409 or true on a 503 either.
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var declaring = new HashSet<string>(StringComparer.Ordinal);
         var scanned = 0;
 
@@ -544,7 +531,7 @@ public class PublishedErrorContractTests
         var offenders = new List<string>();
         var scanned = 0;
 
-        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        foreach (var path in RepositoryFiles.PublishedContract().GetProperty("paths").EnumerateObject())
         {
             foreach (var operation in path.Value.EnumerateObject())
             {

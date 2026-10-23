@@ -1,5 +1,5 @@
-using System.Reflection;
 using System.Text.Json;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -27,29 +27,13 @@ public class PublishedOperationTitlesTests
 {
     private const int TitleLimit = 50;
 
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     [Fact]
     public void EveryOperationSummary_IsOneLineOfAtMostFiftyCharacters()
     {
         var offenders = new List<string>();
         var operations = 0;
 
-        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        foreach (var path in RepositoryFiles.PublishedContract().GetProperty("paths").EnumerateObject())
         {
             foreach (var operation in path.Value.EnumerateObject())
             {

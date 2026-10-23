@@ -3,6 +3,7 @@ using AzureBank.Shared.Enums;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -35,19 +36,6 @@ public class SecurityEventConstantTests
     /// so it is also a contract: see the placeholder rule below.
     /// </summary>
     private const string Template = "SecurityEvent {SecurityEvent}";
-
-    /// <summary>Walks up from the test assembly until it finds the solution file.</summary>
-    private static DirectoryInfo RepoBackendRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
@@ -210,7 +198,7 @@ public class SecurityEventConstantTests
     {
         var offenders = new List<string>();
 
-        foreach (var file in SourceFiles(RepoBackendRoot()))
+        foreach (var file in SourceFiles(RepositoryFiles.Backend()))
         {
             foreach (var finding in Scan(File.ReadAllText(file)))
             {
@@ -323,7 +311,7 @@ public class SecurityEventConstantTests
         */
         var offenders = new List<string>();
 
-        foreach (var file in SourceFiles(RepoBackendRoot()))
+        foreach (var file in SourceFiles(RepositoryFiles.Backend()))
         {
             var text = File.ReadAllText(file);
 
@@ -442,7 +430,7 @@ public class SecurityEventConstantTests
                 + "here and give it its own expected count below — do not let it fall into another "
                 + "project's bucket.");
 
-        var perProject = SourceFiles(RepoBackendRoot())
+        var perProject = SourceFiles(RepositoryFiles.Backend())
             .GroupBy(ProjectOf)
             .ToDictionary(
                 g => g.Key,
@@ -457,7 +445,7 @@ public class SecurityEventConstantTests
         perProject.Should().ContainKey(
             "Infrastructure", "a project scanning to nothing would make every count below vacuously wrong");
 
-        EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
+        EventsNamedOnTemplateLines(SourceFiles(RepositoryFiles.Backend())
                 .Where(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)))
             .Should().BeEquivalentTo(
                 bffInventory,
@@ -486,7 +474,7 @@ public class SecurityEventConstantTests
           ADR-0044's "Fifteen events write a row" go stale in silence,
           exactly as "the six BFF events" did.
         */
-        var sources = SourceFiles(RepoBackendRoot()).Select(File.ReadAllText).ToList();
+        var sources = SourceFiles(RepositoryFiles.Backend()).Select(File.ReadAllText).ToList();
 
         // The two needles are disjoint even though one looks like a prefix of the other: after
         // "_audit.Record" the enlisting call has "(" while the refusal call has "R". Worth stating,
@@ -529,7 +517,7 @@ public class SecurityEventConstantTests
 
         // The NAME, not only the count — the same correction the BFF inventory needed. Swapping this
         // event for a different Infrastructure one would leave every number here untouched.
-        EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
+        EventsNamedOnTemplateLines(SourceFiles(RepositoryFiles.Backend())
                 .Where(f => f.Contains(Path.Combine("src", "AzureBank.Infrastructure"), StringComparison.Ordinal)))
             .Should().BeEquivalentTo(
                 new[] { "AuditChainUnavailable" },
@@ -722,7 +710,7 @@ public class SecurityEventConstantTests
         const string ownership = "GetAccountWithOwnershipCheckAsync(";
 
         var sites = new List<(string File, int Line, bool OwnershipFirst)>();
-        foreach (var file in SourceFiles(RepoBackendRoot()))
+        foreach (var file in SourceFiles(RepositoryFiles.Backend()))
         {
             var text = File.ReadAllText(file);
             // The interface's own declaration is not a call site.

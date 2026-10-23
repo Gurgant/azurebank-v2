@@ -1,5 +1,5 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 
 namespace AzureBank.Tests.Architecture;
@@ -38,7 +38,7 @@ public class AuditReportNumberFormattingTests
     [Fact]
     public void NoFindingOrReportGroupsDigitsWithTheHostCulture()
     {
-        var root = BackendRoot();
+        var root = RepositoryFiles.Backend();
         var offenders = new List<string>();
         var read = 0;
 
@@ -83,18 +83,6 @@ public class AuditReportNumberFormattingTests
     public void TheDetectorLeavesIdentifiersAndNamedCulturesAlone(string line)
     {
         GroupsWithTheHostCulture(line).Should().BeFalse($"'{line}' is the same text under every culture");
-    }
-
-    private static DirectoryInfo BackendRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail");
-        return dir!;
     }
 
     private static IEnumerable<string> SourceFiles(DirectoryInfo root)

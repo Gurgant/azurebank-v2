@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using AzureBank.Tests.Integration;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -32,7 +32,7 @@ namespace AzureBank.Tests.Architecture;
 public class BrunoCollectionRunsTests
 {
     private static DirectoryInfo Collection() => new(Path.Combine(
-        RunbookSqlParsesSqlServerTests.RepositoryRoot().FullName, "tests", "api-collection"));
+        RepositoryFiles.Root().FullName, "tests", "api-collection"));
 
     // {{baseUrl}}, {{$randomUUID}} — the $-prefixed ones are Bruno's own, supplied by the runtime.
     private static readonly Regex Interpolation = new(@"\{\{(\$?[A-Za-z_][A-Za-z0-9_]*)\}\}", RegexOptions.Compiled);

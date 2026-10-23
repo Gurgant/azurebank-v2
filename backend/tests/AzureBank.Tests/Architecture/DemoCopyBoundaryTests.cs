@@ -1,9 +1,9 @@
 extern alias seeder;
 
-using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -31,18 +31,6 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class DemoCopyBoundaryTests
 {
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     private static bool IsBuildOutput(string file) =>
         file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
         || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}");
@@ -94,7 +82,7 @@ public class DemoCopyBoundaryTests
 
     private static List<Site> HandleComparisons()
     {
-        var root = RepoRoot();
+        var root = RepositoryFiles.Root();
         var folder = Path.Combine(root.FullName, "backend", "src");
         Directory.Exists(folder).Should().BeTrue(because: $"expected to scan {folder}");
 
@@ -429,7 +417,7 @@ public class DemoCopyBoundaryTests
     [Fact]
     public void TheRecyclersControls_AreNamedByNoCodeThatShips_ButTheRecyclerItself()
     {
-        var backend = Path.Combine(RepoRoot().FullName, "backend");
+        var backend = Path.Combine(RepositoryFiles.Root().FullName, "backend");
         var scanned = 0;
         var naming = new List<string>();
         foreach (var folder in new[] { "src", "tools" })
@@ -466,7 +454,7 @@ public class DemoCopyBoundaryTests
     public void TheFixedDemo_TakesItsHistoryFromTheLedgerACopyIsBuiltFrom()
     {
         var file = Path.Combine(
-            RepoRoot().FullName, "backend", "tools", "AzureBank.Seeder", "Seeders", "TransactionSeeder.cs");
+            RepositoryFiles.Root().FullName, "backend", "tools", "AzureBank.Seeder", "Seeders", "TransactionSeeder.cs");
         File.Exists(file).Should().BeTrue(because: $"expected to read {file}");
         var code = string.Join("\n", CodeLines(file));
 
@@ -482,7 +470,7 @@ public class DemoCopyBoundaryTests
 
     private static string[] PoolSources()
     {
-        var folder = Path.Combine(RepoRoot().FullName, "backend", "tools", "AzureBank.Seeder", "Pool");
+        var folder = Path.Combine(RepositoryFiles.Root().FullName, "backend", "tools", "AzureBank.Seeder", "Pool");
         Directory.Exists(folder).Should().BeTrue(because: $"expected to scan {folder}");
         var files = Directory.GetFiles(folder, "*.cs", SearchOption.AllDirectories).Where(f => !IsBuildOutput(f)).ToArray();
         files.Select(f => Path.GetFileName(f)).Should().Contain(
@@ -534,7 +522,7 @@ public class DemoCopyBoundaryTests
     /// </summary>
     private static string[] ClaimSources()
     {
-        var api = Path.Combine(RepoRoot().FullName, "backend", "src", "AzureBank.Api");
+        var api = Path.Combine(RepositoryFiles.Root().FullName, "backend", "src", "AzureBank.Api");
         string[] files =
         [
             Path.Combine(api, "Security", "DemoPasswordGenerator.cs"),

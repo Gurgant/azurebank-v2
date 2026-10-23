@@ -1,4 +1,4 @@
-using System.Reflection;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -19,24 +19,12 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class LedgerClockHygieneTests
 {
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     [Theory]
     [InlineData("backend/src/AzureBank.Api/Services/Implementations/DailyOutflowLimitService.cs")]
     [InlineData("backend/src/AzureBank.Api/Services/Implementations/TransferService.cs")]
     public void TheDaysWindowAndTheLedgerStamp_ReadNoSecondClock(string relativePath)
     {
-        var path = Path.Combine(RepoRoot().FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(RepositoryFiles.Root().FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).Should().BeTrue(because: $"the guard scans {relativePath}; a moved file must move this line too");
 
         var lines = File.ReadAllLines(path);

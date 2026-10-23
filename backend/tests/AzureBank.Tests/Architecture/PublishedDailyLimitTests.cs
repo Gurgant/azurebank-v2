@@ -1,6 +1,6 @@
-using System.Reflection;
 using System.Text.Json;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -44,24 +44,8 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class PublishedDailyLimitTests
 {
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     private static string Description422(string path)
-        => Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+        => RepositoryFiles.PublishedContract().GetProperty("paths").GetProperty(path).GetProperty("post")
             .GetProperty("responses").GetProperty("422").GetProperty("description").GetString()!;
 
     [Fact]
@@ -140,7 +124,7 @@ public class PublishedDailyLimitTests
 
     /// <summary>The 422 body schema an operation publishes, as the document holds it.</summary>
     private static JsonElement Schema422(string path)
-        => Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+        => RepositoryFiles.PublishedContract().GetProperty("paths").GetProperty(path).GetProperty("post")
             .GetProperty("responses").GetProperty("422")
             .GetProperty("content").GetProperty("application/json").GetProperty("schema");
 
@@ -258,7 +242,7 @@ public class PublishedDailyLimitTests
           declared, on the three money moves' own inline schemas and still not on the component;
           the flipped assertion lives in PublishedRefusalCodesTests.
         */
-        var component = Document().GetProperty("components").GetProperty("schemas")
+        var component = RepositoryFiles.PublishedContract().GetProperty("components").GetProperty("schemas")
             .GetProperty("ProblemDetails").GetProperty("properties");
 
         foreach (var member in new[] { "limit", "used", "requested", "resetsAt", "available" })

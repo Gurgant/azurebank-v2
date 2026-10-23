@@ -1,7 +1,7 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -38,33 +38,15 @@ namespace AzureBank.Tests.Architecture;
 /// <para>
 /// The cost is real and worth stating: this couples the test suite to the documentation tree, so
 /// moving a file breaks a test for a reason that is not behaviour. That is accepted rather than
-/// hidden — <see cref="RepoRoot"/> fails loudly when the tree is missing rather than skipping,
-/// because a guard that quietly does nothing is the failure mode this whole branch is about.
+/// hidden — <see cref="RepositoryFiles.Root"/> fails loudly when the tree is missing rather
+/// than skipping, because a guard that quietly does nothing is the failure mode this whole branch
+/// is about.
 /// </para>
 /// </remarks>
 public class AuditProseGuardTests
 {
-    /// <summary>Walks up from the test assembly until it finds the repository root.</summary>
-    /// <remarks>
-    /// Copied in shape from <c>SourceHygieneTests</c>, which established that a source-reading guard
-    /// belongs in this folder and must FAIL rather than skip when it cannot find what it reads.
-    /// </remarks>
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(
-            because: "these guards read the sources and the documents; one that cannot run must say "
-            + "so rather than pass");
-        return dir!;
-    }
-
     private static string Read(params string[] parts) =>
-        File.ReadAllText(Path.Combine(RepoRoot().FullName, Path.Combine(parts)));
+        File.ReadAllText(Path.Combine(RepositoryFiles.Root().FullName, Path.Combine(parts)));
 
     private const string Runbook = "docs/runbooks/audit-chain-unavailable.md";
 
@@ -192,7 +174,7 @@ public class AuditProseGuardTests
         var perFile = CommandFiles.ToDictionary(
             file => file,
             file => CodeLines(
-                    Path.Combine(RepoRoot().FullName, "backend", "tools", "AzureBank.AuditVerifier",
+                    Path.Combine(RepositoryFiles.Root().FullName, "backend", "tools", "AzureBank.AuditVerifier",
                         "Commands", file))
                 .SelectMany(line => Headline.Matches(line).Select(m => m.Groups[1].Value))
                 .ToList(),
@@ -484,7 +466,7 @@ public class AuditProseGuardTests
           `TheEventInventoryThisAdrStatesIsStillTheOneInTheSource`, a real test the ADR names twice.
           A guard that skips what it cannot classify reports success for the wrong reason.
         */
-        var root = RepoRoot().FullName;
+        var root = RepositoryFiles.Root().FullName;
 
         var declared = Directory
             .EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)

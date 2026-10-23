@@ -1,3 +1,4 @@
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using NetArchTest.Rules;
 using Xunit;
@@ -67,7 +68,7 @@ public class SubscriberNoticeLimitTests
     [Fact]
     public void TheWithdrawnCitation_DoesNotReturn()
     {
-        var root = RepoRoot();
+        var root = RepositoryFiles.Root().FullName;
         string[] scopes = ["backend/src", "backend/tools", "docs/adr", "docs/deferred", "docs/architecture", "docs/runbooks"];
 
         var hits = scopes
@@ -86,17 +87,5 @@ public class SubscriberNoticeLimitTests
         hits.Should().BeEmpty(
             "the document is NIST SP 800-63B-4 (Revision 4 of volume B); '800-63-4B' was withdrawn "
             + "at five sites by ADR-0045 and must not be re-typed");
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "backend", "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull("this guard reads the sources; one that cannot find them must say so rather than pass");
-        return dir!.FullName;
     }
 }
