@@ -2,9 +2,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
   makeStyles,
-  MessageBar,
-  MessageBarActions,
-  MessageBarBody,
   mergeClasses,
   Spinner,
   Text,
@@ -18,14 +15,11 @@ import {
 } from '@fluentui/react-icons';
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
-import { useAppDispatch } from '../app/hooks';
-import { AlertSlot, WaitHint } from '../components/feedback';
+import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import { PageHeader } from '../components/layout/PageHeader';
 import type { TransactionStatus, TransactionType } from '../api/enums';
 import { useGetTransactionQuery } from '../features/api/apiSlice';
-import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
+import { usePageRead } from '../hooks/usePageRead';
 import { formatDateHeading, formatCurrency, formatTime, isIncomeType } from '../utils/format';
 
 // ============================================
@@ -297,30 +291,16 @@ export function TransactionDetailPage() {
   const { id } = useParams<{ id: string }>();
 
   // T2 — enveloped detail, tagged {Transaction,id}. The route guarantees `id`.
-  const {
-    data: transaction,
-    isLoading,
-    isFetching,
-    error,
-    refetch,
-    requestId,
-  } = useGetTransactionQuery(id ?? '');
+  const transactionQuery = useGetTransactionQuery(id ?? '');
+  const { data: transaction, requestId } = transactionQuery;
   // The spinner and the bar follow the wait, not `isLoading` and `error`: a Retry keeps the old
   // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
   // that wait fails too.
-  const { waiting, failed } = readWait({ isLoading, isFetching, error });
-  const problem = failed ? (error as ApiProblem) : undefined;
+  const { waiting, failed, problem, landingRef, stopWaiting, retry } = usePageRead(
+    transactionQuery,
+    { endpoint: 'getTransaction', arg: id ?? '' },
+  );
   const isNotFound = problem?.status === 404;
-
-  const dispatch = useAppDispatch();
-  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
-  const stopWaiting = () => {
-    if (abortRunning(dispatch, [{ endpoint: 'getTransaction', arg: id ?? '' }])) arm();
-  };
-  const retry = () => {
-    arm();
-    void refetch();
-  };
 
   // [badge background, dot fill, label text color] — the dot needs a FILL, the
   // label a color only; one shared class painted a block behind the text.
@@ -366,17 +346,13 @@ export function TransactionDetailPage() {
           ever drawn still puts a new bar into the alert, and it is announced again. */}
       <AlertSlot className={styles.content}>
         {problem && !isNotFound && (
-          <MessageBar key={requestId} intent="error">
-            <MessageBarBody>
-              {problem.detail || 'Could not load the transaction.'}
-              {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button ref={landingRef} appearance="transparent" onClick={retry}>
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
+          <ReadErrorBar
+            key={requestId}
+            problem={problem}
+            fallback="Could not load the transaction."
+            onRetry={retry}
+            retryRef={landingRef}
+          />
         )}
       </AlertSlot>
 

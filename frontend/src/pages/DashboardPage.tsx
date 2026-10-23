@@ -34,7 +34,7 @@ import {
 import { DemoCopyPanel } from '../features/demo';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
 import { readWait } from '../hooks/useWaitPhase';
-import { AlertSlot, WaitHint } from '../components/feedback';
+import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
@@ -608,17 +608,12 @@ export function DashboardPage() {
           alert reads both, in this order. */}
       <AlertSlot className={styles.alerts}>
         {accountsProblem && (
-          <MessageBar intent="error">
-            <MessageBarBody>
-              {accountsProblem.detail || 'Could not load your accounts.'}
-              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-            </MessageBarBody>
-            <MessageBarActions>
-              <Button ref={landingRef} appearance="transparent" onClick={retryAccounts}>
-                Retry
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
+          <ReadErrorBar
+            problem={accountsProblem}
+            fallback="Could not load your accounts."
+            onRetry={retryAccounts}
+            retryRef={landingRef}
+          />
         )}
         {sectionsShown && summaryFailed && (
           <MessageBar intent="error">
