@@ -18,6 +18,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Serilog.Core;
 using Serilog.Events;
+using static AzureBank.Bff.Tests.Polling;
 
 namespace AzureBank.Bff.Tests;
 
@@ -162,11 +163,6 @@ public class SessionStampWatcherTests : IClassFixture<WebApplicationFactory<Prog
             new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     }
 
-    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
-    {
-        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
-    }
-
     private (WebApplicationFactory<Program> Host, Upstream Upstream, FakeTimeProvider Clock, ConcurrentQueue<LogEvent> Log)
         NewHost()
     {
@@ -219,20 +215,6 @@ public class SessionStampWatcherTests : IClassFixture<WebApplicationFactory<Prog
         var request = new HttpRequestMessage(method, path);
         request.Headers.Add("Cookie", $"{cookieName}={sessionId}");
         return request;
-    }
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-            await Task.Delay(25);
-        }
-        return true;
     }
 
     private static List<LogEvent> PollFailures(ConcurrentQueue<LogEvent> log) =>

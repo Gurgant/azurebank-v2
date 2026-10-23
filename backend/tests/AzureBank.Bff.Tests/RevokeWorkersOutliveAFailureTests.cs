@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using static AzureBank.Bff.Tests.Polling;
 
 namespace AzureBank.Bff.Tests;
 
@@ -127,21 +128,5 @@ public sealed class RevokeWorkersOutliveAFailureTests : IClassFixture<WebApplica
         api.Revoked.Should().Equal(["good-grant"], "once, and none of the grants whose revoke failed");
         host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested
             .Should().BeFalse("one bad item does not stop the host");
-    }
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-
-            await Task.Delay(25);
-        }
-
-        return true;
     }
 }

@@ -20,6 +20,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
+using static AzureBank.Bff.Tests.Polling;
 
 namespace AzureBank.Bff.Tests;
 
@@ -181,11 +182,6 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
 
         private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
             new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
-    }
-
-    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
-    {
-        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
     }
 
     /// <summary>
@@ -376,20 +372,6 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
         var request = new HttpRequestMessage(method, path);
         request.Headers.Add("Cookie", $"{CookieName(host)}={sessionId}");
         return request;
-    }
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-            await Task.Delay(25);
-        }
-        return true;
     }
 
     /// <summary>The session the response's cookie names.</summary>

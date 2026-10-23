@@ -1,4 +1,3 @@
-using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
@@ -14,6 +13,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using static AzureBank.Bff.Tests.Polling;
+using static AzureBank.Bff.Tests.UnsignedJwt;
 
 namespace AzureBank.Bff.Tests;
 
@@ -175,11 +176,7 @@ public sealed class OwnPathsWithoutALiveSessionTests : IClassFixture<WebApplicat
 
         // Ending a session queues the revoke of its grant, sent to the API in the background: it
         // is waited for, so that the record is read whole.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!api.Paths.Contains("/api/auth/revoke") && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(25);
-        }
+        await Eventually(() => api.Paths.Contains("/api/auth/revoke"), TimeSpan.FromSeconds(5));
 
         using var all = new AssertionScope();
         DateTime.UtcNow.Should().BeBefore(
@@ -192,19 +189,5 @@ public sealed class OwnPathsWithoutALiveSessionTests : IClassFixture<WebApplicat
             ["/api/auth/refresh", "/api/auth/revoke"],
             "the renewal was asked for once and refused, and the ended session's grant was revoked; "
             + $"neither call sent the API a PIN or a handle, so {ApiPathOf(path)} is not in the record");
-    }
-
-    /// <summary>
-    /// A JWT-shaped token that carries its own issue time and expiry, so the BFF reads how much of
-    /// its lifetime is left. Unsigned: the BFF reads a token, it never verifies one.
-    /// </summary>
-    private static string Jwt(DateTime issuedAt, DateTime expiresAt)
-    {
-        static string Part(string json) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(json));
-        var iat = new DateTimeOffset(issuedAt).ToUnixTimeSeconds();
-        var exp = new DateTimeOffset(expiresAt).ToUnixTimeSeconds();
-        return Part("""{"alg":"none","typ":"JWT"}""")
-            + "." + Part($$"""{"sub":"held","iat":{{iat}},"exp":{{exp}}}""")
-            + ".test-signature";
     }
 }

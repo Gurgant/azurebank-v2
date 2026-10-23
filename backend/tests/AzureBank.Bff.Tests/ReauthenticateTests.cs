@@ -8,6 +8,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using static AzureBank.Bff.Tests.Polling;
 
 namespace AzureBank.Bff.Tests;
 
@@ -256,20 +257,6 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
         (await client.SendAsync(logout)).StatusCode.Should().Be(HttpStatusCode.OK);
         (await Eventually(() => upstream.RevokedGrants.Contains("fake-refresh-jwt-2"))).Should().BeTrue();
         upstream.Paths.Should().NotContain("/api/auth/logout", "\"Esci\" ends one session, not every session of the user");
-    }
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-            await Task.Delay(25);
-        }
-        return true;
     }
 
     [Fact]

@@ -33,11 +33,6 @@ public class RequestLogRouteTests : IClassFixture<WebApplicationFactory<Program>
 
     public RequestLogRouteTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
-    {
-        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
-    }
-
     private async Task<(LogEvent Line, HttpStatusCode Status, List<LogEvent> Events)> RequestLineOf(string path)
     {
         var events = new ConcurrentQueue<LogEvent>();
