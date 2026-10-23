@@ -1,5 +1,11 @@
+import { createElement } from 'react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { lightPalette } from './tokens';
+import { PinInput } from '../components/PinInput';
+import { Avatar } from '../components/shared/Avatar';
+import { useTransferWizardStyles } from '../pages/transferWizardStyles';
+import { toDeclarations } from './cssVariables';
+import { lightPalette, type LightPalette } from './tokens';
 import { darkPalette } from './darkPalette';
 
 /**
@@ -124,17 +130,17 @@ describe.each([
   );
 
   it('keeps the brand READABLE as text on the card, which is the ramp’s job', () => {
-    // 4.5:1, because 26 call sites use this as `color:` on TEXT — links, active nav labels, the
-    // "See all" affordance. An earlier draft asserted 3:1, the non-text threshold, which is right
-    // for the icons that also use it and wrong for the majority.
+    // 4.5:1, because most of the call sites that take this as `color:` are TEXT — links, active
+    // nav labels, the "See all" affordance. An earlier draft asserted 3:1, the non-text
+    // threshold, which is right for the icons that also use it and wrong for the majority.
     //
     // Against the CARD rather than the canvas, and that distinction is measured rather than
-    // assumed: brand text lives inside cards, and on the canvas the LIGHT value is 4.42:1 — below
-    // AA. Asserting against the canvas would fail today, which is the useful thing to know: if
-    // brand-coloured text is ever placed directly on the ground, it needs its own value. No such
-    // placement was found; finding one is U8 work, not a blind fix here.
+    // assumed: on the canvas the LIGHT value is 4.42:1, below AA, and on the brand tint it is
+    // 4.23:1. Words drawn on those grounds take another shade, and the tests at the end of this
+    // file read which one from the components' own style sheets.
     expect(contrast(colors.brand[60], chrome)).toBeGreaterThanOrEqual(4.5);
   });
+
   /** Body text on the card it is printed on. WCAG 1.4.3 AA for normal text. */
   it('prints primary text on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[700], chrome)).toBeGreaterThanOrEqual(4.5);
@@ -143,6 +149,25 @@ describe.each([
   /** Secondary text is still text: same threshold, and the one most often quietly failed. */
   it('prints secondary text on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[500], chrome)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /**
+   * The card is not the only ground the secondary grey is drawn on, nor the hardest. It is drawn
+   * on the canvas, on the wells and the chips, on the hairline grey under a hovered chip, on the
+   * brand tints, as on a chosen card, and on the green of a found recipient. In the light theme
+   * every one of them is darker than the card.
+   */
+  it.each([
+    ['the canvas', surfaces.canvas],
+    ['neutral[50]', colors.neutral[50]],
+    ['neutral[100]', colors.neutral[100]],
+    ['neutral[200]', colors.neutral[200]],
+    ['brand[120]', colors.brand[120]],
+    ['brand[130]', colors.brand[130]],
+    ['semantic.success.light', colors.semantic.success.light],
+  ])('prints secondary text on %s at 4.5:1 or better', (ground, hex) => {
+    const ratio = contrast(colors.neutral[500], hex);
+    expect(ratio, `neutral[500] on ${ground}: ${ratio.toFixed(2)}`).toBeGreaterThanOrEqual(4.5);
   });
 
   /** Every status chip: pale-on-deep in dark, deep-on-pale in light — the ratio is what must hold. */
@@ -164,6 +189,102 @@ describe.each([
  * 1.27:1, which is the palette being CORRECT: there `neutral[100]` is the canvas and the card stands
  * a visible step above it. A historical fact parameterised over a second theme stops being a fact.
  */
+/**
+ * Brand words as the components draw them, held on the ground each one sits on, in both themes.
+ *
+ * A pair of tokens cannot see a component go back to `brand[60]`, so these read the shade from
+ * the style sheets the components write. jsdom draws nothing, and its `getComputedStyle` does not
+ * follow these classes, so the reading is the one `disabledButtonEdge.test.tsx` sets out: of the
+ * rules that name one of the element's classes, in the state asked for, and set `color`, the last
+ * in the page. It gives a `var(--ab-…)` reference, and each palette's declarations give its hex.
+ */
+function sheetRules(): CSSStyleRule[] {
+  return Array.from(document.querySelectorAll('style'))
+    .flatMap((element) => Array.from(element.sheet?.cssRules ?? []))
+    .filter((rule): rule is CSSStyleRule => 'selectorText' in rule);
+}
+
+/** The variable the sheets draw `element`'s words with in `state` (`':hover'`), or `undefined`. */
+function shadeOf(element: Element, state = ''): string | undefined {
+  const selectors = new Set(Array.from(element.classList).map((name) => `.${name}${state}`));
+  const value = sheetRules()
+    .filter(
+      (rule) =>
+        rule.style.getPropertyValue('color') !== '' &&
+        rule.selectorText.split(',').some((selector) => selectors.has(selector.trim())),
+    )
+    .map((rule) => rule.style.getPropertyValue('color'))
+    .at(-1);
+  return /^var\((--ab-[\w-]+)\)$/.exec(value ?? '')?.[1];
+}
+
+/** The transfer pages' link to each other, with the rule both pages give it. */
+function TransferLink() {
+  const styles = useTransferWizardStyles();
+  return createElement('button', { className: styles.linkBtn }, 'Between your own accounts');
+}
+
+function showPin(): HTMLElement {
+  render(createElement(PinInput, { value: '', onChange: () => {} }));
+  return screen.getByRole('button', { name: 'Show PIN' });
+}
+
+const BRAND_WORDS = [
+  {
+    words: "the avatar's initials",
+    draw: () => {
+      render(createElement(Avatar, { initials: 'AL' }));
+      return screen.getByRole('img', { name: 'AL' });
+    },
+    state: '',
+    grounds: (palette: LightPalette) => ({ 'brand[120]': palette.colors.brand[120] }),
+  },
+  {
+    words: "the transfer pages' link to each other",
+    draw: () => {
+      render(createElement(TransferLink));
+      return screen.getByRole('button', { name: 'Between your own accounts' });
+    },
+    state: '',
+    grounds: (palette: LightPalette) => ({ 'the canvas': palette.surfaces.canvas }),
+  },
+  {
+    // On the canvas on a transfer page, and on the card in a money dialog.
+    words: 'Show/Hide under the PIN boxes, under the pointer',
+    draw: showPin,
+    state: ':hover',
+    grounds: (palette: LightPalette, card: string) => ({
+      'the canvas': palette.surfaces.canvas,
+      'the card': card,
+    }),
+  },
+];
+
+describe('brand words as the components draw them', () => {
+  it('reads the sheets as a browser does: Show/Hide at rest is the grey its rule declares', () => {
+    // CONTROL: green before this change. If the reading found nothing, or the wrong rule, the
+    // tests below could not be believed.
+    expect(shadeOf(showPin())).toBe('--ab-colors-neutral-500');
+  });
+
+  describe.each([
+    ['light', lightPalette, CHROME.light],
+    ['dark', darkPalette, CHROME.dark],
+  ] as const)('%s', (_name, palette, card) => {
+    const hexOf = new Map(toDeclarations(palette));
+
+    it.each(BRAND_WORDS)('prints $words at 4.5:1 or better', ({ draw, state, grounds }) => {
+      const shade = shadeOf(draw(), state);
+      const hex = hexOf.get(shade ?? '') ?? '';
+      expect(hex, `the shade the sheets give: ${shade}`).toMatch(/^#[0-9A-F]{6}$/i);
+      for (const [ground, background] of Object.entries(grounds(palette, card))) {
+        const ratio = contrast(hex, background);
+        expect(ratio, `${shade} on ${ground}: ${ratio.toFixed(2)}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  });
+});
+
 describe('the light-theme pairing this replaced', () => {
   it('was a border the colour of what it borders', () => {
     expect(contrast(lightPalette.colors.neutral[100], CHROME.light)).toBeLessThan(1.2);

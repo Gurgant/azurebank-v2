@@ -30,7 +30,7 @@ const useStyles = makeStyles({
     fontWeight: 600,
     color: colors.neutral[800],
     // WCAG 1.4.11: the box border is the sole affordance on a white dialog, so it must be
-    // ≥3:1 against white — neutral[500] (#6B7280 ≈ 4.8:1), not the too-faint neutral[300].
+    // ≥3:1 against white — neutral[500] (5.59:1), not the too-faint neutral[300].
     border: `1px solid ${colors.neutral[500]}`,
     borderRadius: '12px',
     outline: 'none',
@@ -71,7 +71,9 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
     padding: '4px 8px',
     borderRadius: '6px',
-    ':hover': { color: colors.brand[60] },
+    // brand[70], not brand[60]: on a transfer page this button sits on the canvas, where
+    // brand[60] is 4.42:1 in the light theme.
+    ':hover': { color: colors.brand[70] },
   },
 });
 
