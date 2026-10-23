@@ -111,6 +111,13 @@ const useStyles = makeStyles({
     paddingBottom: safeArea.bottom,
   },
 
+  // The phone's wrapper of the page, there only so that the page holds the same place in the tree
+  // as on desktop (see the component). It has no box, so the page root is still a flex item of
+  // `mobileContent` and claims the height from it.
+  mobilePage: {
+    display: 'contents',
+  },
+
   // Desktop layout
   desktopContainer: {
     display: 'flex',
@@ -177,45 +184,39 @@ export function AppLayout({
   const styles = useStyles();
   const { isDesktop } = useResponsive();
 
-  // Desktop layout
-  if (isDesktop) {
-    return (
-      <div className={styles.desktopContainer}>
-        {/* Sidebar */}
-        {!hideSidebar && (
-          <Sidebar
-            userName={user?.name}
-            userEmail={user?.email}
-            userAvatar={user?.avatar}
-            onLogout={onLogout}
-          />
-        )}
-
-        {/* Main Content Area */}
-        <main className={styles.desktopMain}>
-          {/* Page Content */}
-          <div className={mergeClasses(styles.desktopContent, className)}>{children}</div>
-        </main>
-      </div>
-    );
-  }
-
-  // Mobile layout
+  // One tree for both layouts. React keeps a subtree only while every element above it keeps its
+  // type and its place, and a page unmounted when the width crosses 1024 px would lose an open
+  // dialog, what was typed in it and where focus was. So the sidebar and the bottom bar each hold
+  // their slot with `false` when they are not drawn, and the page always sits in the one div of
+  // the one main.
   return (
-    <div className={styles.mobileContainer}>
-      {/* Page Content */}
+    <div className={isDesktop ? styles.desktopContainer : styles.mobileContainer}>
+      {isDesktop && !hideSidebar && (
+        <Sidebar
+          userName={user?.name}
+          userEmail={user?.email}
+          userAvatar={user?.avatar}
+          onLogout={onLogout}
+        />
+      )}
       <main
-        className={mergeClasses(
-          styles.mobileContent,
-          hideBottomNav && styles.mobileContentNoNav,
-          className,
-        )}
+        className={
+          isDesktop
+            ? styles.desktopMain
+            : mergeClasses(
+                styles.mobileContent,
+                hideBottomNav && styles.mobileContentNoNav,
+                className,
+              )
+        }
       >
-        {children}
+        <div
+          className={isDesktop ? mergeClasses(styles.desktopContent, className) : styles.mobilePage}
+        >
+          {children}
+        </div>
       </main>
-
-      {/* Bottom Navigation */}
-      {!hideBottomNav && <BottomNav onLogout={onLogout} />}
+      {!isDesktop && !hideBottomNav && <BottomNav onLogout={onLogout} />}
     </div>
   );
 }
