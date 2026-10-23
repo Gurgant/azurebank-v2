@@ -208,6 +208,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   */
   const [lockDeadline, setLockDeadline] = useState<number | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  // The check view's title takes lost focus, as the went-through sentence does. DepositDialog has
+  // the note.
+  const checkTitle = useFocusWhenLost<HTMLParagraphElement>(
+    !success && verifyRequired && !wentThrough,
+  );
   // The account is closed and the check view is up over the key that was held: see
   // `accountIsClosed`. From then on every way the dialog closes says the sentence.
   const [closedUnderKey, setClosedUnderKey] = useState(false);
@@ -761,7 +766,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
-          <Text className={styles.stateTitle}>We couldn&apos;t confirm your withdrawal</Text>
+          <Text as="p" className={styles.outcomeSentence} ref={checkTitle} tabIndex={-1}>
+            We couldn&apos;t confirm your withdrawal
+          </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}
           {check.verdict !== 'none' && (

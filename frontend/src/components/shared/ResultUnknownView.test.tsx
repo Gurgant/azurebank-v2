@@ -72,6 +72,75 @@ describe('ResultUnknownView', () => {
 });
 
 /**
+ * Where focus is when the view appears. The control that sent was disabled during the send, and
+ * the browser handed its focus to `body`, where a screen reader says nothing of a view that mounts
+ * with its words in it. The title takes that lost focus, and only lost focus: the three cases
+ * `WentThroughView.test.tsx` holds for the went-through sentence.
+ */
+describe('ResultUnknownView, where focus lands', () => {
+  const render = (container?: HTMLElement) =>
+    renderWithProviders(
+      <ResultUnknownView
+        title="Send Money"
+        repeatWarning="send twice"
+        onCheckTransactions={() => {}}
+        onStartOver={() => {}}
+      />,
+      container ? { container } : {},
+    );
+
+  const title = () => screen.getByText("We couldn't confirm your transfer");
+
+  let outside: HTMLElement | null = null;
+  afterEach(() => {
+    outside?.remove();
+    outside = null;
+  });
+
+  it('lands lost focus on the title, so it is read before the actions are reached', () => {
+    expect(document.body).toHaveFocus();
+
+    render();
+
+    expect(title()).toHaveFocus();
+    // A paragraph that takes focus without joining the Tab order.
+    expect(title().tagName).toBe('P');
+    expect(title()).toHaveAttribute('tabindex', '-1');
+    // Read once, by that focus: in no live region, and no button's description, which would read
+    // it again at the first Tab.
+    expect(title().closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).not.toHaveAttribute('aria-describedby');
+    }
+  });
+
+  it('leaves focus where the visitor put it', () => {
+    outside = document.createElement('button');
+    outside.textContent = 'Somewhere else';
+    document.body.append(outside);
+    outside.focus();
+    expect(outside).toHaveFocus();
+
+    render();
+
+    expect(outside).toHaveFocus();
+  });
+
+  it('takes focus from a container that holds the view: nobody chose to put it there', () => {
+    outside = document.createElement('div');
+    outside.tabIndex = -1;
+    document.body.append(outside);
+    outside.focus();
+    expect(outside).toHaveFocus();
+
+    render(outside);
+
+    expect(outside).toContainElement(title());
+    expect(title()).toHaveFocus();
+  });
+});
+
+/**
  * The view once it asks the listing by key (ADR-0022): which actions it draws for each verdict,
  * which one leads, and what its status region says. The actions follow `offersFor`, the rule the
  * hook hands every view, so a check is built here as the hook would build it.

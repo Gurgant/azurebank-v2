@@ -53,9 +53,9 @@ function movementCheckWords(check: MovementCheck): string {
  *
  * A `role="status"` region of its own, on screen and empty from the view's first render: a polite
  * region has to exist before its text changes, or the change is not read. Every verdict follows an
- * ask, which empties it, so each is said once. The view lands no focus, and this is how its
- * verdict is heard. Never inside an alert, nor pointed at by an `aria-describedby`, which would
- * read it a second time.
+ * ask, which empties it, so each is said once. The view's title takes focus as the view appears,
+ * before the first verdict, and this is how each verdict is heard. Never inside an alert, nor
+ * pointed at by an `aria-describedby`, which would read it a second time.
  *
  * The read's `WaitHint` is its sibling, not its child: the hint has a region of its own, and two
  * nested regions would read one sentence twice. It offers no "Stop waiting": "Check recent

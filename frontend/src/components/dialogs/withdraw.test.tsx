@@ -969,9 +969,9 @@ describe('withdraw — the server says it went through', () => {
     expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
     expect(screen.queryByText(COPY.withdrawalWentThrough)).not.toBeInTheDocument();
     expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
-    // This view lands no focus. The test puts it on an action, as a visitor who has reached one
-    // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
-    // Close, measured; jsdom is not asked where a Tab goes.)
+    // This view puts lost focus on its title. The test moves it to an action, as a visitor who
+    // has reached one has: their own place. (In Chromium one Tab from the title went to "Check
+    // again", measured against the mock dev server; jsdom is not asked where a Tab goes.)
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
     checkTransactions.focus();
 

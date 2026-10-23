@@ -120,7 +120,7 @@ only in the page (ADR-0022), so a visitor told the wrong thing sends again with 
   of the waits, the outage and the failed sign-out; on the went-through view the sentence once in
   each of the four flows, and the title only as a dialog's name, not as a transfer page's heading.
 - Not heard: the transfer pages' outage bars, `applied: false`, a failed PIN check, the start-up
-  page, the PIN dialog, sign-in, the check view (it lands no focus) and what it says once it has
+  page, the PIN dialog, sign-in, the check view (its title takes focus) and what it says once it has
   asked the listing by key, the view of a movement found by key; JAWS, Narrator, VoiceOver,
   TalkBack. Not measured: anything on Azure, any browser but Chromium, a reload during a send, the
   listing by key on a running stack.

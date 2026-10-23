@@ -121,12 +121,13 @@ function watchAround(watch: Watch, actions: HTMLElement) {
  * A dropped press takes no focus either: its `mousedown` is refused, as the dialog's backdrop
  * refuses its own, so a later Enter does not act on a button the visitor never chose.
  *
- * A click is dropped whatever made it, a key's included. The check view lands no focus when it
- * appears, but an ask made from "Check again", or at the bound while focus is on it, lands focus
- * on the view's first button once the answer is drawn, and that can be another button than the
- * one the key was meant for. Measured at 1280×900 with no guard: an Enter 33 ms after focus had
- * moved to "Check recent transactions" went to the history. Nothing is disabled or renamed while
- * it waits: a screen reader hears the same buttons throughout, and only the press is lost.
+ * A click is dropped whatever made it, a key's included. The check view lands focus on its title
+ * when it appears, which is no button, but an ask made from "Check again", or at the bound while
+ * focus is on it, lands focus on the view's first button once the answer is drawn, and that can
+ * be another button than the one the key was meant for. Measured at 1280×900 with no guard: an
+ * Enter 33 ms after focus had moved to "Check recent transactions" went to the history. Nothing is
+ * disabled or renamed while it waits: a screen reader hears the same buttons throughout, and only
+ * the press is lost.
  */
 export function useSettledPress(
   active: boolean,

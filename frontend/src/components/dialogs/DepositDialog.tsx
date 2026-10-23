@@ -164,6 +164,16 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  /*
+    The check view's title takes lost focus, as the went-through sentence does and for its
+    reason: the control that sent, or the one an edit was made on, goes with the form, and a view
+    drawn while focus is on `body` is not read. From `body` Escape reaches no dialog either. It
+    lands as the view appears, before the listing by key has answered, so each verdict is said
+    by the view's status region (`MovementCheckStatus`).
+  */
+  const checkTitle = useFocusWhenLost<HTMLParagraphElement>(
+    !success && verifyRequired && !wentThrough,
+  );
   // The form as it stood at the last send: what a retained key was sent with.
   const sentValues = useRef<DepositFormValues | null>(null);
 
@@ -418,7 +428,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
-          <Text className={styles.stateTitle}>We couldn&apos;t confirm your deposit</Text>
+          <Text as="p" className={styles.outcomeSentence} ref={checkTitle} tabIndex={-1}>
+            We couldn&apos;t confirm your deposit
+          </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}
           {check.verdict !== 'none' && (

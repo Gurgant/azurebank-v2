@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { resetMockState, seedMockSession } from '../../mocks/state';
+import { notKnown } from '../../test/outage';
+import { enterPin } from '../../test/pinFlow';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { AccountsPage } from '../../pages/AccountsPage';
 
@@ -162,5 +164,49 @@ describe('money dialogs and the keyboard', () => {
       // and a clear failure here becomes a hang or a stray rejection in whatever runs next.
       release();
     }
+  });
+
+  /*
+    A send whose outcome is not known brings up the check view. The button that sent goes with the
+    form, and focus falls to `body`, where a screen reader says nothing of the view and Escape
+    reaches no dialog: the surface handles it, and `body` is outside the surface. The title takes
+    that lost focus, so it is read, and Escape closes the dialog from there, as the answer dropped
+    the key. Escape is pressed as a visitor presses it, on whatever has focus, not aimed at the
+    surface.
+  */
+  it('a deposit that cannot be confirmed leaves focus on the title, and Escape closes the dialog', async () => {
+    server.use(
+      http.post('*/api/transactions/deposit', () => notKnown('/api/transactions/deposit')),
+    );
+    const { dialog } = await openDeposit();
+    await userEvent.click(within(dialog).getByRole('button', { name: '€100' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Deposit €100.00' }));
+
+    const title = await within(dialog).findByText("We couldn't confirm your deposit");
+    await waitFor(() => expect(title).toHaveFocus());
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('a withdrawal that cannot be confirmed leaves focus on the title, and Escape closes the dialog', async () => {
+    server.use(
+      http.post('*/api/transactions/withdraw', () => notKnown('/api/transactions/withdraw')),
+    );
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw from Main Account' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: '€100' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
+    await within(dialog).findByText('Verify Withdrawal');
+    await enterPin();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const title = await within(dialog).findByText("We couldn't confirm your withdrawal");
+    await waitFor(() => expect(title).toHaveFocus());
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
