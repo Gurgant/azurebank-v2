@@ -24,6 +24,7 @@ import { SIGN_OUT_FAILED } from '../api/problemMessages';
 import { useAppSelector } from '../app/hooks';
 import { useProblemToast } from '../components/feedback';
 import { selectCurrentUser } from '../features/auth/authSlice';
+import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { useLogoutMutation } from '../features/api/apiSlice';
 import { ChangePinDialog, RenameAzureTagDialog } from '../components';
 
@@ -423,9 +424,7 @@ export function SettingsPage() {
             <div className={styles.actionInfo}>
               <Text className={styles.actionTitle}>PIN</Text>
               <Text className={styles.actionSubtitle}>
-                {user?.hasPin
-                  ? 'Used to confirm withdrawals, transfers and account closures, and to show full account numbers.'
-                  : 'Not set up yet.'}
+                {user?.hasPin ? `Used to ${PIN_PURPOSE}.` : 'Not set up yet.'}
               </Text>
             </div>
             {user?.hasPin ? (

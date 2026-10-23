@@ -47,6 +47,15 @@ describe('settings page', () => {
     expect(screen.queryByText(/March 15, 1990/)).not.toBeInTheDocument();
   });
 
+  it('says beside the PIN everything it confirms', async () => {
+    await renderSettings();
+    expect(
+      screen.getByText(
+        'Used to confirm withdrawals, transfers and account closures, and to show full account numbers.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('lists future settings as honest "Coming soon" rows', async () => {
     await renderSettings();
     expect(screen.getByText('Password & two-factor')).toBeInTheDocument();

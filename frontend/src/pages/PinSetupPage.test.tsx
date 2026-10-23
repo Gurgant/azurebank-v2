@@ -109,6 +109,32 @@ describe('PIN setup wizard (PR-10)', () => {
     expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
   });
 
+  it('says everything the PIN confirms, on the first step and on the success screen', async () => {
+    /*
+      The sentences are typed out, not built from the product's list, so that a change to what the
+      PIN confirms fails here until the words on screen are read again. The first step's apostrophe
+      is the typographic one and the success screen's the ASCII one, as each is written in the page.
+    */
+    renderPinSetup();
+    expect(
+      screen.getByText(
+        'Choose a 6-digit PIN. You’ll enter it to confirm withdrawals, transfers and account closures, and to show full account numbers.',
+      ),
+    ).toBeInTheDocument();
+
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await typePassword();
+    await pasteDigits('123456');
+
+    expect(
+      await screen.findByText(
+        "Your 6-digit PIN is set. You'll use it to confirm withdrawals, transfers and account closures, and to show full account numbers.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('will not commit a PIN until the account password is supplied', async () => {
     /*
       The client half of T7. The server refuses a password-less enrolment with 422
