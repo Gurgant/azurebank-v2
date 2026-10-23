@@ -61,15 +61,7 @@ public class SessionService : ISessionService
             LastActivity = now,
             AuthLevel = 1, // Level 1 = authenticated via email/password
             PinVerifiedAt = null,
-            UserInfo = new UserSessionInfo
-            {
-                Id = userInfo.Id,
-                Email = userInfo.Email,
-                FirstName = userInfo.FirstName,
-                LastName = userInfo.LastName,
-                AzureTag = userInfo.AzureTag,
-                HasPin = userInfo.HasPin
-            }
+            UserInfo = UserSessionInfo.From(userInfo)
         };
 
         _tokenStore.StoreSessionAsync(session).GetAwaiter().GetResult();

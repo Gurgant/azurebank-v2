@@ -95,16 +95,7 @@ public class BffAuthController : ControllerBase
 
             var loginResponse = ReadData<LoginResponse>(content);
 
-            // Create server-side session with the JWT, its grant (for renewals), the grant's expiry
-            // (the session's cap, ADR-0057 §4.1), user info and the user's session stamp
-            // (ADR-0057 §5.3). The same token object registration answers, read the same way.
-            var sessionId = _sessionService.CreateSession(
-                loginResponse.Token.AccessToken,
-                loginResponse.Token.ExpiresAt,
-                loginResponse.Token.RefreshToken,
-                loginResponse.Token.RefreshTokenExpiresAt,
-                loginResponse.User,
-                loginResponse.Token.SessionStamp);
+            var sessionId = StartSession(loginResponse.Token, loginResponse.User);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
@@ -117,15 +108,7 @@ public class BffAuthController : ControllerBase
             {
                 Data = new BffLoginResponse
                 {
-                    User = new UserSessionInfo
-                    {
-                        Id = loginResponse.User.Id,
-                        Email = loginResponse.User.Email,
-                        FirstName = loginResponse.User.FirstName,
-                        LastName = loginResponse.User.LastName,
-                        AzureTag = loginResponse.User.AzureTag,
-                        HasPin = loginResponse.User.HasPin
-                    },
+                    User = UserSessionInfo.From(loginResponse.User),
                     ExpiresAt = loginResponse.Token.ExpiresAt
                 },
                 Message = "Login successful"
@@ -166,15 +149,7 @@ public class BffAuthController : ControllerBase
 
             var registerResponse = ReadData<RegisterResponse>(content);
 
-            // Create server-side session with the JWT, its grant (nullable — registration issues it
-            // best-effort) and the grant's expiry, and user info.
-            var sessionId = _sessionService.CreateSession(
-                registerResponse.Token.AccessToken,
-                registerResponse.Token.ExpiresAt,
-                registerResponse.Token.RefreshToken,
-                registerResponse.Token.RefreshTokenExpiresAt,
-                registerResponse.User,
-                registerResponse.Token.SessionStamp);
+            var sessionId = StartSession(registerResponse.Token, registerResponse.User);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
@@ -187,15 +162,7 @@ public class BffAuthController : ControllerBase
             {
                 Data = new BffLoginResponse
                 {
-                    User = new UserSessionInfo
-                    {
-                        Id = registerResponse.User.Id,
-                        Email = registerResponse.User.Email,
-                        FirstName = registerResponse.User.FirstName,
-                        LastName = registerResponse.User.LastName,
-                        AzureTag = registerResponse.User.AzureTag,
-                        HasPin = registerResponse.User.HasPin
-                    },
+                    User = UserSessionInfo.From(registerResponse.User),
                     ExpiresAt = registerResponse.Token.ExpiresAt
                 },
                 Message = "Registration successful"
@@ -265,16 +232,7 @@ public class BffAuthController : ControllerBase
 
             var claim = ReadData<DemoClaimResponse>(content);
 
-            // The same token object sign-in answers, read the same way: the JWT, its grant (for
-            // renewals), the grant's expiry (the session's cap, ADR-0057 §4.1), the copy's owner
-            // and the owner's session stamp (ADR-0057 §5.3).
-            var sessionId = _sessionService.CreateSession(
-                claim.Token.AccessToken,
-                claim.Token.ExpiresAt,
-                claim.Token.RefreshToken,
-                claim.Token.RefreshTokenExpiresAt,
-                claim.User,
-                claim.Token.SessionStamp);
+            var sessionId = StartSession(claim.Token, claim.User);
 
             // Set HTTP-only session cookie
             SetSessionCookie(sessionId);
@@ -292,15 +250,7 @@ public class BffAuthController : ControllerBase
             {
                 Data = new BffDemoClaimResponse
                 {
-                    User = new UserSessionInfo
-                    {
-                        Id = claim.User.Id,
-                        Email = claim.User.Email,
-                        FirstName = claim.User.FirstName,
-                        LastName = claim.User.LastName,
-                        AzureTag = claim.User.AzureTag,
-                        HasPin = claim.User.HasPin
-                    },
+                    User = UserSessionInfo.From(claim.User),
                     ExpiresAt = claim.Token.ExpiresAt,
                     Copy = claim.Copy
                 },
@@ -355,12 +305,7 @@ public class BffAuthController : ControllerBase
         {
             // Already gone: there is nothing to re-authenticate INTO, and the client's own 401
             // handling routes to the login page, which is the correct destination.
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return SessionEnded();
         }
 
         try
@@ -386,13 +331,7 @@ public class BffAuthController : ControllerBase
 
             var loginResponse = ReadData<LoginResponse>(content);
 
-            var newSessionId = _sessionService.CreateSession(
-                loginResponse.Token.AccessToken,
-                loginResponse.Token.ExpiresAt,
-                loginResponse.Token.RefreshToken,
-                loginResponse.Token.RefreshTokenExpiresAt,
-                loginResponse.User,
-                loginResponse.Token.SessionStamp);
+            var newSessionId = StartSession(loginResponse.Token, loginResponse.User);
 
             // Same cookie NAME, so the browser replaces the old value and cannot present the old id
             // again. Session fixation is handled by construction: CreateSession generates the id.
@@ -409,15 +348,7 @@ public class BffAuthController : ControllerBase
             {
                 Data = new BffLoginResponse
                 {
-                    User = new UserSessionInfo
-                    {
-                        Id = loginResponse.User.Id,
-                        Email = loginResponse.User.Email,
-                        FirstName = loginResponse.User.FirstName,
-                        LastName = loginResponse.User.LastName,
-                        AzureTag = loginResponse.User.AzureTag,
-                        HasPin = loginResponse.User.HasPin
-                    },
+                    User = UserSessionInfo.From(loginResponse.User),
                     ExpiresAt = loginResponse.Token.ExpiresAt
                 },
                 Message = "Re-authenticated successfully"
@@ -458,12 +389,7 @@ public class BffAuthController : ControllerBase
         var session = GetCurrentSession();
         if (session == null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return SessionEnded();
         }
 
         var isPinVerified = _sessionService.IsPinVerificationValid(session.SessionId);
@@ -686,10 +612,10 @@ public class BffAuthController : ControllerBase
 
     /// <summary>
     /// The session's access token for the PIN paths and the rename, which bypass the YARP transform
-    /// (so the stored token may need renewing first). Returns the token, or a ready-to-return refusal
-    /// — the single place each is shaped: 401 when the session has ended or its grant is dead, and
-    /// 503 with <c>Retry-After</c> when a renewal could not be had and the held token has 5 s or less
-    /// left (ADR-0057 §4.5). The 503 keeps the session; the 401 is the SPA's sign-out.
+    /// (so the stored token may need renewing first). Returns the token, or a ready-to-return
+    /// refusal: the 401 of <see cref="SessionEnded"/> when the session has ended or its grant is
+    /// dead, and 503 with <c>Retry-After</c> when a renewal could not be had and the held token has
+    /// 5 s or less left (ADR-0057 §4.5). The 503 keeps the session; the 401 is the SPA's sign-out.
     /// </summary>
     private async Task<(string? AccessToken, IActionResult? Unauthorized)> ReMintOrUnauthorizedAsync(
         string sessionId)
@@ -706,13 +632,32 @@ public class BffAuthController : ControllerBase
                     result.RetryAfterSeconds));
 
             default:
-                return (null, Unauthorized(new ProblemDetails
-                {
-                    Title = "Unauthorized",
-                    Detail = "Session expired or invalid",
-                    Status = 401
-                }));
+                return (null, SessionEnded());
         }
+    }
+
+    /// <summary>
+    /// Sends one of the bearer calls that bypass the YARP transform (verify-pin, set-pin and the
+    /// rename) with <paramref name="body"/> as JSON, and reads the answer's body.
+    /// </summary>
+    /// <remarks>
+    /// It catches nothing, so each call sits inside its action's try, where
+    /// <see cref="OutageReason"/> turns an unreachable API or this client's timeout into the outage
+    /// 503. It takes no cancellation token and no deadline of its own, as the three calls never
+    /// did: each can change state at the API, and the read-through of /me says why a mutation is
+    /// not given up part way.
+    /// </remarks>
+    private async Task<(HttpResponseMessage Response, string Content)> SendWithTokenAsync<TBody>(
+        HttpMethod method, string path, TBody body, string accessToken)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        request.Content = JsonContent.Create(body);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", accessToken);
+
+        var response = await _httpClient.SendAsync(request);
+        var content = await response.Content.ReadAsStringAsync();
+        return (response, content);
     }
 
     /// <summary>
@@ -727,12 +672,7 @@ public class BffAuthController : ControllerBase
         var session = GetCurrentSession();
         if (session == null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return SessionEnded();
         }
 
         // These paths bypass the YARP transform, so the token is fetched here too: it may need
@@ -745,14 +685,9 @@ public class BffAuthController : ControllerBase
 
         try
         {
-            // Add Authorization header for API call (accessToken is non-null past the guard above).
-            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin/verify");
-            apiRequest.Content = JsonContent.Create(request);
-            apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", accessToken!);
-
-            var response = await _httpClient.SendAsync(apiRequest);
-            var content = await response.Content.ReadAsStringAsync();
+            // accessToken is non-null past the guard above.
+            var (response, content) = await SendWithTokenAsync(
+                HttpMethod.Post, "/api/auth/pin/verify", request, accessToken!);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -811,12 +746,7 @@ public class BffAuthController : ControllerBase
         var session = GetCurrentSession();
         if (session == null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return SessionEnded();
         }
 
         // These paths bypass the YARP transform, so the token is fetched here too: it may need
@@ -829,14 +759,9 @@ public class BffAuthController : ControllerBase
 
         try
         {
-            // Add Authorization header for API call (accessToken is non-null past the guard above).
-            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin");
-            apiRequest.Content = JsonContent.Create(request);
-            apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", accessToken!);
-
-            var response = await _httpClient.SendAsync(apiRequest);
-            var content = await response.Content.ReadAsStringAsync();
+            // accessToken is non-null past the guard above.
+            var (response, content) = await SendWithTokenAsync(
+                HttpMethod.Post, "/api/auth/pin", request, accessToken!);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -893,12 +818,7 @@ public class BffAuthController : ControllerBase
         var session = GetCurrentSession();
         if (session == null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return SessionEnded();
         }
 
         // Same reason as set-pin: this path bypasses the YARP transform, so the token is fetched
@@ -911,13 +831,8 @@ public class BffAuthController : ControllerBase
 
         try
         {
-            using var apiRequest = new HttpRequestMessage(HttpMethod.Patch, "/api/users/me/azuretag");
-            apiRequest.Content = JsonContent.Create(request);
-            apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", accessToken!);
-
-            var response = await _httpClient.SendAsync(apiRequest);
-            var content = await response.Content.ReadAsStringAsync();
+            var (response, content) = await SendWithTokenAsync(
+                HttpMethod.Patch, "/api/users/me/azuretag", request, accessToken!);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -951,7 +866,7 @@ public class BffAuthController : ControllerBase
                   An earlier version of this comment rejected "a per-session lock inside a singleton
                   session service" as disproportionate. Both halves were wrong and are worth naming,
                   since the reasoning outlived the reasoner: that placement fixes NOTHING — the race
-                  spans SendAsync above and this line, while UpdateUserInfo mutates the stored
+                  spans the API call above and this line, while UpdateUserInfo mutates the stored
                   reference (InMemoryTokenStore hands back the live object) so a lock inside it would
                   guard a single reference assignment that is already atomic. And "disproportionate"
                   was contradicted sixty lines away: the renewal already ships a per-session single
@@ -991,6 +906,35 @@ public class BffAuthController : ControllerBase
         }
         return null;
     }
+
+    /// <summary>
+    /// The 401 the SPA reads as signed out: the cookie names no live session, or the renewal says
+    /// the session has ended (<see cref="AccessTokenOutcome.SessionEnded"/>). Every such answer
+    /// carries this one body.
+    /// </summary>
+    private UnauthorizedObjectResult SessionEnded() =>
+        Unauthorized(new ProblemDetails
+        {
+            Title = "Unauthorized",
+            Detail = "Session expired or invalid",
+            Status = 401
+        });
+
+    /// <summary>
+    /// Opens the server-side session for a sign-in the API answered, the same way at every door
+    /// (sign-in, registration, the demo claim, re-authentication), and returns its id. It holds the
+    /// JWT, its grant (for renewals; null when registration's best-effort issuance failed), the
+    /// grant's expiry (the session's cap, ADR-0057 §4.1), the user and the user's session stamp
+    /// (ADR-0057 §5.3).
+    /// </summary>
+    private string StartSession(TokenResponse token, UserLoginInfo user) =>
+        _sessionService.CreateSession(
+            token.AccessToken,
+            token.ExpiresAt,
+            token.RefreshToken,
+            token.RefreshTokenExpiresAt,
+            user,
+            token.SessionStamp);
 
     /// <summary>
     /// Sets the session cookie with security attributes.
