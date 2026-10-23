@@ -354,6 +354,7 @@ describe('RouteAnnouncer', () => {
       '/transfer',
       '/transfer/internal',
       '/pin-setup',
+      '*',
     ]);
     for (const chunk of pages) {
       expect(chunk, chunk.slice(0, 40)).toMatch(/handle=\{\{ title: '[^']+' \}\}/);

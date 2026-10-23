@@ -8,11 +8,12 @@ import { fieldContrast, textContrast } from './contrast';
  *
  * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
  * page it links to (not the transaction detail or PIN setup), the login and register pages without
- * a session (/about is public too, but is scanned here only inside the signed-in shell), the
- * deposit dialog, the Change PIN dialog, and /accounts while its read is slow (light, dark and
- * 375 px wide): fourteen scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans
- * are scoped to the dialog, so what the page behind it fails is not reported as the dialog's.
- * A fifteenth scan of this run is not in this file: the app's one hand-rolled dialog, open, in
+ * a session (/about is public too, but is scanned here only inside the signed-in shell), the page
+ * for an address that names no page with a session and without, the deposit dialog, the Change
+ * PIN dialog, and /accounts while its read is slow (light, dark and 375 px wide): sixteen scans,
+ * with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans are scoped to the dialog, so
+ * what the page behind it fails is not reported as the dialog's.
+ * A seventeenth scan of this run is not in this file: the app's one hand-rolled dialog, open, in
  * `confirmDialog.spec.ts`, where the run has it open.
  * Each scan writes its findings to `test-results/axe/<scan>.json` (a CI artifact)
  * and attaches them to the Playwright report, then FAILS on any serious or critical violation
@@ -57,6 +58,12 @@ const SIGNED_IN: Scan[] = [
   },
   { name: 'settings', path: '/settings', title: 'Settings · AzureBank', ready: heading(1) },
   { name: 'about', path: '/about', title: 'About this project · AzureBank', ready: heading(1) },
+  {
+    name: 'not-found',
+    path: '/no-such-page',
+    title: 'Page not found · AzureBank',
+    ready: heading(1),
+  },
 ];
 
 const PUBLIC: Scan[] = [
@@ -66,6 +73,12 @@ const PUBLIC: Scan[] = [
     path: '/register',
     title: 'Create Account · AzureBank',
     ready: labelled('Email'),
+  },
+  {
+    name: 'not-found-signed-out',
+    path: '/no-such-page',
+    title: 'Page not found · AzureBank',
+    ready: heading(1),
   },
 ];
 
@@ -593,7 +606,8 @@ test.describe('words that were too faint to read', () => {
 });
 
 test.describe('accessibility, signed out', () => {
-  // No session: login and register, reached as a visitor reaches them.
+  // No session: login, register and an address that names no page, reached as a visitor
+  // reaches them.
   test.use({ storageState: { cookies: [], origins: [] } });
 
   for (const { name, path, title, ready } of PUBLIC) {

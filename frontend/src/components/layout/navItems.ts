@@ -76,8 +76,8 @@ export const NAV_PLACES: NavPlace[] = [
   {
     path: '/dashboard',
     label: 'Home',
-    // `/` renders the same component as `/dashboard` (App.tsx) and is where the `*` fallback lands,
-    // so it is an alias rather than a place of its own. Declared as data; never inferred.
+    // `/` renders the same component as `/dashboard` (App.tsx), so it is an alias rather than a
+    // place of its own. Declared as data; never inferred.
     matches: ['/', '/dashboard'],
     icon: Home24Regular,
     activeIcon: Home24Filled,
