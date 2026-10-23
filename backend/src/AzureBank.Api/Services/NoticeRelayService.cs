@@ -30,10 +30,9 @@ namespace AzureBank.Api.Services;
 /// says the loop is live.
 /// </para>
 /// <para>
-/// THE HOUSE SHAPE for a loop (the two hygiene sweeps): <see cref="PeriodicTimer"/>, so the first
-/// look is one full period after start and a fast test host is never interrupted; a catch-all per
-/// tick logged at Error so one bad sweep never ends the loop; cancellation rethrown past it and
-/// absorbed at the outer level as shutdown.
+/// THE LOOP IS NOT HERE EITHER. It is <see cref="PeriodicSweep"/>, which the two hygiene sweeps run
+/// through too, and what it promises is written there; this host hands it the period, the clock,
+/// the sweep and its own two lines.
 /// </para>
 /// <para>
 /// Clock: <see cref="TimeProvider"/>, defaulting to the system one as <c>AuditService</c> does, so
@@ -88,39 +87,13 @@ public sealed class NoticeRelayService : BackgroundService
             "Notice relay: live as {RunnerName}, every {PeriodSeconds}s, lease {LeaseSeconds}s, batch {BatchSize}, into {Directory}",
             RunnerName, _options.PeriodSeconds, _options.LeaseSeconds, _options.BatchSize, _directory);
 
-        using var timer = new PeriodicTimer(_options.Period, _clock);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-            {
-                try
-                {
-                    await SweepAsync(stoppingToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (stoppingToken.IsCancellationRequested)
-                {
-                    // A statement cancelled once it is on the server comes back as the provider's
-                    // own exception, not as an OperationCanceledException, and nothing in it tells
-                    // it from a statement that failed while the host was stopping. Neither is
-                    // logged as a failed sweep: this process retries nothing after the stop, and a
-                    // fault that outlives it meets the first sweep of the next start, which says so.
-                    _logger.LogDebug(ex, "Notice relay: sweep interrupted by the host's shutdown");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Notice relay: sweep failed; will retry next period");
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Host shutdown.
-        }
+        await PeriodicSweep.RunAsync(
+            _options.Period,
+            _clock,
+            ct => SweepAsync(ct),
+            ex => _logger.LogDebug(ex, "Notice relay: sweep interrupted by the host's shutdown"),
+            ex => _logger.LogError(ex, "Notice relay: sweep failed; will retry next period"),
+            stoppingToken);
     }
 
     /// <summary>

@@ -19,8 +19,9 @@ API's four runner rules were each written `o.Runner != NoticeRunner.Api || …`,
   the read of holdings, the capacity, the claim, the re-read, the per-row lease check and the six
   outcome arms, because a second runner that reimplemented them would be a second protocol under
   the first one's name, the reason ADR-0048 D4 gives one level down for the per-row unit.
-  `NoticeRelayService` keeps the flag, the `PeriodicTimer` and the scope per sweep; each runner
-  passes its own logger, so the categories differ and the sentences stay identical.
+  `NoticeRelayService` keeps the flag, the period, the clock and the scope per sweep, and runs
+  them through `PeriodicSweep`, which builds the `PeriodicTimer`; each runner passes its own
+  logger, so the categories differ and the sentences stay identical.
 - **D2 — A timer trigger, not a queue**, because a queue trigger needs a producer and the only
   honest one is the row: it would be the queue ADR-0048 declines, where the row is the obligation.
   Azurite holds the host's own storage, the blob singleton lease that elects one host among
