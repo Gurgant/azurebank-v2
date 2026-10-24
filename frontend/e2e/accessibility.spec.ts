@@ -24,7 +24,7 @@ import { fieldContrast, textContrast } from './contrast';
  * `./axeScan.ts`: `REPORT_ONLY_RULES` and the exclusion are there with it.
  *
  * What ALSO fails, so an empty or misdirected report cannot read as a clean one:
- * - a page that never became ready (each scan first waits for the page's h1 or form field);
+ * - a page that never became ready (each scan first waits for the page's h1, form field or link);
  * - a scan that landed somewhere else. An expired session is redirected to /login, which has an h1
  *   and passing rules of its own, so neither the ready wait nor the zero-passes check would notice;
  *   the path is asserted before axe runs;
@@ -62,7 +62,9 @@ const SIGNED_IN: Scan[] = [
     name: 'not-found',
     path: '/no-such-page',
     title: 'Page not found · AzureBank',
-    ready: heading(1),
+    // Not its h1: that is drawn bare, without the shell, while the session is still being read.
+    // The link to Home is drawn only once the session is known, inside the shell.
+    ready: link('Go to Home'),
   },
 ];
 
@@ -85,6 +87,12 @@ const PUBLIC: Scan[] = [
 function heading(level: 1 | 2 | 3) {
   return async (page: Page) => {
     await expect(page.getByRole('heading', { level }).first()).toBeVisible();
+  };
+}
+
+function link(name: string) {
+  return async (page: Page) => {
+    await expect(page.getByRole('link', { name, exact: true })).toBeVisible();
   };
 }
 
