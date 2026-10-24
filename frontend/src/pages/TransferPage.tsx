@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   makeStyles,
   Text,
@@ -12,6 +13,7 @@ import {
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { colors } from '../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
@@ -85,6 +87,19 @@ interface SuccessData {
   newBalance: number;
   transactionNumber: string;
   replayed: boolean;
+}
+
+/**
+ * The account a navigation asked to start from: the Transfer button on an account's card puts
+ * `{ fromAccountId }` in the history entry's state. `location.state` is an untrusted cast, so it
+ * is parsed as the sign-in page parses its own, and any other shape is ignored. The id is a
+ * request, not a choice: the page uses it only if it names one of the accounts it received.
+ */
+const transferNavStateSchema = z.object({ fromAccountId: z.string() });
+
+function requestedSourceId(state: unknown): string | null {
+  const parsed = transferNavStateSchema.safeParse(state);
+  return parsed.success ? parsed.data.fromAccountId : null;
 }
 
 function initials(name: string): string {
@@ -192,6 +207,10 @@ export function TransferPage() {
   const accountsQuery = useGetAccountsQuery();
   const { data: accountsData, error: accountsError, requestId: accountsRequestId } = accountsQuery;
   const accounts = accountsData ?? [];
+  // Read once, as the page mounts: a later navigation to this page leaves the source the form
+  // already names as it is.
+  const location = useLocation();
+  const [requestedSource] = useState(() => requestedSourceId(location.state));
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
   // The accounts bar follows the wait, as on the reading pages: a Retry keeps the old error while
   // it runs, so the bar goes away for the new wait and comes back, announced, only if it fails too.
@@ -385,15 +404,19 @@ export function TransferPage() {
   const amountNumber = parseAmountInput(watch('amount'));
 
   /*
-    The source is the account the form names. The default, primary or first, stands in for it
-    only while the form has never named one: once a choice has been cleared because its account
-    is gone (`mustChooseSource`), nothing stands in, and the visitor chooses.
+    The source is the account the form names. The default stands in for it only while the form
+    has never named one: the account the navigation asked for (`requestedSource`) when it is
+    among the accounts received, else the primary, else the first. Once a choice has been
+    cleared because its account is gone (`mustChooseSource`), nothing stands in, the requested
+    account included, and the visitor chooses.
   */
   const [mustChooseSource, setMustChooseSource] = useState(false);
   const selectedAccount =
     accounts.find((a) => a.id === watchedAccountId) ??
     (watchedAccountId === '' && !mustChooseSource
-      ? (accounts.find((a) => a.isPrimary) ?? accounts[0])
+      ? (accounts.find((a) => a.id === requestedSource) ??
+        accounts.find((a) => a.isPrimary) ??
+        accounts[0])
       : undefined) ??
     null;
   const availableBalance = selectedAccount ? availableBalanceOf(selectedAccount) : 0;
@@ -424,8 +447,8 @@ export function TransferPage() {
   */
   const [confirming, setConfirming] = useState(false);
 
-  // Auto-select the legacy default (primary ?? first) into the form once accounts load,
-  // and keep the schema's balance bound in lockstep with the selected account.
+  // Write the default (the requested account, the primary or the first) into the form once
+  // accounts load, and keep the schema's balance bound in lockstep with the selected account.
   useEffect(() => {
     if (selectedAccount && watchedAccountId !== selectedAccount.id) {
       setValue('fromAccountId', selectedAccount.id, { shouldValidate: true });

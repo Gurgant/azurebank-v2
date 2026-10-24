@@ -1,3 +1,4 @@
+import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import { AccountsPage } from './AccountsPage';
+import { TransferPage } from './TransferPage';
 
 /**
  * A1/A4 — the first page on REAL data. Pins: FE-side masking (the full number must
@@ -244,5 +246,54 @@ describe('legacy money dialogs (adapter wiring)', () => {
     expect(screen.getAllByText('Main Account')).toHaveLength(2);
     expect(screen.getAllByText('Rainy Day')).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+  });
+});
+
+/*
+  The card's Transfer button opens the transfer page on the account it names. The page is
+  rendered under both routes, because the catch-all route of `renderWithProviders` would keep
+  showing the accounts page after the navigation.
+*/
+describe("the card's Transfer button", () => {
+  function renderAccountsThenTransfer() {
+    return renderWithProviders(
+      <Routes>
+        <Route path="/accounts" element={<AccountsPage />} />
+        <Route path="/transfer" element={<TransferPage />} />
+      </Routes>,
+      { routerEntries: ['/accounts'] },
+    );
+  }
+
+  it('opens the transfer page with the account of that card chosen, and no id in the address', async () => {
+    const { router } = renderAccountsThenTransfer();
+    await screen.findByText('Rainy Day');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer from Rainy Day' }));
+
+    const rainy = await screen.findByRole('button', { name: 'From Rainy Day' });
+    expect(rainy).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'From Main Account' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    // The account travels in the history entry's state, never in the address.
+    expect(router.state.location.pathname).toBe('/transfer');
+    expect(router.state.location.search).toBe('');
+    expect(router.state.location.hash).toBe('');
+  });
+
+  it("opens the transfer page on the primary account from the primary account's card", async () => {
+    renderAccountsThenTransfer();
+    await screen.findByText('Main Account');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer from Main Account' }));
+
+    const main = await screen.findByRole('button', { name: 'From Main Account' });
+    expect(main).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'From Rainy Day' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   });
 });
