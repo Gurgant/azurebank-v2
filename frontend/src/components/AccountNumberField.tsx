@@ -13,16 +13,42 @@ export const REVEAL_TIMEOUT_MS = 20_000;
 const COPIED_TIMEOUT_MS = 2_000;
 
 const useStyles = makeStyles({
+  // Wraps, so that where the card has no room for the number and its buttons on one line, the
+  // buttons go under the number: the gap is the space between the two lines too.
   row: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  // The eye and copy, kept on one line: where the row wraps they move as a pair, never one beside
+  // the number and the other under it.
+  buttons: {
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
   },
+  // One line, always: left to wrap, a phone breaks the number at its hyphens, into as many as four
+  // lines at 320 px, and a number in pieces reads as several numbers.
   number: {
     fontSize: '13px',
     fontWeight: 400,
     fontFamily: 'Consolas, "Courier New", monospace',
     color: colors.neutral[500],
+    whiteSpace: 'nowrap',
+  },
+  // The masked number's words for a screen reader: out of the flow and clipped to nothing, still
+  // in the accessibility tree, as `AlertSlot` keeps its empty slot.
+  spoken: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    margin: '-1px',
+    padding: 0,
+    border: 0,
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
   },
   copied: {
     fontSize: '12px',
@@ -102,13 +128,20 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
 
   return (
     <div className={styles.row}>
-      <Text
-        className={styles.number}
-        // When masked, label the bullets so a screen reader says something useful; when revealed,
-        // NO label — an aria-label would override the text node and hide the actual digits from AT.
-        aria-label={revealed ? undefined : `Account ending in ${lastTwo}`}
-      >
-        {revealed ? fullNumber : maskAccountNumber(account.accountNumber)}
+      {/* Masked, the words beside the bullets are read in their place, and the bullets are hidden
+          from assistive technology. Words and not an aria-label: ARIA allows no name on a span
+          with no role, as this one is, and under such a label the bullets stayed in the text a
+          screen reader goes through. Revealed, the digits are the text, with no label over
+          them. */}
+      <Text className={styles.number}>
+        {revealed ? (
+          fullNumber
+        ) : (
+          <>
+            <span aria-hidden="true">{maskAccountNumber(account.accountNumber)}</span>
+            <span className={styles.spoken}>{`Account ending in ${lastTwo}`}</span>
+          </>
+        )}
       </Text>
 
       {/* One button through the wait, with the spinner in it: while it waits it says so, takes no
@@ -121,39 +154,41 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
           button's name is what says the wait. Left exposed it is a progress bar with no name of
           its own, where the spinner it replaced had one: axe reported it in this state
           (`aria-progressbar-name`, serious; Chromium, 2026-10-06), and with it hidden, nothing. */}
-      <Button
-        appearance="subtle"
-        size="small"
-        icon={
-          isLoading ? (
-            <Spinner size="tiny" aria-hidden="true" />
-          ) : revealed ? (
-            <EyeOff16Regular />
-          ) : (
-            <Eye16Regular />
-          )
-        }
-        // The name says the state; aria-pressed as well read "Hide account number …, pressed".
-        aria-label={
-          isLoading
-            ? `Revealing account number for ${account.name}`
-            : revealed
-              ? `Hide account number for ${account.name}`
-              : `Reveal full account number for ${account.name}`
-        }
-        disabledFocusable={isLoading}
-        onClick={revealed ? hide : reveal}
-      />
-
-      {revealed && (
+      <div className={styles.buttons}>
         <Button
           appearance="subtle"
           size="small"
-          icon={<Copy16Regular />}
-          aria-label={`Copy account number for ${account.name}`}
-          onClick={copy}
+          icon={
+            isLoading ? (
+              <Spinner size="tiny" aria-hidden="true" />
+            ) : revealed ? (
+              <EyeOff16Regular />
+            ) : (
+              <Eye16Regular />
+            )
+          }
+          // The name says the state; aria-pressed as well read "Hide account number …, pressed".
+          aria-label={
+            isLoading
+              ? `Revealing account number for ${account.name}`
+              : revealed
+                ? `Hide account number for ${account.name}`
+                : `Reveal full account number for ${account.name}`
+          }
+          disabledFocusable={isLoading}
+          onClick={revealed ? hide : reveal}
         />
-      )}
+
+        {revealed && (
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<Copy16Regular />}
+            aria-label={`Copy account number for ${account.name}`}
+            onClick={copy}
+          />
+        )}
+      </div>
 
       {copied && (
         <Text role="status" className={styles.copied}>
