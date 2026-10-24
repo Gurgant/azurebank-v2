@@ -1,4 +1,4 @@
-import { useId, useState, useSyncExternalStore } from 'react';
+import { useId, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Dialog,
   DialogSurface,
@@ -20,6 +20,7 @@ import { SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import { useVerifyPinMutation } from '../api/apiSlice';
 import { RetryCountdown, WaitHint, retryDeadline } from '../../components/feedback';
 import { PinInput } from '../../components/PinInput';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { getStepUpSnapshot, settleStepUp, subscribeStepUp } from './stepUpController';
 
@@ -53,6 +54,12 @@ const useStyles = makeStyles({
     textAlign: 'center',
   },
   pinArea: { display: 'flex', justifyContent: 'center', padding: '12px 0' },
+  // A refusal takes the column's width, and its sentence wraps inside it. `intro` centres what it
+  // holds, and a centred bar is as wide as its one line: a long sentence runs past both edges.
+  refusal: { alignSelf: 'stretch', textAlign: 'start' },
+  // The lock's block takes the width too, but only its bar reads from the start edge: the countdown
+  // under the bar keeps the centre it had, so at 320 px it is not pushed off the left with the bar.
+  lock: { alignSelf: 'stretch' },
 });
 
 /**
@@ -95,7 +102,14 @@ function StepUpForm() {
   useReturnFocus();
   const [verifyPin, { isLoading }] = useVerifyPinMutation();
   const [pin, setPin] = useState('');
+  // Bumped by each refusal that empties the boxes: PinInput is remounted under the new key, and its
+  // autoFocus puts the caret back in box 1. The boxes are disabled during the check, so focus falls
+  // to `body`, where digits go nowhere and the dialog does not hear Escape.
+  const [pinNonce, setPinNonce] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Red boxes for a PIN the server said was wrong, and for nothing else: an outage or a lost
+  // connection says nothing about the PIN, as on the transfer pages.
+  const [pinError, setPinError] = useState(false);
 
   /*
     An ABSOLUTE deadline (D13), not a countdown this component has to drive itself.
@@ -110,42 +124,56 @@ function StepUpForm() {
     instead of reviving an already-elapsed number.
   */
   const [lockDeadline, setLockDeadline] = useState<number | null>(null);
+  // On a lock the boxes and Verify are disabled and Cancel is the one control left, so focus lost
+  // during the check lands there, where Escape is heard. Focus the visitor put somewhere stays.
+  const cancelRef = useFocusWhenLost<HTMLButtonElement>(lockDeadline !== null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // A refusal that another PIN can answer: its sentence, and the boxes emptied and remounted.
+  const askAgain = (words: string) => {
+    setError(words);
+    setPin('');
+    setPinNonce((n) => n + 1);
+  };
 
   const verify = async (candidate: string) => {
     if (candidate.length !== 6 || isLoading || lockDeadline !== null) return;
     setError(null);
+    setPinError(false);
     try {
       const result = await verifyPin({ pin: candidate }).unwrap();
       if (result.verified) {
         settleStepUp('elevated'); // the controller closes this modal; the wrapper replays
       } else {
-        // Wrong PIN is a 200 verified:false — NOT the error channel.
-        setError('Incorrect PIN. Please try again.');
-        setPin('');
+        // Wrong PIN is a 200 verified:false — NOT the error channel. The one answer that marks
+        // the boxes as wrong.
+        askAgain('Incorrect PIN. Please try again.');
+        setPinError(true);
       }
     } catch (caught) {
       const problem = caught as ApiProblem;
       if (problem.errorCode === 'PIN_LOCKED') {
         setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
         setPin('');
+        // At 320 px the row of boxes is wider than the content, and typing into box 6 scrolled it
+        // sideways, so the bar's start edge and its icon sat past the left. After the other
+        // refusals box 1 takes focus and the content scrolls back; the lock has no box to focus.
+        if (contentRef.current) contentRef.current.scrollLeft = 0;
       } else if (isServiceOutage(problem)) {
         // Before the transport branch: a check with no answer in 65 s is `NETWORK` too, and it is
         // the service that did not answer, not the visitor's connection.
-        setError(SERVICE_UNAVAILABLE);
-        setPin('');
+        askAgain(SERVICE_UNAVAILABLE);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // A transport blip must NOT silently abandon what the PIN was asked for — keep the modal
         // open so the user can retry the PIN without re-driving the whole flow.
-        setError("Couldn't verify right now — check your connection and try again.");
-        setPin('');
+        askAgain("Couldn't verify right now — check your connection and try again.");
       } else if (problem.status === 401) {
         // A real 401 = dead session (sessionMiddleware already logs out); abandon step-up.
         settleStepUp('cancelled');
       } else {
         // Any OTHER unexpected status (e.g. a 500) must be SURFACED, never masked as a
         // cancellation — keep the modal open with a visible error so the failure isn't silent.
-        setError("Couldn't verify right now — please try again.");
-        setPin('');
+        askAgain("Couldn't verify right now — please try again.");
       }
     }
   };
@@ -162,21 +190,23 @@ function StepUpForm() {
           Verify it&apos;s you
         </div>
       </DialogTitle>
-      <DialogContent>
+      <DialogContent ref={contentRef}>
         <div className={styles.intro}>
           <Text className={styles.subtitle}>
             Enter your 6-digit PIN to show the full account number.
           </Text>
           <div className={styles.pinArea}>
             <PinInput
+              key={pinNonce}
               value={pin}
               onChange={(next) => {
                 setPin(next);
                 setError(null);
+                setPinError(false);
               }}
               onComplete={verify}
               disabled={isLoading || lockDeadline !== null}
-              error={!!error}
+              error={pinError}
               autoFocus
               ariaLabel="Enter your PIN"
               ariaDescribedBy={describedBy}
@@ -187,13 +217,24 @@ function StepUpForm() {
               banner's semantics depend on markup a refactor can quietly drop. This was the last
               surface still carrying the wrapper form after the other five were converted. */}
           {error && (
-            <MessageBar intent="error" role="alert" id={errorId}>
+            <MessageBar
+              intent="error"
+              role="alert"
+              id={errorId}
+              layout="multiline"
+              className={styles.refusal}
+            >
               <MessageBarBody>{error}</MessageBarBody>
             </MessageBar>
           )}
           {lockDeadline !== null && (
-            <div id={errorId}>
-              <MessageBar intent="warning" role="alert">
+            <div id={errorId} className={styles.lock}>
+              <MessageBar
+                intent="warning"
+                role="alert"
+                layout="multiline"
+                className={styles.refusal}
+              >
                 <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
               </MessageBar>
               {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
@@ -207,6 +248,7 @@ function StepUpForm() {
       </DialogContent>
       <DialogActions>
         <Button
+          ref={cancelRef}
           appearance="secondary"
           onClick={() => settleStepUp('cancelled')}
           disabled={isLoading}
