@@ -42,10 +42,11 @@ function ShellWithSession({ children }: ProtectedShellProps) {
       await logout().unwrap();
       navigate('/login', { replace: true });
     } catch (caught) {
-      // A 401 says the session was already gone, which sessionMiddleware takes from here. Any
-      // other failure left the visitor signed in, and the toast says so before saying why.
+      // A 401 says the session was already gone, which sessionMiddleware takes from here, and
+      // AppToaster has cleared that session's toasts by now: a toast said now would stay over the
+      // sign-in page. Any other failure left the visitor signed in, and the toast says so first.
       const problem = caught as ApiProblem;
-      showProblem(problem, problem.status === 401 ? undefined : SIGN_OUT_FAILED);
+      if (problem.status !== 401) showProblem(problem, SIGN_OUT_FAILED);
     }
   };
 

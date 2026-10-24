@@ -1063,6 +1063,7 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
     expect(
       screen.queryByText((content) => content.includes(COPY.signOutFailed)),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText('Session expired or invalid')).not.toBeInTheDocument();
   });
 
   it("a 401 from Settings' Log out says nothing of the kind either", async () => {
@@ -1088,6 +1089,7 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
     await waitFor(() => expect(store.getState().auth.status).not.toBe('authenticated'));
     await act(async () => {});
     expect(screen.queryAllByText((content) => content.includes(COPY.signOutFailed))).toEqual([]);
+    expect(screen.queryByText('Session expired or invalid')).not.toBeInTheDocument();
   });
 });
 
