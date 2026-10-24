@@ -72,9 +72,12 @@ export function NotFoundRoute() {
 export function NotFoundPage() {
   const styles = useStyles();
   const isAuthenticated = useAppSelector(selectAuthStatus) === 'authenticated';
+  // Alone, the page is the main landmark, as the sign-in page's form panel is. In the shell,
+  // AppLayout's <main> already holds it, and a second one inside would nest.
+  const Container = isAuthenticated ? 'div' : 'main';
 
   return (
-    <div className={mergeClasses(styles.page, !isAuthenticated && styles.standalone)}>
+    <Container className={mergeClasses(styles.page, !isAuthenticated && styles.standalone)}>
       <Text as="h1" className={styles.title}>
         Page not found
       </Text>
@@ -90,6 +93,6 @@ export function NotFoundPage() {
           Go to sign in
         </Link>
       )}
-    </div>
+    </Container>
   );
 }

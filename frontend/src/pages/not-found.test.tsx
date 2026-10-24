@@ -34,6 +34,12 @@ async function openTheAddress() {
   return store;
 }
 
+/*
+ * Each test waits for what the visitor sees, never for the store. RTK hands the session check's
+ * answer to React on the next animation frame, so the store says 'authenticated' or 'anonymous'
+ * while the check's spinner is still drawn, and a query made then finds no page.
+ */
+
 /** Where the visitor is and what the tab says, once the route has been drawn. */
 async function stayedOnTheAddress() {
   await waitFor(() =>
@@ -55,14 +61,23 @@ describe('an address that names no page', () => {
     const store = await openTheAddress();
 
     await stayedOnTheAddress();
-    await waitFor(() => expect(store.getState().auth.status).toBe('authenticated'));
+    // The link is drawn only in the signed-in view, so the rest is asked of that view.
+    expect(await screen.findByRole('link', { name: 'Go to Home' })).toHaveAttribute(
+      'href',
+      '/dashboard',
+    );
+    expect(store.getState().auth.status).toBe('authenticated');
 
-    expect(screen.getByRole('heading', { name: 'Page not found', level: 1 })).toBeVisible();
+    const heading = screen.getByRole('heading', { name: 'Page not found', level: 1 });
+    expect(heading).toBeVisible();
     expect(screen.getByText('There is no page at this address.')).toBeVisible();
     // Inside the shell: the app's own navigation is around the page.
     expect(screen.getAllByRole('navigation', { name: 'Main navigation' })).not.toHaveLength(0);
-    expect(screen.getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/dashboard');
     expect(screen.queryByRole('link', { name: 'Go to sign in' })).not.toBeInTheDocument();
+    // The shell's main holds the page, and the page adds no main of its own inside it.
+    const mains = screen.getAllByRole('main');
+    expect(mains).toHaveLength(1);
+    expect(mains[0]).toContainElement(heading);
   });
 
   it('signed out, stands alone, asks nothing that needs a session and offers sign-in', async () => {
@@ -76,13 +91,22 @@ describe('an address that names no page', () => {
     const store = await openTheAddress();
 
     await stayedOnTheAddress();
-    await waitFor(() => expect(store.getState().auth.status).toBe('anonymous'));
+    // The link is drawn only in the signed-out view, so the rest is asked of that view.
+    expect(await screen.findByRole('link', { name: 'Go to sign in' })).toHaveAttribute(
+      'href',
+      '/login',
+    );
+    expect(store.getState().auth.status).toBe('anonymous');
 
-    expect(screen.getByRole('heading', { name: 'Page not found', level: 1 })).toBeVisible();
+    const heading = screen.getByRole('heading', { name: 'Page not found', level: 1 });
+    expect(heading).toBeVisible();
     expect(screen.getByText('There is no page at this address.')).toBeVisible();
     expect(screen.queryByRole('navigation', { name: 'Main navigation' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to sign in' })).toHaveAttribute('href', '/login');
     expect(screen.queryByRole('link', { name: 'Go to Home' })).not.toBeInTheDocument();
+    // Alone, the page is the one main landmark.
+    const mains = screen.getAllByRole('main');
+    expect(mains).toHaveLength(1);
+    expect(mains[0]).toContainElement(heading);
     // The session check is the one request, and it is seen, so the list below is not empty
     // because nothing was recorded. Nothing under /api is asked: it needs a session.
     expect(asked).toContain('/bff/auth/me');
@@ -92,13 +116,18 @@ describe('an address that names no page', () => {
   it('while the session is checked, offers no way back, and then the one that is true', async () => {
     // The check is held, so the page is drawn while the app cannot yet tell a signed-in visitor
     // from a signed-out one. It then answers 401, and the visitor is known as anonymous.
-    let answer: (response: Response) => void = () => {};
+    // The spinner is drawn on the first render, before the request has reached the handler, so
+    // the handler hands out its answer through a promise that is awaited before answering.
+    let handOver: (answer: (response: Response) => void) => void = () => {};
+    const held = new Promise<(response: Response) => void>((resolve) => {
+      handOver = resolve;
+    });
     server.use(
       http.get(
         '*/bff/auth/me',
         () =>
           new Promise<Response>((resolve) => {
-            answer = resolve;
+            handOver(resolve);
           }),
       ),
     );
@@ -110,6 +139,7 @@ describe('an address that names no page', () => {
     expect(screen.queryByRole('link', { name: 'Go to sign in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Go to Home' })).not.toBeInTheDocument();
 
+    const answer = await held;
     answer(bffProblem({ status: 401, title: 'Unauthorized', detail: 'No session.' }));
 
     await stayedOnTheAddress();
