@@ -29,10 +29,16 @@ export interface SidebarProps {
 
 const useStyles = makeStyles({
   /**
-   * `minHeight: 100vh` used to live here as well as on the shell container. It was redundant —
-   * a flex child stretches to its container by default, and the container is already full height —
-   * and it was the wrong unit on a phone. What actually separates this from the content is the
-   * fill: chrome is white, the canvas beside it is `surfaces.canvas`.
+   * The sidebar is exactly one window tall and sticks to the top of it, so the logo, Transfer, the
+   * places and Sign out stay on screen while a long page scrolls. `alignSelf: 'flex-start'` is
+   * what lets it stick: left to stretch, a flex item is as tall as its container, which is as tall
+   * as the page, and a sticky box that tall has nowhere to go. `100dvh` rather than `100vh` for the
+   * reason the shell gives. `overflowY: 'auto'` is for a window shorter than the sidebar's own
+   * contents: the sidebar scrolls by itself there instead of cutting Sign out off, and
+   * `scrollPaddingBlock` keeps the 4px of a focused row's ring (2px outline, 2px offset) inside
+   * the box when focus scrolls a row into view: without it the ring lost its bottom edge at
+   * 1024x400. What separates this from the content is the fill: chrome is white, the canvas beside
+   * it is `surfaces.canvas`.
    *
    * The border had to move with the canvas. It was `neutral[100]`, which is the value the canvas
    * now uses, so it would have gone from invisible against white (1.10:1, measured) to invisible
@@ -45,6 +51,12 @@ const useStyles = makeStyles({
    * the fill change and the border, not by this.
    */
   sidebar: {
+    position: 'sticky',
+    top: 0,
+    alignSelf: 'flex-start',
+    height: '100dvh',
+    overflowY: 'auto',
+    scrollPaddingBlock: '4px',
     width: componentSizes.sidebar.width,
     backgroundColor: tokens.colorNeutralBackground1,
     borderRight: `1px solid ${surfaces.border}`,
@@ -53,8 +65,10 @@ const useStyles = makeStyles({
     boxShadow: shadows.sm,
   },
 
-  // Logo/Brand section
+  // Logo/Brand section. `flexShrink: 0` because the sidebar has a fixed height now: in a window
+  // shorter than its contents the row's own 56px gave way first, down to 33px around the logo.
   brand: {
+    flexShrink: 0,
     height: componentSizes.header.height,
     display: 'flex',
     alignItems: 'center',
