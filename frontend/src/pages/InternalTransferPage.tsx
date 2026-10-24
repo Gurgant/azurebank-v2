@@ -33,14 +33,18 @@ import {
   useTransferInternalMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
+import { usePageRead } from '../hooks/usePageRead';
 import { useSettledPress } from '../hooks/useSettledPress';
-import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { AlertSlot, RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
+import {
+  AlertSlot,
+  ReadErrorBar,
+  RetryCountdown,
+  WaitHint,
+  retryDeadline,
+} from '../components/feedback';
 import {
   insufficientFundsMessage,
   internalTransferFormSchema,
@@ -79,44 +83,23 @@ const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
+  const accountsQuery = useGetAccountsQuery();
   const {
     data: accountsData,
     isSuccess: accountsLoaded,
-    isLoading: accountsLoading,
-    isFetching: accountsFetching,
     error: accountsError,
     refetch: refetchAccounts,
     requestId: accountsRequestId,
-  } = useGetAccountsQuery();
+  } = accountsQuery;
   const accounts = accountsData ?? [];
   // The accounts bar follows the wait, as on TransferPage and the reading pages: a Retry keeps the
   // old error while it runs, so the bar goes away and comes back, announced, only on a new failure.
-  const accountsRead = readWait({
-    isLoading: accountsLoading,
-    isFetching: accountsFetching,
-    error: accountsError,
-  });
-  const accountsProblem = accountsRead.failed ? (accountsError as ApiProblem) : undefined;
+  const accountsRead = usePageRead(accountsQuery, { endpoint: 'getAccounts', arg: undefined });
   // With no accounts the accounts are the page, and their wait is its only one; with accounts on
   // the page, reading them again holds nobody up, and the funds check's reload of this entry has a
   // hint of its own, with no Stop — see TransferPage.
   const accountsHoldThePage =
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
-
-  const dispatch = useAppDispatch();
-  const accountsLanding = useWaitLanding<HTMLButtonElement>(
-    accountsRead.waiting,
-    accountsRequestId,
-  );
-  const stopWaitingForAccounts = () => {
-    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) {
-      accountsLanding.arm();
-    }
-  };
-  const retryAccounts = () => {
-    accountsLanding.arm();
-    void refetchAccounts();
-  };
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -759,27 +742,19 @@ export function InternalTransferPage() {
           active={accountsHoldThePage && accountsRead.waiting}
           kind="read"
           failed={accountsRead.failed}
-          onStopWaiting={stopWaitingForAccounts}
+          onStopWaiting={accountsRead.stopWaiting}
         />
         {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
             ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot>
-          {accountsProblem && (
-            <MessageBar key={accountsRequestId} intent="error">
-              <MessageBarBody>
-                {accountsProblem.detail || 'Could not load your accounts.'}
-                {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-              </MessageBarBody>
-              <MessageBarActions>
-                <Button
-                  ref={accountsLanding.landingRef}
-                  appearance="transparent"
-                  onClick={retryAccounts}
-                >
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
+          {accountsRead.problem && (
+            <ReadErrorBar
+              key={accountsRequestId}
+              problem={accountsRead.problem}
+              fallback="Could not load your accounts."
+              onRetry={accountsRead.retry}
+              retryRef={accountsRead.landingRef}
+            />
           )}
         </AlertSlot>
         {error && (

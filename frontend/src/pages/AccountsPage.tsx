@@ -8,9 +8,6 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
-  MessageBar,
-  MessageBarActions,
-  MessageBarBody,
   Spinner,
   Text,
   tokens,
@@ -30,11 +27,9 @@ import { colors, shadows, gradients, transitions } from '../theme/tokens';
 import { PageHeader } from '../components/layout/PageHeader';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
-import { useAppDispatch } from '../app/hooks';
 import type { AccountResponse } from '../features/api/apiSlice';
 import { useGetAccountsQuery, useSetPrimaryAccountMutation } from '../features/api/apiSlice';
-import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
+import { usePageRead } from '../hooks/usePageRead';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { AccountNumberField } from '../components/AccountNumberField';
 import {
@@ -44,7 +39,7 @@ import {
   RenameAccountDialog,
   WithdrawDialog,
 } from '../components';
-import { AlertSlot, useProblemToast, WaitHint } from '../components/feedback';
+import { AlertSlot, ReadErrorBar, useProblemToast, WaitHint } from '../components/feedback';
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -388,30 +383,17 @@ export function AccountsPage() {
 
   // A1 — the first page on REAL data. Loading/error/empty are first-class states;
   // the list refreshes through tag invalidation, never hand-patching.
-  const {
-    data: accounts = [],
-    isLoading,
-    isFetching,
-    error,
-    refetch,
-    requestId,
-  } = useGetAccountsQuery();
+  const accountsQuery = useGetAccountsQuery();
+  const { data: accounts = [], requestId } = accountsQuery;
+  const showProblem = useProblemToast();
+
   // The spinner and the bar follow the wait, not `isLoading` and `error`: a Retry keeps the old
   // error while it runs, so the bar goes away for the new wait and comes back, announced, only if
   // that wait fails too.
-  const { waiting, failed } = readWait({ isLoading, isFetching, error });
-  const problem = failed ? (error as ApiProblem) : undefined;
-  const showProblem = useProblemToast();
-
-  const dispatch = useAppDispatch();
-  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
-  const stopWaiting = () => {
-    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) arm();
-  };
-  const retry = () => {
-    arm();
-    void refetch();
-  };
+  const { waiting, failed, problem, landingRef, stopWaiting, retry } = usePageRead(accountsQuery, {
+    endpoint: 'getAccounts',
+    arg: undefined,
+  });
 
   const [setPrimaryAccount] = useSetPrimaryAccountMutation();
 
@@ -533,17 +515,13 @@ export function AccountsPage() {
             ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot>
           {problem && (
-            <MessageBar key={requestId} intent="error">
-              <MessageBarBody>
-                {problem.detail || 'Could not load your accounts.'}
-                {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
-              </MessageBarBody>
-              <MessageBarActions>
-                <Button ref={landingRef} appearance="transparent" onClick={retry}>
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
+            <ReadErrorBar
+              key={requestId}
+              problem={problem}
+              fallback="Could not load your accounts."
+              onRetry={retry}
+              retryRef={landingRef}
+            />
           )}
         </AlertSlot>
 

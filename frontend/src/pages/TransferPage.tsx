@@ -30,11 +30,17 @@ import {
 import { useAppDispatch } from '../app/hooks';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
+import { usePageRead } from '../hooks/usePageRead';
 import { useSettledPress } from '../hooks/useSettledPress';
 import { abortRunning, useWaitLanding, type StartedRead } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
 import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
-import { AlertSlot, RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
+import {
+  AlertSlot,
+  ReadErrorBar,
+  RetryCountdown,
+  WaitHint,
+  retryDeadline,
+} from '../components/feedback';
 import {
   insufficientFundsMessage,
   normalizeAzureTag,
@@ -183,23 +189,13 @@ export function TransferPage() {
   // Merged so the markup keeps addressing one `styles` object.
   const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
 
-  const {
-    data: accountsData,
-    isLoading: accountsLoading,
-    isFetching: accountsFetching,
-    error: accountsError,
-    refetch: refetchAccounts,
-    requestId: accountsRequestId,
-  } = useGetAccountsQuery();
+  const accountsQuery = useGetAccountsQuery();
+  const { data: accountsData, error: accountsError, requestId: accountsRequestId } = accountsQuery;
   const accounts = accountsData ?? [];
+  const [lookup, lookupState] = useLazyLookupRecipientQuery();
   // The accounts bar follows the wait, as on the reading pages: a Retry keeps the old error while
   // it runs, so the bar goes away for the new wait and comes back, announced, only if it fails too.
-  const accountsRead = readWait({
-    isLoading: accountsLoading,
-    isFetching: accountsFetching,
-    error: accountsError,
-  });
-  const accountsProblem = accountsRead.failed ? (accountsError as ApiProblem) : undefined;
+  const accountsRead = usePageRead(accountsQuery, { endpoint: 'getAccounts', arg: undefined });
   /*
     With no accounts there is nothing to send from, so while they load, fail or load again the
     accounts ARE the page: the form waits for them. That also keeps their wait the only one on the
@@ -212,22 +208,8 @@ export function TransferPage() {
   */
   const accountsHoldThePage =
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
-  const [lookup, lookupState] = useLazyLookupRecipientQuery();
 
   const dispatch = useAppDispatch();
-  const accountsLanding = useWaitLanding<HTMLButtonElement>(
-    accountsRead.waiting,
-    accountsRequestId,
-  );
-  const stopWaitingForAccounts = () => {
-    if (abortRunning(dispatch, [{ endpoint: 'getAccounts', arg: undefined }])) {
-      accountsLanding.arm();
-    }
-  };
-  const retryAccounts = () => {
-    accountsLanding.arm();
-    void refetchAccounts();
-  };
 
   /*
     The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
@@ -1046,27 +1028,19 @@ export function TransferPage() {
           active={accountsHoldThePage && accountsRead.waiting}
           kind="read"
           failed={accountsRead.failed}
-          onStopWaiting={stopWaitingForAccounts}
+          onStopWaiting={accountsRead.stopWaiting}
         />
         {/* Keyed by the request that failed, so that a Retry which fails again before its wait is
             ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot>
-          {accountsProblem && (
-            <MessageBar key={accountsRequestId} intent="error">
-              <MessageBarBody>
-                {accountsProblem.detail || 'Could not load your accounts.'}
-                {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
-              </MessageBarBody>
-              <MessageBarActions>
-                <Button
-                  ref={accountsLanding.landingRef}
-                  appearance="transparent"
-                  onClick={retryAccounts}
-                >
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
+          {accountsRead.problem && (
+            <ReadErrorBar
+              key={accountsRequestId}
+              problem={accountsRead.problem}
+              fallback="Could not load your accounts."
+              onRetry={accountsRead.retry}
+              retryRef={accountsRead.landingRef}
+            />
           )}
         </AlertSlot>
         {error && (

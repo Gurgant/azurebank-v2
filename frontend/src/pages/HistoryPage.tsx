@@ -1,18 +1,8 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Button,
-  makeStyles,
-  MessageBar,
-  MessageBarActions,
-  MessageBarBody,
-  Spinner,
-  Text,
-  tokens,
-} from '@fluentui/react-components';
+import { Button, makeStyles, Spinner, Text, tokens } from '@fluentui/react-components';
 import { History24Filled } from '@fluentui/react-icons';
 import { colors, gradients } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
 import { SegmentedFilter } from '../components/shared/SegmentedFilter';
 import {
@@ -23,12 +13,10 @@ import {
   TransactionTable,
 } from '../components/shared/TransactionRow';
 import type { TransactionType } from '../api/enums';
-import { useAppDispatch } from '../app/hooks';
-import { AlertSlot, WaitHint } from '../components/feedback';
+import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import type { TransactionResponse } from '../features/api/apiSlice';
 import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
-import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
+import { usePageRead } from '../hooks/usePageRead';
 import { formatCurrency, formatDateHeading, isIncomeType } from '../utils/format';
 
 // ============================================
@@ -247,36 +235,16 @@ export function HistoryPage() {
 
   // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
   // {Transaction,'LIST'} and refetches all loaded pages (accepted cost).
-  const {
-    data,
-    isLoading,
-    isFetching,
-    error,
-    refetch,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    requestId,
-  } = useGetTransactionHistoryInfiniteQuery({});
+  const historyQuery = useGetTransactionHistoryInfiniteQuery({});
+  const { data, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage, requestId } =
+    historyQuery;
   // The spinner and the bar follow the first page's wait, not `isLoading` and `error`: a Retry
   // keeps the old error while it runs, so the bar goes away for the new wait and comes back,
   // announced, only if that wait fails too. "Load more" is not that wait: the rows stay on screen.
-  const { waiting, failed } = readWait({
-    isLoading,
-    isFetching: isFetching && !isFetchingNextPage,
-    error,
-  });
-  const problem = failed ? (error as ApiProblem) : undefined;
-
-  const dispatch = useAppDispatch();
-  const { landingRef, arm } = useWaitLanding<HTMLButtonElement>(waiting, requestId);
-  const stopWaiting = () => {
-    if (abortRunning(dispatch, [{ endpoint: 'getTransactionHistory', arg: {} }])) arm();
-  };
-  const retry = () => {
-    arm();
-    void refetch();
-  };
+  const { waiting, failed, problem, landingRef, stopWaiting, retry } = usePageRead(
+    { ...historyQuery, isFetching: isFetching && !isFetchingNextPage },
+    { endpoint: 'getTransactionHistory', arg: {} },
+  );
 
   /**
    * How many of the loaded pages are SHOWN. Pages are never dropped from the cache — hiding them
@@ -352,17 +320,13 @@ export function HistoryPage() {
             ever drawn still puts a new bar into the alert, and it is announced again. */}
         <AlertSlot className={styles.errorContainer}>
           {problem && (
-            <MessageBar key={requestId} intent="error">
-              <MessageBarBody>
-                {problem.detail || 'Could not load your transactions.'}
-                {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
-              </MessageBarBody>
-              <MessageBarActions>
-                <Button ref={landingRef} appearance="transparent" onClick={retry}>
-                  Retry
-                </Button>
-              </MessageBarActions>
-            </MessageBar>
+            <ReadErrorBar
+              key={requestId}
+              problem={problem}
+              fallback="Could not load your transactions."
+              onRetry={retry}
+              retryRef={landingRef}
+            />
           )}
         </AlertSlot>
 
