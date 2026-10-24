@@ -76,3 +76,50 @@ describe('idempotency handler (ADR-0009 semantics)', () => {
     expect((await res.json()).errorCode).toBe('IDEMPOTENCY_KEY_INVALID');
   });
 });
+
+/*
+  The four money sends open the same way, so the key's two refusals are pinned on each of them, with
+  a body each endpoint would otherwise take. The nil key is refused in both of its spellings: the key
+  is parsed to its canonical form before it is compared, and 32 undashed zeroes are the spelling a
+  comparison of the raw header would let through.
+*/
+describe.each([
+  ['/api/transactions/deposit', () => ({ accountId: ACCOUNT(), amount: 50 })],
+  ['/api/transactions/withdraw', () => ({ accountId: ACCOUNT(), amount: 50 })],
+  ['/api/transfers', () => ({ fromAccountId: ACCOUNT(), recipientAzureTag: 'friend', amount: 50 })],
+  [
+    '/api/transfers/internal',
+    () => ({ fromAccountId: ACCOUNT(), toAccountId: mockState.accounts[1].id, amount: 50 }),
+  ],
+])('the Idempotency-Key on %s', (url, body) => {
+  function send(key: string | null) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (key !== null) headers['Idempotency-Key'] = key;
+    return fetch(url, { method: 'POST', headers, body: JSON.stringify(body()) });
+  }
+
+  it('400 IDEMPOTENCY_KEY_MISSING with no header', async () => {
+    const res = await send(null);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      errorCode: 'IDEMPOTENCY_KEY_MISSING',
+      detail: "The 'Idempotency-Key' header is required on this endpoint.",
+      instance: url,
+    });
+  });
+
+  it.each(['not-a-uuid', '00000000-0000-0000-0000-000000000000', '0'.repeat(32)])(
+    '400 IDEMPOTENCY_KEY_INVALID for %s',
+    async (key) => {
+      const res = await send(key);
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        errorCode: 'IDEMPOTENCY_KEY_INVALID',
+        detail: "The 'Idempotency-Key' header must be a valid UUID.",
+        instance: url,
+      });
+    },
+  );
+});

@@ -1868,44 +1868,66 @@ const getTransaction = api.get('/api/transactions/{id}', ({ params, request, res
   return response(200).json({ data: toWire(transaction), message: null });
 });
 
-/** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
-const deposit = api.post('/api/transactions/deposit', async ({ request, response }) => {
+/**
+ * The four money sends, each with its own namespace in `mockState.idempotency`: the same key on
+ * two of them is two entries, as the backend's (user, endpoint, key) makes it.
+ */
+type MoneySendScope = 'deposit' | 'withdraw' | 'transfer' | 'internal';
+
+/** What a money send has read once its opening let it through: a request new under its key. */
+interface OpenedMoneySend {
+  parsedKey: string;
+  bodyFingerprint: string;
+  body: Record<string, unknown>;
+}
+
+/**
+ * The opening of the four money sends (ADR-0009), in this order: the size limit, the missing
+ * key, the invalid key, the unreadable body, then what the key already holds, a 422 for another
+ * body or the replay of the stored answer. The API reads the body later: `IdempotencyMiddleware`
+ * hashes the raw bytes and looks the key up before model binding parses them, so a key it already
+ * holds meets that lookup first there and the unreadable body first here. `{ answer }` is any of
+ * those; what comes back otherwise is a request the handler goes on to run.
+ */
+async function openMoneySend(
+  request: Request,
+  scope: MoneySendScope,
+): Promise<{ answer: Response } | OpenedMoneySend> {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
   const oversized = payloadTooLarge(await request.clone().text(), request);
-  if (oversized) return response.untyped(oversized);
+  if (oversized) return { answer: oversized };
   const key = request.headers.get('Idempotency-Key');
   if (!key) {
-    return response.untyped(
-      problem({
+    return {
+      answer: problem({
         instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
         detail: "The 'Idempotency-Key' header is required on this endpoint.",
       }),
-    );
+    };
   }
   // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
   // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
-  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // could execute a send twice — the backend stores a parsed `Guid`, so it replays. Accepting
   // the alternate formats is what made that reachable; this is the third place in this file where
   // "accept the format, then use the raw string" was the bug.
   const parsedKey = parseGuid(key);
   if (parsedKey === null || parsedKey === NIL_UUID) {
-    return response.untyped(
-      problem({
+    return {
+      answer: problem({
         instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_INVALID',
         detail: "The 'Idempotency-Key' header must be a valid UUID.",
       }),
-    );
+    };
   }
 
   const parsedBody = await readJsonBody(request);
   if (!parsedBody) {
-    return response.untyped(unreadableBodyProblem(await request.clone().text()));
+    return { answer: unreadableBodyProblem(await request.clone().text()) };
   }
-  const raw = parsedBody.raw;
   /*
     Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
 
@@ -1914,29 +1936,54 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
     as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
   */
-  const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`deposit|${parsedKey}`);
+  const bodyFingerprint = fingerprint(parsedBody.raw);
+  const stored = mockState.idempotency.get(`${scope}|${parsedKey}`);
   if (stored) {
-    if (stored.bodyFingerprint !== fp) {
-      return response.untyped(
-        problem({
+    if (stored.bodyFingerprint !== bodyFingerprint) {
+      return {
+        answer: problem({
           instance: pathOf(request),
           status: 422,
           errorCode: 'IDEMPOTENCY_KEY_REUSE',
           detail: 'This idempotency key was already used with a different payload.',
         }),
-      );
+      };
     }
     // Replay: the STORED bytes, verbatim, plus the replay marker header.
-    return response.untyped(
-      new HttpResponse(stored.body, {
+    return {
+      answer: new HttpResponse(stored.body, {
         status: stored.status,
         headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
       }),
-    );
+    };
   }
+  return { parsedKey, bodyFingerprint, body: parsedBody.body };
+}
 
-  const body = parsedBody.body as { accountId?: string; amount?: number; description?: string };
+/**
+ * Keeps a money send's 201 under its key, as the bytes a replay sends back. Only the success path
+ * calls it: a refusal leaves no entry, so the same key sent again is run again, not replayed.
+ */
+function keepMoneySendAnswer(
+  scope: MoneySendScope,
+  parsedKey: string,
+  bodyFingerprint: string,
+  payload: unknown,
+) {
+  mockState.idempotency.set(`${scope}|${parsedKey}`, {
+    bodyFingerprint,
+    status: 201,
+    body: JSON.stringify(payload),
+  });
+}
+
+/** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
+const deposit = api.post('/api/transactions/deposit', async ({ request, response }) => {
+  const opened = await openMoneySend(request, 'deposit');
+  if ('answer' in opened) return response.untyped(opened.answer);
+  const { parsedKey } = opened;
+
+  const body = opened.body as { accountId?: string; amount?: number; description?: string };
   const badAmount = rejectBadAmount(body.amount);
   if (badAmount) {
     return response.untyped(badAmount);
@@ -1948,8 +1995,8 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
   const amount = body.amount as number;
 
-  // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
-  // branch above returns the stored bytes without re-applying them (idempotent).
+  // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay in
+  // `openMoneySend` returns the stored bytes without re-applying them (idempotent).
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   /*
     An unknown account is a 404, exactly as `GetAccountWithOwnershipCheckAsync` makes it one.
@@ -1992,15 +2039,10 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     data: { transaction: toWire(transaction), newBalance },
     message: 'Deposit successful',
   };
-  const text = JSON.stringify(payload);
-  mockState.idempotency.set(`deposit|${parsedKey}`, {
-    bodyFingerprint: fp,
-    status: 201,
-    body: text,
-  });
+  keepMoneySendAnswer('deposit', parsedKey, opened.bodyFingerprint, payload);
 
   // Round-trip through the TYPED helper so the success shape is compile-checked against
-  // schema.d.ts (the stored string above replays byte-identically on retries).
+  // schema.d.ts (the string kept above replays byte-identically on retries).
   return response(201).json(payload);
 });
 
@@ -2014,72 +2056,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
  * transaction, stored idempotency record) run ONLY on the success path.
  */
 const withdraw = api.post('/api/transactions/withdraw', async ({ request, response }) => {
-  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
-  const oversized = payloadTooLarge(await request.clone().text(), request);
-  if (oversized) return response.untyped(oversized);
-  const key = request.headers.get('Idempotency-Key');
-  if (!key) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: "The 'Idempotency-Key' header is required on this endpoint.",
-      }),
-    );
-  }
-  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
-  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
-  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
-  // the alternate formats is what made that reachable; this is the third place in this file where
-  // "accept the format, then use the raw string" was the bug.
-  const parsedKey = parseGuid(key);
-  if (parsedKey === null || parsedKey === NIL_UUID) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: "The 'Idempotency-Key' header must be a valid UUID.",
-      }),
-    );
-  }
+  const opened = await openMoneySend(request, 'withdraw');
+  if ('answer' in opened) return response.untyped(opened.answer);
+  const { parsedKey } = opened;
 
-  const parsedBody = await readJsonBody(request);
-  if (!parsedBody) {
-    return response.untyped(unreadableBodyProblem(await request.clone().text()));
-  }
-  const raw = parsedBody.raw;
-  /*
-    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
-
-    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
-    differing only in a GUID's casing legitimately hash differently on the server — and must here.
-    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
-    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
-  */
-  const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`withdraw|${parsedKey}`);
-  if (stored) {
-    if (stored.bodyFingerprint !== fp) {
-      return response.untyped(
-        problem({
-          instance: pathOf(request),
-          status: 422,
-          errorCode: 'IDEMPOTENCY_KEY_REUSE',
-          detail: 'This idempotency key was already used with a different payload.',
-        }),
-      );
-    }
-    return response.untyped(
-      new HttpResponse(stored.body, {
-        status: stored.status,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
-      }),
-    );
-  }
-
-  const body = parsedBody.body as {
+  const body = opened.body as {
     accountId?: string;
     amount?: number;
     pin?: string;
@@ -2227,12 +2208,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     data: { transaction: toWire(transaction), newBalance },
     message: 'Withdrawal successful',
   };
-  const text = JSON.stringify(payload);
-  mockState.idempotency.set(`withdraw|${parsedKey}`, {
-    bodyFingerprint: fp,
-    status: 201,
-    body: text,
-  });
+  keepMoneySendAnswer('withdraw', parsedKey, opened.bodyFingerprint, payload);
   return response(201).json(payload);
 });
 
@@ -3361,73 +3337,11 @@ const authoriseAccountDeletion = api.post(
  * success (debit sender, push a TransferOut row; the recipient is off-ledger).
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
-  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
-  const oversized = payloadTooLarge(await request.clone().text(), request);
-  if (oversized) return response.untyped(oversized);
+  const opened = await openMoneySend(request, 'transfer');
+  if ('answer' in opened) return response.untyped(opened.answer);
+  const { parsedKey } = opened;
 
-  const key = request.headers.get('Idempotency-Key');
-  if (!key) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: "The 'Idempotency-Key' header is required on this endpoint.",
-      }),
-    );
-  }
-  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
-  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
-  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
-  // the alternate formats is what made that reachable; this is the third place in this file where
-  // "accept the format, then use the raw string" was the bug.
-  const parsedKey = parseGuid(key);
-  if (parsedKey === null || parsedKey === NIL_UUID) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: "The 'Idempotency-Key' header must be a valid UUID.",
-      }),
-    );
-  }
-
-  const parsedBody = await readJsonBody(request);
-  if (!parsedBody) {
-    return response.untyped(unreadableBodyProblem(await request.clone().text()));
-  }
-  const raw = parsedBody.raw;
-  /*
-    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
-
-    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
-    differing only in a GUID's casing legitimately hash differently on the server — and must here.
-    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
-    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
-  */
-  const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`transfer|${parsedKey}`);
-  if (stored) {
-    if (stored.bodyFingerprint !== fp) {
-      return response.untyped(
-        problem({
-          instance: pathOf(request),
-          status: 422,
-          errorCode: 'IDEMPOTENCY_KEY_REUSE',
-          detail: 'This idempotency key was already used with a different payload.',
-        }),
-      );
-    }
-    return response.untyped(
-      new HttpResponse(stored.body, {
-        status: stored.status,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
-      }),
-    );
-  }
-
-  const body = parsedBody.body as {
+  const body = opened.body as {
     fromAccountId?: string;
     recipientAzureTag?: string;
     amount?: number;
@@ -3557,7 +3471,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     THREE PROPERTIES COME FREE FROM THE POSITION and are named here rather than coded around.
     The refused authorisation stays PENDING, because `spendAuthorization` is below (measured A3.3).
     NO idempotency row is written and no `Idempotency-Replayed` header can ever appear, because
-    `mockState.idempotency.set` is on the 201 path only (measured A3.4: the same key sent twice
+    `keepMoneySendAnswer` is on the 201 path only (measured A3.4: the same key sent twice
     answered 422 twice, and the sender's IdempotencyRecords held exactly the seven 201 money POSTs —
     the refused key left no row). And AUTHORIZATION_EXPIRED/_INVALID still win, because
     `validateAuthorization` is above.
@@ -3661,12 +3575,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     },
     message: 'Transfer successful',
   };
-  const text = JSON.stringify(payload);
-  mockState.idempotency.set(`transfer|${parsedKey}`, {
-    bodyFingerprint: fp,
-    status: 201,
-    body: text,
-  });
+  keepMoneySendAnswer('transfer', parsedKey, opened.bodyFingerprint, payload);
   return response(201).json(payload);
 });
 
@@ -3680,73 +3589,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  * INSUFFICIENT_FUNDS → success.
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
-  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
-  const oversized = payloadTooLarge(await request.clone().text(), request);
-  if (oversized) return response.untyped(oversized);
+  const opened = await openMoneySend(request, 'internal');
+  if ('answer' in opened) return response.untyped(opened.answer);
+  const { parsedKey } = opened;
 
-  const key = request.headers.get('Idempotency-Key');
-  if (!key) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: "The 'Idempotency-Key' header is required on this endpoint.",
-      }),
-    );
-  }
-  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
-  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
-  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
-  // the alternate formats is what made that reachable; this is the third place in this file where
-  // "accept the format, then use the raw string" was the bug.
-  const parsedKey = parseGuid(key);
-  if (parsedKey === null || parsedKey === NIL_UUID) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 400,
-        errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: "The 'Idempotency-Key' header must be a valid UUID.",
-      }),
-    );
-  }
-
-  const parsedBody = await readJsonBody(request);
-  if (!parsedBody) {
-    return response.untyped(unreadableBodyProblem(await request.clone().text()));
-  }
-  const raw = parsedBody.raw;
-  /*
-    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
-
-    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
-    differing only in a GUID's casing legitimately hash differently on the server — and must here.
-    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
-    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
-  */
-  const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`internal|${parsedKey}`);
-  if (stored) {
-    if (stored.bodyFingerprint !== fp) {
-      return response.untyped(
-        problem({
-          instance: pathOf(request),
-          status: 422,
-          errorCode: 'IDEMPOTENCY_KEY_REUSE',
-          detail: 'This idempotency key was already used with a different payload.',
-        }),
-      );
-    }
-    return response.untyped(
-      new HttpResponse(stored.body, {
-        status: stored.status,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
-      }),
-    );
-  }
-
-  const body = parsedBody.body as {
+  const body = opened.body as {
     fromAccountId?: string;
     toAccountId?: string;
     amount?: number;
@@ -3929,12 +3776,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     },
     message: 'Internal transfer successful',
   };
-  const text = JSON.stringify(payload);
-  mockState.idempotency.set(`internal|${parsedKey}`, {
-    bodyFingerprint: fp,
-    status: 201,
-    body: text,
-  });
+  keepMoneySendAnswer('internal', parsedKey, opened.bodyFingerprint, payload);
   return response(201).json(payload);
 });
 
