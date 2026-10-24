@@ -17,6 +17,7 @@ import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useSetPinMutation } from '../../features/api/apiSlice';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { useReturnFocus } from '../../hooks/useReturnFocus';
 import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
 import { PinInput } from '../PinInput';
@@ -83,6 +84,13 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
   const [changed, setChanged] = useState(false);
 
   const locked = lockDeadline !== null;
+  /*
+    The submit is disabled while the request is out, and the browser hands its focus to `body`,
+    where an Escape reaches no dialog. The success view and the lock each take back the focus that
+    was lost: Done after a change, and Cancel after the lock, the one control the lock leaves on.
+  */
+  const doneButton = useFocusWhenLost<HTMLButtonElement>(changed);
+  const cancelButton = useFocusWhenLost<HTMLButtonElement>(locked);
   const ready =
     currentPin.length === PIN_LENGTH &&
     newPin.length === PIN_LENGTH &&
@@ -188,7 +196,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
               </MessageBar>
             </DialogContent>
             <DialogActions>
-              <Button appearance="primary" onClick={onClose}>
+              <Button appearance="primary" onClick={onClose} ref={doneButton}>
                 Done
               </Button>
             </DialogActions>
@@ -277,6 +285,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                   type="button"
                   onClick={requestClose}
                   disabled={isLoading}
+                  ref={cancelButton}
                 >
                   Cancel
                 </Button>
