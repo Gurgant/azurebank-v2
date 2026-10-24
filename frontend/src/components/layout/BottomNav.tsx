@@ -18,6 +18,7 @@ import {
   resolveNavPlace,
   utilityPlaces,
 } from './navItems';
+import { BOTTOM_NAV_ROOM, bottomNavRoom } from './bottomNavRoom';
 
 // ============================================
 // TYPES
@@ -114,6 +115,8 @@ const useStyles = makeStyles({
     display: 'flex',
     gap: '8px',
     width: '100%',
+    // Fixed, as `mainRow` is, so the room the bar reserves for itself open is the height it has.
+    height: componentSizes.bottomNav.utilityRowHeight,
     padding: '2px 10px 10px',
   },
 
@@ -283,16 +286,20 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
 
   // The browser scrolls a control that takes focus into view against the viewport's bottom edge,
   // and this fixed bar covers that edge: a Tab could stop on a control wholly under it. Scroll
-  // padding on the root moves the edge up to the bar, by the room AppLayout's `mobileContent`
-  // keeps clear for it. An effect and not a stylesheet rule, because the bar is mounted exactly
-  // while it covers the page, so a desktop window carries none.
+  // padding on the root moves the edge up to the bar. The room is the bar's height as it is now,
+  // open or closed, kept on the root so AppLayout's `mobileContent` reserves the same room under
+  // the page and the last control can scroll clear of the open bar too. An effect and not a
+  // stylesheet rule, because the bar is mounted exactly while it covers the page, so a desktop
+  // window carries none.
   useLayoutEffect(() => {
     const { style } = document.documentElement;
-    style.scrollPaddingBottom = `calc(${componentSizes.bottomNav.height} + 10px + ${safeArea.bottom})`;
+    style.setProperty(BOTTOM_NAV_ROOM, bottomNavRoom(sheetOpen));
+    style.scrollPaddingBottom = `var(${BOTTOM_NAV_ROOM})`;
     return () => {
+      style.removeProperty(BOTTOM_NAV_ROOM);
       style.removeProperty('scroll-padding-bottom');
     };
-  }, []);
+  }, [sheetOpen]);
 
   // Every control that navigates also closes the row — in its own handler, not in an effect on
   // pathname. `react-hooks/set-state-in-effect` forbids the effect version, and it is right to:

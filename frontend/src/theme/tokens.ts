@@ -247,6 +247,8 @@ export const componentSizes = {
   },
   bottomNav: {
     height: '72px',
+    /** The utility row under the main one when More is open: a 62px tile and 2px + 10px padding. */
+    utilityRowHeight: '74px',
     heightWithSafeArea: '92px', // 72px + 20px safe area
     paddingX: '8px',
   },

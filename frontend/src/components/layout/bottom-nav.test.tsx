@@ -1,5 +1,5 @@
 import { StrictMode, type ReactNode } from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { FluentProvider } from '@fluentui/react-components';
 import { describe, expect, it } from 'vitest';
@@ -14,14 +14,18 @@ import { BottomNav } from './BottomNav';
  * 320x568 before this: a Tab through Accounts stopped on three controls wholly under the bar. While
  * the bar is mounted, the root's scroll padding moves that edge up to the bar.
  *
- * jsdom does no layout and no scrolling, so what is held here is the declaration: its value is the
- * room the shell keeps for the bar, it is there exactly while the bar is, and StrictMode's second
- * run of the effect leaves it in place. That the browser then scrolls every stop clear of the bar
- * was measured in Chromium.
+ * jsdom does no layout and no scrolling, so what is held here is the declaration: the room is the
+ * bar's height as it is, open or closed, the shell's page padding reads the same room, it is there
+ * exactly while the bar is, and StrictMode's second run of the effect leaves it in place. That the
+ * browser then scrolls every stop clear of the bar was measured in Chromium.
  */
+
+const CLOSED_ROOM = 'calc(72px + 10px + var(--ab-safe-bottom))';
+const OPEN_ROOM = 'calc(72px + 74px + 10px + var(--ab-safe-bottom))';
 
 const rootScrollPadding = () =>
   document.documentElement.style.getPropertyValue('scroll-padding-bottom');
+const rootRoom = () => document.documentElement.style.getPropertyValue('--ab-bottom-nav-room');
 
 /** StrictMode, as `main.tsx` renders the app, so the effect runs, is cleaned up and runs again. */
 function renderStrict(ui: ReactNode) {
@@ -66,14 +70,28 @@ describe('BottomNav — the room the browser keeps for it when focus moves', () 
   it('sets the root scroll padding to the bar, its gap and the home indicator', () => {
     renderStrict(<BottomNav />);
 
-    expect(rootScrollPadding()).toBe('calc(72px + 10px + var(--ab-safe-bottom))');
+    expect(rootRoom()).toBe(CLOSED_ROOM);
+    expect(rootScrollPadding()).toBe('var(--ab-bottom-nav-room)');
   });
 
-  it('keeps the same room the shell reserves for the bar under the page', () => {
+  it('widens the room by the utility row while More is open, and narrows it on close', () => {
+    renderStrict(<BottomNav />);
+    const more = screen.getByRole('button', { name: 'More' });
+
+    fireEvent.click(more);
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(rootRoom()).toBe(OPEN_ROOM);
+    expect(rootScrollPadding()).toBe('var(--ab-bottom-nav-room)');
+
+    fireEvent.click(more);
+    expect(rootRoom()).toBe(CLOSED_ROOM);
+  });
+
+  it('has the shell reserve under the page the room the bar keeps, closed when it keeps none', () => {
     setViewportWidth(390);
     renderShell();
 
-    expect(rootScrollPadding()).toBe(shellReservation());
+    expect(shellReservation()).toBe(`var(--ab-bottom-nav-room, ${CLOSED_ROOM})`);
   });
 
   it('clears it when the bar unmounts', () => {
@@ -82,6 +100,7 @@ describe('BottomNav — the room the browser keeps for it when focus moves', () 
 
     unmount();
 
+    expect(rootRoom()).toBe('');
     expect(rootScrollPadding()).toBe('');
   });
 
@@ -94,6 +113,7 @@ describe('BottomNav — the room the browser keeps for it when focus moves', () 
 
     // The bar is gone: More lives only in it.
     expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
+    expect(rootRoom()).toBe('');
     expect(rootScrollPadding()).toBe('');
   });
 });
