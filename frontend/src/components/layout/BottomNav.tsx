@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { ChevronDown24Regular, ChevronUp24Regular, SignOut24Regular } from '@fluentui/react-icons';
@@ -280,6 +280,19 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
   const styles = useStyles();
   const [sheetOpen, setSheetOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // The browser scrolls a control that takes focus into view against the viewport's bottom edge,
+  // and this fixed bar covers that edge: a Tab could stop on a control wholly under it. Scroll
+  // padding on the root moves the edge up to the bar, by the room AppLayout's `mobileContent`
+  // keeps clear for it. An effect and not a stylesheet rule, because the bar is mounted exactly
+  // while it covers the page, so a desktop window carries none.
+  useLayoutEffect(() => {
+    const { style } = document.documentElement;
+    style.scrollPaddingBottom = `calc(${componentSizes.bottomNav.height} + 10px + ${safeArea.bottom})`;
+    return () => {
+      style.removeProperty('scroll-padding-bottom');
+    };
+  }, []);
 
   // Every control that navigates also closes the row — in its own handler, not in an effect on
   // pathname. `react-hooks/set-state-in-effect` forbids the effect version, and it is right to:
