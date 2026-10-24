@@ -28,16 +28,31 @@ const renderer = createDOMRenderer(typeof document === 'undefined' ? undefined :
  */
 const customStyleHooks = { useButtonStyles_unstable: useDisabledButtonEdge };
 
+/*
+  The provider paints the page's background (`colorNeutralBackground1`). Without a height it would
+  end where the content ends and leave the browser's canvas under a page shorter than the window,
+  such as About when signed out. `html`, `body` and `#root` are 100% tall (`index.css`), so 100%
+  here is the window's height, and a taller page still grows the provider with it.
+
+  An inline style and not a class, on purpose. Fluent hands the provider's className to every
+  portal (`applyStylesToPortals` is on by default), and a portal's mount node sits at the top of
+  the window, above everything (z-index 1000000), with the provider's background. With the height
+  in that class, every dialog, menu and toast laid one flat colour over the whole page. The style
+  prop reaches the provider's own element only. React writes it through the CSSOM, which the CSP's
+  `style-src` does not govern. One object, made once and not at each render.
+*/
+const providerStyle = { minHeight: '100%' };
+
 /**
  * Owns the preference and hands Fluent the matching theme.
  *
- * The attribute IS written on mount, and this used to say the opposite. The old reasoning — that
- * `public/theme-init.js` has already done it, so repeating the write would make the script look
- * optional — confused a documentation worry with a correctness one. The script stays load-bearing
- * because it runs BEFORE the paint; the mount write is a `useLayoutEffect` in `useThemePreference`
- * that costs one idempotent `setAttribute` and closes the case where the two disagree: the script
- * 404s, another tab wrote the preference in between, or nothing ran it at all. Without it Fluent
- * takes the stored preference while `<html>` keeps the old attribute, and the app renders two
+ * The document's theme IS written on mount, and this used to say the opposite. The old reasoning —
+ * that `public/theme-init.js` has already done it, so repeating the write would make the script
+ * look optional — confused a documentation worry with a correctness one. The script stays
+ * load-bearing because it runs BEFORE the paint; the mount write is a `useLayoutEffect` in
+ * `useThemePreference` that costs one idempotent write and closes the case where the two disagree:
+ * the script 404s, another tab wrote the preference in between, or nothing ran it at all. Without
+ * it Fluent takes the stored preference while `<html>` keeps the old theme, and the app renders two
  * themes at once with nothing to log.
  *
  * The two themes are the same objects `fluentTheme.ts` has exported since U1; dark has simply been
@@ -58,6 +73,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     <ThemeContext.Provider value={value}>
       <RendererProvider renderer={renderer}>
         <FluentProvider
+          style={providerStyle}
           theme={resolved === 'dark' ? azureBankDarkTheme : azureBankLightTheme}
           customStyleHooks_unstable={customStyleHooks}
         >

@@ -39,17 +39,28 @@ export function resolveTheme(preference: ThemePreference): ResolvedTheme {
 }
 
 /**
- * The single write. Both the attribute and the storage move together, so a reload cannot disagree
- * with what is on screen.
+ * Puts a theme on the document: the attribute the stylesheet's variables key on, and the colour
+ * scheme the browser draws its own parts from (scroll bars, its default focus ring, native popups).
+ * One function, so that the two are never written apart; `public/theme-init.js` writes the same
+ * two before the first paint.
+ */
+export function writeDocumentTheme(resolved: ResolvedTheme): void {
+  document.documentElement.setAttribute('data-theme', resolved);
+  document.documentElement.style.colorScheme = resolved;
+}
+
+/**
+ * The single write. The document's theme and the storage move together, so a reload cannot
+ * disagree with what is on screen.
  */
 export function applyTheme(preference: ThemePreference): ResolvedTheme {
   const resolved = resolveTheme(preference);
-  document.documentElement.setAttribute('data-theme', resolved);
+  writeDocumentTheme(resolved);
   try {
     localStorage.setItem(THEME_STORAGE_KEY, preference);
   } catch {
-    // Storage denied. The attribute is still set, so the choice holds for this page — it simply
-    // will not survive a reload, which is better than refusing to switch at all.
+    // Storage denied. The document's theme is still set, so the choice holds for this page — it
+    // simply will not survive a reload, which is better than refusing to switch at all.
   }
   return resolved;
 }
@@ -77,24 +88,24 @@ export function useThemePreference() {
    * Make the document agree with React, before the browser paints.
    *
    * `public/theme-init.js` has normally set this already, and the first version of this hook left it
-   * alone on that reasoning. That was a mistake: it optimised away one idempotent attribute write in
-   * exchange for a divergence with no detection. Three ways the two can disagree at mount —
+   * alone on that reasoning. That was a mistake: it optimised away one idempotent write in exchange
+   * for a divergence with no detection. Three ways the two can disagree at mount —
    *
    *  - the script never ran (a 404 behind a misconfigured static host, or any test harness);
    *  - ANOTHER TAB wrote the preference between the head script and this mount;
    *  - the stored value changed for any other reason in that window.
    *
-   * — and in all three Fluent takes the stored preference while `<html>` keeps the old attribute, so
+   * — and in all three Fluent takes the stored preference while `<html>` keeps the old theme, so
    * the custom properties and the component library render two different themes at once. There is no
    * error and nothing logs; it just looks broken.
    *
    * `useLayoutEffect`, not `useEffect`: a correction that lands after paint is a visible flicker,
-   * which is the thing the pre-paint script exists to avoid. Writing the attribute only — not
+   * which is the thing the pre-paint script exists to avoid. Writing the document only — not
    * `applyTheme` — because the value came FROM storage and writing it back would be a pointless
    * round trip that also has to be caught when storage is denied.
    */
   useLayoutEffect(() => {
-    document.documentElement.setAttribute('data-theme', resolved);
+    writeDocumentTheme(resolved);
   }, [resolved]);
 
   useEffect(() => {
