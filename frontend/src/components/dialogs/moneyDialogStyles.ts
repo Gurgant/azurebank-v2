@@ -1,6 +1,15 @@
 import { makeStyles, tokens } from '@fluentui/react-components';
 import { colors, transitions } from '../../theme/tokens';
 
+// The ring the app draws on a container that was given focus (`index.css`), for the paragraphs
+// below that take focus when their view appears. Without it the browser draws its own default.
+const landingRing = {
+  ':focus-visible': {
+    outline: `2px solid ${tokens.colorStrokeFocus2}`,
+    outlineOffset: '2px',
+  },
+};
+
 /**
  * The chrome and interior both money dialogs draw, in one place.
  *
@@ -272,8 +281,16 @@ export const useMoneyDialogStyles = makeStyles({
   },
   // The green for words (`success.dark`), so that this title stays the one of the transfer
   // pages, where the icon's green (`success.main`) was under 3 to 1 on the canvas. On the
-  // dialog's white it measured 3.06, which 24 px bold text passes by 0.06.
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
+  // dialog's white it measured 3.06, which 24 px bold text passes by 0.06. A `<p>` that takes
+  // focus when the receipt appears, as `outcomeSentence` does when its view appears: no margin,
+  // and the same ring.
+  successTitle: {
+    fontSize: '24px',
+    fontWeight: 700,
+    color: colors.semantic.success.dark,
+    margin: 0,
+    ...landingRing,
+  },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
@@ -298,11 +315,12 @@ export const useMoneyDialogStyles = makeStyles({
     textAlign: 'center',
     lineHeight: '1.3',
     margin: 0,
-    ':focus-visible': {
-      outline: `2px solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: '2px',
-    },
+    ...landingRing,
   },
+  // A replayed receipt's note takes the view's width and wraps inside it, reading from the start
+  // edge, as the step-up modal's refusal does. `centeredView` centres what it holds, and a
+  // centred bar is as wide as its one line: at 375 px its note ran past both edges of the dialog.
+  note: { alignSelf: 'stretch', textAlign: 'start' },
   detailsCard: {
     width: '100%',
     backgroundColor: colors.neutral[50],

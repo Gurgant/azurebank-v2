@@ -800,6 +800,97 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
   });
 });
 
+/*
+  The receipt replaces the PIN step, and the Withdraw button that sent was disabled for the send: a
+  browser hands its focus to `body`. The title takes that lost focus. DepositDialog's suite has
+  the reason.
+*/
+describe('withdraw — the receipt takes the focus the send lost', () => {
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  it('Enter on Withdraw leaves focus on the receipt’s title, read once, and Tab goes on to its first button', async () => {
+    /*
+      The answer is held until the dialog has drawn the send as pending. The receipt's View
+      Transaction is the same node as the Withdraw button, so with an answer back before React
+      draws the button disabled, focus would stay on it, a state no browser reaches.
+    */
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/withdraw', async () => {
+        await held;
+        return withdrawSuccessBody(1150.5);
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    screen.getByRole('button', { name: 'Withdraw €100.00' }).focus();
+    await userEvent.keyboard('{Enter}');
+    try {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+    } finally {
+      answer();
+    }
+
+    const title = await screen.findByText('Withdrawal Successful!');
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(title.tagName).toBe('P');
+    expect(title).toHaveAttribute('tabindex', '-1');
+    expect(title.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    const viewTransaction = screen.getByRole('button', { name: 'View Transaction' });
+    expect(viewTransaction).not.toHaveAttribute('aria-describedby');
+    expect(screen.getByRole('button', { name: 'Done' })).not.toHaveAttribute('aria-describedby');
+
+    await userEvent.tab();
+    expect(viewTransaction).toHaveFocus();
+  });
+
+  it('leaves focus where the visitor put it during the send', async () => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/withdraw', async () => {
+        await held;
+        return withdrawSuccessBody(1150.5);
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'Somewhere else';
+    document.body.append(elsewhere);
+    try {
+      elsewhere.focus();
+      expect(elsewhere).toHaveFocus();
+
+      answer();
+      const title = await screen.findByText('Withdrawal Successful!');
+      await settle();
+      expect(elsewhere).toHaveFocus();
+      expect(title).not.toHaveFocus();
+    } finally {
+      // The handler is parked on this promise: a failed assertion must not leave it hanging.
+      answer();
+      elsewhere.remove();
+    }
+  });
+});
+
 /**
  * The dialog has drawn what it made of the answer: the one send reached the server, and Close,
  * barred while the key was live, is back. True of every outcome that drops the key, so a test can
