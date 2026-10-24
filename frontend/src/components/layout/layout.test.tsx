@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
@@ -8,7 +9,9 @@ import { problem } from '../../mocks/problem';
 import { AppToaster } from '../feedback';
 import { seedMockSession } from '../../mocks/state';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
+import { setViewportWidth } from '../../test/viewport';
 import { apiSlice } from '../../features/api/apiSlice';
+import { AppLayout } from './AppLayout';
 import { ProtectedShell } from './ProtectedShell';
 
 /**
@@ -107,5 +110,46 @@ describe('ProtectedShell (app shell adoption)', () => {
     await waitFor(() => expect(screen.getByText(/service unavailable/i)).toBeInTheDocument());
     expect(screen.queryByText('LOGIN_PAGE')).not.toBeInTheDocument();
     expect(store.getState().auth.status).toBe('authenticated');
+  });
+});
+
+/** A field that holds what was typed in React state, as a dialog's amount does. */
+function TypedField() {
+  const [value, setValue] = useState('');
+  return (
+    <input aria-label="Amount" value={value} onChange={(event) => setValue(event.target.value)} />
+  );
+}
+
+describe('AppLayout across the 1024 px breakpoint', () => {
+  /**
+   * A tablet turned, or a window resized or split, moves the shell from the sidebar to the bottom
+   * bar and back. A page that remounted there would drop an open dialog, what was typed in it and
+   * where focus was; only the navigation may change places.
+   */
+  it('keeps the page, what was typed in it and its focus while the layout changes', () => {
+    setViewportWidth(1100);
+    renderWithProviders(
+      <AppLayout>
+        <TypedField />
+      </AppLayout>,
+    );
+    const field = screen.getByRole('textbox', { name: 'Amount' });
+    field.focus();
+    fireEvent.change(field, { target: { value: '7' } });
+
+    const kept = () => {
+      const now = screen.getByRole<HTMLInputElement>('textbox', { name: 'Amount' });
+      return { sameNode: now === field, value: now.value, focused: now === document.activeElement };
+    };
+
+    act(() => setViewportWidth(1000));
+    // Non-vacuity: the sidebar (an `aside`) is gone, so the phone layout was drawn.
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+    expect(kept()).toEqual({ sameNode: true, value: '7', focused: true });
+
+    act(() => setViewportWidth(1100));
+    expect(screen.getByRole('complementary')).toBeInTheDocument();
+    expect(kept()).toEqual({ sameNode: true, value: '7', focused: true });
   });
 });

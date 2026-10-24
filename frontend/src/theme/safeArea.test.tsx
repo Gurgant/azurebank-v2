@@ -145,7 +145,7 @@ describe('the shell with no bottom bar', () => {
       </AppLayout>,
     );
 
-    const content = container.querySelector('[data-testid="page"]')!.parentElement!;
+    const content = container.querySelector('[data-testid="page"]')!.closest('main')!;
     const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
 
     const applied = [...content.classList]
