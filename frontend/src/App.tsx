@@ -31,6 +31,7 @@ import {
   InternalTransferPage,
   SettingsPage,
   AboutPage,
+  NotFoundRoute,
 } from './pages';
 
 // ============================================
@@ -47,8 +48,8 @@ import {
  * `action`, no `fetcher` — the data layer stays RTK Query (ADR-0028).
  *
  * The route JSX is unchanged. `createRoutesFromElements` takes the same elements: the tree is flat
- * `<Route path element>` with no index routes and no descendant `<Routes>`, and both `<Navigate>`
- * uses are available in every mode.
+ * `<Route path element>` with no index routes and no descendant `<Routes>`, and the one `<Navigate>`
+ * route, /profile, is available in every mode.
  *
  * Built at MODULE scope because a router owns history subscriptions and its own state; constructing
  * it inside the component would rebuild the whole thing on every render and drop the current
@@ -186,8 +187,11 @@ const router = createBrowserRouter(
           }
         />
 
-        {/* Fallback - Redirect unknown routes to dashboard */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Every address no route above names: "Page not found", with the address left in the bar
+            and one way back, Home when signed in and sign-in otherwise. Shell-wrapped only when
+            signed in, as /about is, and held while the session is checked, as a guarded page is:
+            see NotFoundRoute. */}
+        <Route path="*" handle={{ title: 'Page not found' }} element={<NotFoundRoute />} />
       </>
     </Route>,
   ),

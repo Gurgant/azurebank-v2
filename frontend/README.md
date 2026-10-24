@@ -65,7 +65,7 @@ npm run test:e2e:demo       # the public demo in a browser, on the compose demo 
 ## Accessibility
 
 axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job:
-fifteen scans, over nine pages, the deposit dialog, the Change PIN dialog, the accounts page
+seventeen scans, over eleven pages, the deposit dialog, the Change PIN dialog, the accounts page
 while its read is slow (light, dark and 375 px wide) and the open leave prompt of a transfer. It
 fails that job on any serious or critical finding except colour contrast, which it only reports.
 Fluent's own focus sentinels, which axe flags as `aria-hidden-focus`, are excluded by a selector

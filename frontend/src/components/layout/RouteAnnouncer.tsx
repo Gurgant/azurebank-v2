@@ -86,7 +86,7 @@ export function RouteAnnouncer() {
   }, []);
 
   useEffect(() => {
-    // An untitled route is a redirect on its way somewhere titled (/profile, the * fallback).
+    // An untitled route is a redirect on its way somewhere titled (/profile, the only one).
     if (!title) return;
     routeTitle.current = title;
     const shown = standIn.current ?? title;

@@ -8,11 +8,12 @@ import { fieldContrast, textContrast } from './contrast';
  *
  * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
  * page it links to (not the transaction detail or PIN setup), the login and register pages without
- * a session (/about is public too, but is scanned here only inside the signed-in shell), the
- * deposit dialog, the Change PIN dialog, and /accounts while its read is slow (light, dark and
- * 375 px wide): fourteen scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans
- * are scoped to the dialog, so what the page behind it fails is not reported as the dialog's.
- * A fifteenth scan of this run is not in this file: the app's one hand-rolled dialog, open, in
+ * a session (/about is public too, but is scanned here only inside the signed-in shell), the page
+ * for an address that names no page with a session and without, the deposit dialog, the Change
+ * PIN dialog, and /accounts while its read is slow (light, dark and 375 px wide): sixteen scans,
+ * with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans are scoped to the dialog, so
+ * what the page behind it fails is not reported as the dialog's.
+ * A seventeenth scan of this run is not in this file: the app's one hand-rolled dialog, open, in
  * `confirmDialog.spec.ts`, where the run has it open.
  * Each scan writes its findings to `test-results/axe/<scan>.json` (a CI artifact)
  * and attaches them to the Playwright report, then FAILS on any serious or critical violation
@@ -23,7 +24,7 @@ import { fieldContrast, textContrast } from './contrast';
  * `./axeScan.ts`: `REPORT_ONLY_RULES` and the exclusion are there with it.
  *
  * What ALSO fails, so an empty or misdirected report cannot read as a clean one:
- * - a page that never became ready (each scan first waits for the page's h1 or form field);
+ * - a page that never became ready (each scan first waits for the page's h1, form field or link);
  * - a scan that landed somewhere else. An expired session is redirected to /login, which has an h1
  *   and passing rules of its own, so neither the ready wait nor the zero-passes check would notice;
  *   the path is asserted before axe runs;
@@ -57,6 +58,14 @@ const SIGNED_IN: Scan[] = [
   },
   { name: 'settings', path: '/settings', title: 'Settings · AzureBank', ready: heading(1) },
   { name: 'about', path: '/about', title: 'About this project · AzureBank', ready: heading(1) },
+  {
+    name: 'not-found',
+    path: '/no-such-page',
+    title: 'Page not found · AzureBank',
+    // The link to Home, which is drawn only once the session is known to be signed in, inside
+    // the shell: the one thing on the page that says which of its two views it is.
+    ready: link('Go to Home'),
+  },
 ];
 
 const PUBLIC: Scan[] = [
@@ -67,11 +76,23 @@ const PUBLIC: Scan[] = [
     title: 'Create Account · AzureBank',
     ready: labelled('Email'),
   },
+  {
+    name: 'not-found-signed-out',
+    path: '/no-such-page',
+    title: 'Page not found · AzureBank',
+    ready: heading(1),
+  },
 ];
 
 function heading(level: 1 | 2 | 3) {
   return async (page: Page) => {
     await expect(page.getByRole('heading', { level }).first()).toBeVisible();
+  };
+}
+
+function link(name: string) {
+  return async (page: Page) => {
+    await expect(page.getByRole('link', { name, exact: true })).toBeVisible();
   };
 }
 
@@ -593,7 +614,8 @@ test.describe('words that were too faint to read', () => {
 });
 
 test.describe('accessibility, signed out', () => {
-  // No session: login and register, reached as a visitor reaches them.
+  // No session: login, register and an address that names no page, reached as a visitor
+  // reaches them.
   test.use({ storageState: { cookies: [], origins: [] } });
 
   for (const { name, path, title, ready } of PUBLIC) {
