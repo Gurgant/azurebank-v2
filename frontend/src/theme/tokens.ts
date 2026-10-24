@@ -89,7 +89,10 @@ const lightColors = {
     200: '#E5E7EB', // Border light
     300: '#D1D5DB', // Border default
     400: '#9CA3AF', // Placeholder text
-    500: '#6B7280', // Secondary text
+    // Secondary text: the lightest grey of its hue that reads at 4.5:1 on every light ground it
+    // is drawn on — the card, the canvas, neutral[50] to [200], brand[120] and [130], and
+    // semantic.success.light. neutral[200] is the closest, at 4.52; `surfaces.test.ts` holds each.
+    500: '#626875',
     600: '#4B5563', // Tertiary text
     700: '#374151', // Primary text
     800: '#1F2937', // Heading text

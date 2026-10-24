@@ -69,7 +69,8 @@ const useStyles = makeStyles({
   // Variants
   primary: {
     backgroundColor: colors.brand[120],
-    color: colors.brand[60],
+    // brand[50]: the brand itself, brand[60], is under 4.5:1 on this tint in both themes.
+    color: colors.brand[50],
   },
   success: {
     backgroundColor: colors.semantic.success.light,

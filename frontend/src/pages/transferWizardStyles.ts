@@ -171,7 +171,10 @@ export const useTransferWizardStyles = makeStyles({
     background: 'none',
     border: 'none',
     cursor: 'pointer',
-    color: colors.brand[60],
+    // On the canvas, where brand[60] is 4.42:1 in the light theme. brand[70] is the hover shade:
+    // in light it is index 70 of `brandRamp.ts`, the one that file names for brand text on this
+    // ground (5.46:1), and in dark it reads 6.94:1 here.
+    color: colors.brand[70],
     fontSize: '14px',
     fontWeight: 500,
     padding: '8px',
