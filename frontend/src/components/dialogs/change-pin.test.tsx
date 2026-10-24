@@ -6,7 +6,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
-import { advance, fakeClockUser, installFakeClock } from '../../test/outage';
+import { advance, emulateFocusFixup, fakeClockUser, installFakeClock } from '../../test/outage';
 import { MOCK_USER, mockState, seedMockSession, type MockSessionUser } from '../../mocks/state';
 import { enableDemoMode } from '../../test/demoMode';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
@@ -243,6 +243,61 @@ describe('ChangePinDialog', () => {
       expect(box).toBeDisabled();
     }
     expect(mockState.pin).toBe(TEST_PIN);
+  });
+
+  /*
+    The press that sends disables the submit for the request, and a browser hands its focus to
+    `body`; jsdom does not, so `emulateFocusFixup` does it here (src/test/outage.ts). A view drawn
+    then has nothing focused in it, and an Escape on `body` reaches no dialog: in Chromium it
+    leaves the dialog open, and only Tab and a second Escape close it. So each view that follows
+    a send takes the focus that was lost.
+  */
+  it('after a change, puts focus on Done, and one Escape closes the dialog', async () => {
+    await renderSettings();
+    const opener = screen.getByRole('button', { name: 'Change PIN' });
+    const dialog = await openDialog();
+    await fillAll(TEST_PIN, '246802');
+
+    const stopEmulating = emulateFocusFixup();
+    try {
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
+
+      expect(await within(dialog).findByText('Your PIN has been changed.')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus(),
+      );
+
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      // useReturnFocus still gives focus back to the row that opened the dialog.
+      await waitFor(() => expect(opener).toHaveFocus());
+    } finally {
+      stopEmulating();
+    }
+  });
+
+  it('after the lock, puts focus on Cancel, and one Escape closes the dialog', async () => {
+    mockState.pinAttempts = 2;
+    await renderSettings();
+    const opener = screen.getByRole('button', { name: 'Change PIN' });
+    const dialog = await openDialog();
+    await fillAll('000000', '246802');
+
+    const stopEmulating = emulateFocusFixup();
+    try {
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
+
+      expect(await within(dialog).findByText('Too many incorrect PIN attempts.')).toBeVisible();
+      await waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus(),
+      );
+
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await waitFor(() => expect(opener).toHaveFocus());
+    } finally {
+      stopEmulating();
+    }
   });
 
   it('closes on Cancel without sending', async () => {
