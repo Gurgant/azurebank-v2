@@ -1,7 +1,10 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bffProblem } from '../mocks/problem';
 import { server } from '../mocks/server';
 import { mockState } from '../mocks/state';
+import { COPY } from '../test/outage';
 // Imported while the file is collected, which no time limit bounds: the first import of App
 // transforms every module of the app, and on a loaded machine that took longer than a hook's 60 s.
 // A test's own import, after the registry is emptied, then only evaluates the modules again.
@@ -84,5 +87,72 @@ describe('an address that names no page', () => {
     // because nothing was recorded. Nothing under /api is asked: it needs a session.
     expect(asked).toContain('/bff/auth/me');
     expect(asked.filter((path) => path.startsWith('/api/'))).toEqual([]);
+  });
+
+  it('while the session is checked, offers no way back, and then the one that is true', async () => {
+    // The check is held, so the page is drawn while the app cannot yet tell a signed-in visitor
+    // from a signed-out one. It then answers 401, and the visitor is known as anonymous.
+    let answer: (response: Response) => void = () => {};
+    server.use(
+      http.get(
+        '*/bff/auth/me',
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    );
+    const store = await openTheAddress();
+
+    expect(await screen.findByLabelText('Checking your session')).toBeInTheDocument();
+    expect(store.getState().auth.status).toBe('unknown');
+    expect(window.location.pathname).toBe(ADDRESS);
+    expect(screen.queryByRole('link', { name: 'Go to sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Go to Home' })).not.toBeInTheDocument();
+
+    answer(bffProblem({ status: 401, title: 'Unauthorized', detail: 'No session.' }));
+
+    await stayedOnTheAddress();
+    expect(await screen.findByRole('link', { name: 'Go to sign in' })).toHaveAttribute(
+      'href',
+      '/login',
+    );
+    expect(store.getState().auth.status).toBe('anonymous');
+    expect(screen.queryByLabelText('Checking your session')).not.toBeInTheDocument();
+  });
+
+  it('when the service cannot answer the check, says so instead of offering sign-in', async () => {
+    // A 500 is an answer that says nothing about the session, and it is not retried: the status
+    // stays 'unknown', over a session the visitor may well still have.
+    let down = true;
+    server.use(
+      http.get('*/bff/auth/me', () =>
+        down
+          ? bffProblem({ status: 500, title: 'Internal Server Error', detail: 'Broken.' })
+          : undefined,
+      ),
+    );
+    const store = await openTheAddress();
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle }),
+    ).toBeVisible();
+    expect(store.getState().auth.status).toBe('unknown');
+    expect(window.location.pathname).toBe(ADDRESS);
+    expect(screen.getByRole('alert')).toHaveTextContent(COPY.unavailable);
+    expect(screen.queryByRole('link', { name: 'Go to sign in' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Page not found' })).not.toBeInTheDocument();
+
+    // Back up: Try again finds the session, and the page is drawn in the shell with the way Home.
+    down = false;
+    fireEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
+
+    expect(await screen.findByRole('link', { name: 'Go to Home' })).toHaveAttribute(
+      'href',
+      '/dashboard',
+    );
+    await stayedOnTheAddress();
+    expect(store.getState().auth.status).toBe('authenticated');
+    expect(screen.getAllByRole('navigation', { name: 'Main navigation' })).not.toHaveLength(0);
   });
 });

@@ -31,7 +31,7 @@ import {
   InternalTransferPage,
   SettingsPage,
   AboutPage,
-  NotFoundPage,
+  NotFoundRoute,
 } from './pages';
 
 // ============================================
@@ -189,16 +189,9 @@ const router = createBrowserRouter(
 
         {/* Every address no route above names: "Page not found", with the address left in the bar
             and one way back, Home when signed in and sign-in otherwise. Shell-wrapped only when
-            signed in, as /about is. */}
-        <Route
-          path="*"
-          handle={{ title: 'Page not found' }}
-          element={
-            <ShellOrBare>
-              <NotFoundPage />
-            </ShellOrBare>
-          }
-        />
+            signed in, as /about is, and held while the session is checked, as a guarded page is:
+            see NotFoundRoute. */}
+        <Route path="*" handle={{ title: 'Page not found' }} element={<NotFoundRoute />} />
       </>
     </Route>,
   ),

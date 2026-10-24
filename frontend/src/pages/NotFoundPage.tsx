@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { useAppSelector } from '../app/hooks';
+import { ProtectedRoute, ShellOrBare } from '../components/layout';
 import { selectAuthStatus } from '../features/auth/authSlice';
 import { colors } from '../theme/tokens';
 
@@ -8,8 +9,8 @@ import { colors } from '../theme/tokens';
  * What an address that names no page shows: App.tsx gives it every such address.
  *
  * The address stays in the bar, so the visitor can see what was wrong with it, and the page offers
- * one way back. Signed in, it renders inside the app shell (`ShellOrBare`, at the route) and the
- * way back is Home. Signed out, it stands alone and the way back is the sign-in page, which is
+ * one way back. Signed in, it renders inside the app shell (`NotFoundRoute`, below) and the way
+ * back is Home. Signed out, it stands alone and the way back is the sign-in page, which is
  * where Home would send the visitor anyway.
  *
  * It reads the auth status and nothing else, and asks the server nothing: a visitor without a
@@ -43,6 +44,30 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
   },
 });
+
+/**
+ * The route's element: the page, once the session check has said whether there is a session.
+ *
+ * Until then the page cannot tell which way back is true, and a check the service could not answer
+ * leaves it that way (the auth slice moves to 'anonymous' only on a 4xx). Shown bare, it would offer
+ * sign-in to a visitor whose session may be alive, which reads as being signed out. So while the
+ * status is 'unknown' it waits behind `ProtectedRoute`, as a guarded page does: the check's spinner,
+ * then the page that says the service is unavailable and offers to try again. Once the status is
+ * known, `ShellOrBare` draws the page in the shell or alone.
+ */
+export function NotFoundRoute() {
+  const known = useAppSelector(selectAuthStatus) !== 'unknown';
+
+  return known ? (
+    <ShellOrBare>
+      <NotFoundPage />
+    </ShellOrBare>
+  ) : (
+    <ProtectedRoute>
+      <NotFoundPage />
+    </ProtectedRoute>
+  );
+}
 
 export function NotFoundPage() {
   const styles = useStyles();

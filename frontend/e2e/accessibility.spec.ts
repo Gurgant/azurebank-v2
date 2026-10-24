@@ -62,8 +62,8 @@ const SIGNED_IN: Scan[] = [
     name: 'not-found',
     path: '/no-such-page',
     title: 'Page not found · AzureBank',
-    // Not its h1: that is drawn bare, without the shell, while the session is still being read.
-    // The link to Home is drawn only once the session is known, inside the shell.
+    // The link to Home, which is drawn only once the session is known to be signed in, inside
+    // the shell: the one thing on the page that says which of its two views it is.
     ready: link('Go to Home'),
   },
 ];
