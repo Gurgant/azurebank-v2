@@ -47,7 +47,7 @@ public sealed class SeederPromptAndOptionProcessTests
 
         using var all = new AssertionScope();
         exitCode.Should().Be(0, "a question nobody answered is declined: nothing was done and nothing failed. "
-            + SeederProcess.Shown(output));
+            + ChildProcess.Shown(output));
         output.Should().Contain("WARNING: This will DELETE all data in the database!");
         output.Should().Contain("Are you sure you want to continue? (y/N): ");
         output.Should().Contain("Operation cancelled.");
@@ -64,7 +64,7 @@ public sealed class SeederPromptAndOptionProcessTests
         var (output, exitCode) = await SeederProcess.Run(["reset", "--confirm"], ALocalDatabaseThatIsNotThere);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(1, SeederProcess.Shown(output));
+        exitCode.Should().Be(1, ChildProcess.Shown(output));
         output.Should().NotContain("Are you sure you want to continue?", "--confirm is the answer");
         output.Should().Contain("reset failed");
     }
@@ -85,7 +85,7 @@ public sealed class SeederPromptAndOptionProcessTests
             ["migrate", "--wait-seconds", seconds], ALocalDatabaseThatIsNotThere);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(1, SeederProcess.Shown(output));
+        exitCode.Should().Be(1, ChildProcess.Shown(output));
         output.Should().Contain($"--wait-seconds must be between 0 and {MigrateCommand.LongestWaitSeconds}.");
         output.Should().NotContain("did not accept a connection", "the database was not waited for");
         (DateTime.UtcNow - started).Should().BeLessThan(TimeSpan.FromSeconds(30));

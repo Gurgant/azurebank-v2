@@ -87,7 +87,7 @@ public sealed class FailedStartupExitCodeTests
     private static async Task<(string Output, int ExitCode)> RunRefusingApi(
         string environment, params (string Name, string Value)[] extra)
     {
-        var start = new ProcessStartInfo(DotnetHost())
+        var start = new ProcessStartInfo(ChildProcess.DotnetHost())
         {
             WorkingDirectory = Path.Combine(BackendRoot().FullName, "src", "AzureBank.Api"),
             RedirectStandardOutput = true,
@@ -114,38 +114,13 @@ public sealed class FailedStartupExitCodeTests
             start.Environment[name] = value;
         }
 
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-
-        var exited = true;
-        using (var deadline = new CancellationTokenSource(Deadline))
-        {
-            try
-            {
-                await process.WaitForExitAsync(deadline.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-            }
-        }
-
-        var output = await stdout + await stderr;
+        var (output, exitCode, exited) = await ChildProcess.RunAsync(start, Deadline);
         exited.Should().BeTrue(
             $"a host that refuses to start ends within {Deadline.TotalSeconds}s, and one still " +
             "running STARTED, so the refusal under test never happened. Output:" +
             $"{Environment.NewLine}{output}");
-        return (output, process.ExitCode);
+        return (output, exitCode);
     }
-
-    /// <summary>The dotnet host the SDK exports as DOTNET_HOST_PATH, else the one on PATH.</summary>
-    private static string DotnetHost() =>
-        Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host
-            ? host
-            : "dotnet";
 
     /// <summary>Walks up from the test assembly to the directory holding the solution.</summary>
     private static DirectoryInfo BackendRoot()

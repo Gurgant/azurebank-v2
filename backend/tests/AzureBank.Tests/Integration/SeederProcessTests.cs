@@ -52,7 +52,7 @@ public sealed class SeederProcessTests
         var (output, exitCode) = await SeederProcess.Run(["--help"]);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(0, SeederProcess.Shown(output));
+        exitCode.Should().Be(0, ChildProcess.Shown(output));
         output.Should().Contain("migrate").And.Contain("seed").And.Contain("reset")
             .And.Contain("seed-pool").And.Contain("recycle");
         output.Should().NotContain("Unhandled exception");
@@ -72,7 +72,7 @@ public sealed class SeederProcessTests
             ("Database__MaxRetryCount", "0"));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        exitCode.Should().Be(2, ChildProcess.Shown(output));
         output.Should().Contain($"{command} refused: Demo:Enabled is not true");
         output.Should().Contain("Nothing was opened");
         output.Should().NotContain("Unhandled exception");
@@ -91,7 +91,7 @@ public sealed class SeederProcessTests
             ("Demo__Enabled", "canary-value-7f3a"));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        exitCode.Should().Be(2, ChildProcess.Shown(output));
         output.Should().Contain("recycle refused: Demo:Enabled holds a value that cannot be read as Boolean.");
         output.Should().Contain("Nothing was opened");
         output.Should().NotContain("canary");
@@ -104,7 +104,7 @@ public sealed class SeederProcessTests
         var (output, exitCode) = await SeederProcess.Run([]);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(1, SeederProcess.Shown(output));
+        exitCode.Should().Be(1, ChildProcess.Shown(output));
         output.Should().Contain("Required command was not provided.");
         output.Should().NotContain("Unhandled exception");
     }
@@ -118,7 +118,7 @@ public sealed class SeederProcessTests
             arguments, ("ConnectionStrings__DefaultConnection", AzureConnection));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        exitCode.Should().Be(2, ChildProcess.Shown(output));
         output.Should().Contain($"{arguments[0]} refused: not_a_server.database.windows.net is an Azure SQL server");
         output.Should().Contain("Nothing was opened");
         output.Should().NotContain("Unhandled exception");
@@ -132,7 +132,7 @@ public sealed class SeederProcessTests
         var (output, exitCode) = await SeederProcess.Run(["migrate"]);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(2, SeederProcess.Shown(output));
+        exitCode.Should().Be(2, ChildProcess.Shown(output));
         output.Should().Contain("migrate refused").And.Contain("ConnectionStrings__DefaultConnection");
         output.Should().NotContain("Unhandled exception");
     }
@@ -150,7 +150,7 @@ public sealed class SeederProcessTests
             ("ConnectionStrings__DefaultConnection", "Server=127.0.0.1,1;Database=x;User Id=u;Password=not-a-secret;Connect Timeout=1"));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(1, SeederProcess.Shown(output));
+        exitCode.Should().Be(1, ChildProcess.Shown(output));
         output.Should().Contain("pool 5, pool blocking", "the 5 is in the appsettings.json beside the dll, and nowhere else");
         output.Should().Contain("did not accept a connection within 0 s");
         output.Should().NotContain("Unhandled exception");
@@ -210,7 +210,7 @@ public sealed class SeederProcessSqlServerTests : IDisposable
             ["migrate"], _folder, ("ConnectionStrings__DefaultConnection", _connectionString));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(0, SeederProcess.Shown(output));
+        exitCode.Should().Be(0, ChildProcess.Shown(output));
         output.Should().Contain($"pool {expected.MaxPoolSize}, pool blocking");
         output.Should().Contain("Applying migration '", "EF's own line is the record of what this run applied");
         output.Should().Contain("The database is at ");
@@ -234,13 +234,13 @@ public sealed class SeederProcessSqlServerTests : IDisposable
         ];
 
         var (migrated, migrateExit) = await SeederProcess.Run(["migrate"], demo);
-        migrateExit.Should().Be(0, "ARRANGE: the database is migrated. " + SeederProcess.Shown(migrated));
+        migrateExit.Should().Be(0, "ARRANGE: the database is migrated. " + ChildProcess.Shown(migrated));
 
         // One free copy, by the number on the command line.
         var (seeded, seedExit) = await SeederProcess.Run(["seed-pool", "1"], demo);
         using (new AssertionScope())
         {
-            seedExit.Should().Be(0, SeederProcess.Shown(seeded));
+            seedExit.Should().Be(0, ChildProcess.Shown(seeded));
             seeded.Should().Contain("pool: free=1 was=0 ").And.Contain(" seeded=1 ").And.Contain("result=PoolOk");
         }
 
@@ -248,7 +248,7 @@ public sealed class SeederProcessSqlServerTests : IDisposable
         var (recycled, recycleExit) = await SeederProcess.Run(["recycle"], demo);
 
         using var all = new AssertionScope();
-        recycleExit.Should().Be(10, SeederProcess.Shown(recycled));
+        recycleExit.Should().Be(10, ChildProcess.Shown(recycled));
         recycled.Should().Contain("pool: free=2 was=1 ").And.Contain(" seeded=1 ").And.Contain("result=PoolLow");
         recycled.Should().NotContain("Unhandled exception");
     }
@@ -266,14 +266,17 @@ internal static class SeederProcess
     public static async Task<(string Output, int ExitCode)> Run(
         string[] arguments, string workingDirectory, params (string Name, string Value)[] environment)
     {
-        var dll = Dll();
+        var dll = ChildProcess.ToolDll("AzureBank.Seeder", "azurebank-seeder.dll");
         File.Exists(dll).Should().BeTrue($"the Seeder is built with the test project, into {dll}");
 
-        var start = new ProcessStartInfo(DotnetHost())
+        var start = new ProcessStartInfo(ChildProcess.DotnetHost())
         {
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+
+            // No terminal behind it, as in a container: RunAsync closes a redirected input at once, so a
+            // prompt reads end-of-input instead of waiting.
             RedirectStandardInput = true,
             UseShellExecute = false,
         };
@@ -299,54 +302,8 @@ internal static class SeederProcess
             start.Environment[name] = value;
         }
 
-        using var process = Process.Start(start)!;
-
-        // No terminal behind it, as in a container: a prompt reads end-of-input instead of waiting.
-        process.StandardInput.Close();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-
-        var exited = true;
-        using (var deadline = new CancellationTokenSource(Deadline))
-        {
-            try
-            {
-                await process.WaitForExitAsync(deadline.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-            }
-        }
-
-        var output = await stdout + await stderr;
-        exited.Should().BeTrue($"a one-shot ends within {Deadline.TotalSeconds} s. {Shown(output)}");
-        return (output, process.ExitCode);
+        var (output, exitCode, exited) = await ChildProcess.RunAsync(start, Deadline);
+        exited.Should().BeTrue($"a one-shot ends within {Deadline.TotalSeconds} s. {ChildProcess.Shown(output)}");
+        return (output, exitCode);
     }
-
-    /// <summary>The output as a reason for an assertion, with the braces its formatter would read escaped.</summary>
-    public static string Shown(string output) =>
-        "the process printed:" + Environment.NewLine + output.Replace("{", "{{").Replace("}", "}}");
-
-    /// <summary>
-    /// <c>azurebank-seeder.dll</c> in the Seeder's own output folder, for the configuration this
-    /// test assembly was built in (its own folder is <c>…/bin/&lt;configuration&gt;/net10.0/</c>).
-    /// </summary>
-    private static string Dll()
-    {
-        var own = new DirectoryInfo(
-            AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var framework = own.Name;
-        var configuration = own.Parent!.Name;
-        return Path.Combine(
-            SeederHost.RepoRoot(), "backend", "tools", "AzureBank.Seeder", "bin", configuration, framework, "azurebank-seeder.dll");
-    }
-
-    /// <summary>The dotnet host the SDK exports as DOTNET_HOST_PATH, else the one on PATH.</summary>
-    private static string DotnetHost() =>
-        Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host
-            ? host
-            : "dotnet";
 }

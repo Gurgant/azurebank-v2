@@ -74,7 +74,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
         var (output, exitCode) = await VerifierProcess.Run(["--help"]);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(0, VerifierProcess.Shown(output));
+        exitCode.Should().Be(0, ChildProcess.Shown(output));
         output.Should().Contain("verify").And.Contain("anchor").And.Contain("export")
             .And.Contain("evidence").And.Contain("notify");
         output.Should().NotContain("CANNOT VERIFY", "a tool that is not configured can still say what it is");
@@ -103,7 +103,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
         var (output, exitCode) = await VerifierProcess.Run(arguments, UsableKeys);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(4, "a job that reads 1 takes a typing mistake for a tampered trail. " + VerifierProcess.Shown(output));
+        exitCode.Should().Be(4, "a job that reads 1 takes a typing mistake for a tampered trail. " + ChildProcess.Shown(output));
         output.Should().Contain(said);
         output.Should().NotContain("Unhandled exception");
     }
@@ -119,7 +119,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
             [command], ("ConnectionStrings__DefaultConnection", AbsentServer));
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(3, VerifierProcess.Shown(output));
+        exitCode.Should().Be(3, ChildProcess.Shown(output));
         output.Should().Contain(said);
         output.Should().Contain("Audit:ChainKey must be configured").And.Contain("Audit:AnchorKey must be configured");
         output.Should().NotContain("could not be read");
@@ -133,7 +133,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
         var (output, exitCode) = await VerifierProcess.Run(["verify"], UsableKeys);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(3, VerifierProcess.Shown(output));
+        exitCode.Should().Be(3, ChildProcess.Shown(output));
         output.Should().Contain("CANNOT VERIFY: the audit store could not be read, so there is no verdict.");
         output.Should().Contain("SqlException: ");
         output.Should().NotContain("   at ", "the operator gets a sentence, not a stack trace");
@@ -147,7 +147,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
         var (output, exitCode) = await VerifierProcess.Run(["evidence", "   "], UsableKeys);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(4, VerifierProcess.Shown(output));
+        exitCode.Should().Be(4, ChildProcess.Shown(output));
         output.Should().Contain("NOT ASSEMBLED: that is not a transaction number.");
     }
 
@@ -162,7 +162,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
         var (output, exitCode) = await VerifierProcess.Run(["export", path], UsableKeys);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(6, VerifierProcess.Shown(output));
+        exitCode.Should().Be(6, ChildProcess.Shown(output));
         output.Should().Contain("already exists, and this will not overwrite it.");
         ComparableText.Of(await File.ReadAllTextAsync(path)).Should().Be(ComparableText.Of(earlier));
     }
@@ -176,7 +176,7 @@ public sealed class AuditVerifierProcessTests : IDisposable
             ["notify", missing, "--contact", "security@your-bank.example"], UsableKeys);
 
         using var all = new AssertionScope();
-        exitCode.Should().Be(4, VerifierProcess.Shown(output));
+        exitCode.Should().Be(4, ChildProcess.Shown(output));
         output.Should().Contain("is not an existing directory.");
         Directory.Exists(missing).Should().BeFalse("a spool of addresses lands only where somebody meant it to");
     }
@@ -249,7 +249,7 @@ public sealed class AuditVerifierProcessSqlServerTests : IDisposable
 
         // An empty table is not an intact one: 2, and the job that reads it is told so.
         var (empty, emptyExit) = await VerifierProcess.Run(["verify"], configured);
-        emptyExit.Should().Be(2, VerifierProcess.Shown(empty));
+        emptyExit.Should().Be(2, ChildProcess.Shown(empty));
 
         await using (var db = Context())
         {
@@ -275,11 +275,11 @@ public sealed class AuditVerifierProcessSqlServerTests : IDisposable
 
         using (new AssertionScope())
         {
-            intactExit.Should().Be(0, VerifierProcess.Shown(intact));
+            intactExit.Should().Be(0, ChildProcess.Shown(intact));
             intact.Should().Contain("3 rows");
-            anchoredExit.Should().Be(0, VerifierProcess.Shown(anchored));
+            anchoredExit.Should().Be(0, ChildProcess.Shown(anchored));
             anchored.Should().Contain("ANCHOR 1 recorded.");
-            exportedExit.Should().Be(0, VerifierProcess.Shown(exported));
+            exportedExit.Should().Be(0, ChildProcess.Shown(exported));
             File.Exists(copy).Should().BeTrue();
         }
 
@@ -296,9 +296,9 @@ public sealed class AuditVerifierProcessSqlServerTests : IDisposable
         var (marker, markerExit) = await VerifierProcess.Run(["anchor"], configured);
 
         using var all = new AssertionScope();
-        brokenExit.Should().Be(1, "a rewritten row is the one answer a job must be able to tell from every other. " + VerifierProcess.Shown(broken));
+        brokenExit.Should().Be(1, "a rewritten row is the one answer a job must be able to tell from every other. " + ChildProcess.Shown(broken));
         broken.Should().Contain("BROKEN");
-        markerExit.Should().Be(1, "anchor records that it ran, and the verdict about the chain is still the verdict. " + VerifierProcess.Shown(marker));
+        markerExit.Should().Be(1, "anchor records that it ran, and the verdict about the chain is still the verdict. " + ChildProcess.Shown(marker));
         marker.Should().Contain("GAP MARKER 2 recorded");
     }
 }
@@ -315,14 +315,16 @@ internal static class VerifierProcess
     public static async Task<(string Output, int ExitCode)> Run(
         string[] arguments, params (string Name, string Value)[] environment)
     {
-        var dll = Dll();
+        var dll = ChildProcess.ToolDll("AzureBank.AuditVerifier", "azurebank-audit-verifier.dll");
         File.Exists(dll).Should().BeTrue($"the verifier is built with the test project, into {dll}");
 
-        var start = new ProcessStartInfo(DotnetHost())
+        var start = new ProcessStartInfo(ChildProcess.DotnetHost())
         {
             WorkingDirectory = Path.GetTempPath(),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+
+            // No terminal behind it, as under a job runner: RunAsync closes a redirected input at once.
             RedirectStandardInput = true,
             UseShellExecute = false,
         };
@@ -348,56 +350,8 @@ internal static class VerifierProcess
             start.Environment[name] = value;
         }
 
-        using var process = Process.Start(start)!;
-
-        // No terminal behind it, as under a job runner.
-        process.StandardInput.Close();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-
-        var exited = true;
-        using (var deadline = new CancellationTokenSource(Deadline))
-        {
-            try
-            {
-                await process.WaitForExitAsync(deadline.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-            }
-        }
-
-        var output = await stdout + await stderr;
-        exited.Should().BeTrue($"a one-shot ends within {Deadline.TotalSeconds} s. {Shown(output)}");
-        return (output, process.ExitCode);
+        var (output, exitCode, exited) = await ChildProcess.RunAsync(start, Deadline);
+        exited.Should().BeTrue($"a one-shot ends within {Deadline.TotalSeconds} s. {ChildProcess.Shown(output)}");
+        return (output, exitCode);
     }
-
-    /// <summary>The output as a reason for an assertion, with the braces its formatter would read escaped.</summary>
-    public static string Shown(string output) =>
-        "the process printed:" + Environment.NewLine + output.Replace("{", "{{").Replace("}", "}}");
-
-    /// <summary>
-    /// <c>azurebank-audit-verifier.dll</c> in the verifier's own output folder, for the
-    /// configuration this test assembly was built in (its own folder is
-    /// <c>…/bin/&lt;configuration&gt;/net10.0/</c>).
-    /// </summary>
-    private static string Dll()
-    {
-        var own = new DirectoryInfo(
-            AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var framework = own.Name;
-        var configuration = own.Parent!.Name;
-        return Path.Combine(
-            SeederHost.RepoRoot(), "backend", "tools", "AzureBank.AuditVerifier", "bin", configuration, framework,
-            "azurebank-audit-verifier.dll");
-    }
-
-    /// <summary>The dotnet host the SDK exports as DOTNET_HOST_PATH, else the one on PATH.</summary>
-    private static string DotnetHost() =>
-        Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host
-            ? host
-            : "dotnet";
 }
