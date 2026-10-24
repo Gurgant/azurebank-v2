@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -45,11 +45,6 @@ import { InternalTransferPage } from './InternalTransferPage';
  * Sends are recorded by header rather than inferred from the screen: the same key and the same
  * authorisation on the retry are the whole safety property.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 function renderTransfer() {
   return renderWithProviders(

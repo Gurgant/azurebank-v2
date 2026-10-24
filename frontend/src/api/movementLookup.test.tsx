@@ -2,7 +2,7 @@ import type { PropsWithChildren } from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { serviceUnavailable } from '../mocks/problem';
 import { mockState } from '../mocks/state';
@@ -18,10 +18,6 @@ import type { MovementLookupArg } from './movementByKey';
  * Asserted at the store, as `policies.test.tsx` asserts what a lost answer does to the cache, with
  * a reader of each list mounted: a refetch needs a reader to have anything to refetch.
  */
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 const MAIN = mockState.accounts[0].id;
 const HISTORY = { page: 1, pageSize: 20 };

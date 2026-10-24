@@ -1,7 +1,7 @@
 import type { PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { serviceUnavailable } from '../mocks/problem';
 import { mockState } from '../mocks/state';
 import { makeTestStore } from '../test/renderWithProviders';
@@ -20,10 +20,6 @@ import { useMovementCheck, type MovementTargets } from './useMovementCheck';
  * which the app renders in; that an answer about a copy no longer held says nothing; and that the
  * ask it makes by itself at the bound is one ask, not a loop.
  */
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 const MAIN = mockState.accounts[0].id;
 

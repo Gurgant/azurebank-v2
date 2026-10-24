@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { MOCK_PASSWORD, MOCK_USER } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -25,11 +25,6 @@ import { RegisterPage } from './RegisterPage';
  * in a polite region of their own; there is no "Stop waiting", because a sign-in or a
  * registration the server may already be doing cannot be taken back by the page.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 async function signIn() {
   renderWithProviders(

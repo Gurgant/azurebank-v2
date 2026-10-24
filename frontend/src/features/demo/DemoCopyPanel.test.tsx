@@ -64,7 +64,6 @@ type KeptCopy = Parameters<typeof rememberDemoCopy>[0];
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   // A test that made storage refuse a call puts it back itself; one that failed before that line
   // would hand its refusal to every test after it.
   vi.restoreAllMocks();

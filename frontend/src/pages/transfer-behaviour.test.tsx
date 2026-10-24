@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TEST_PIN, confirmWithPin } from '../test/pinFlow';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
@@ -108,12 +108,6 @@ async function externalToReview() {
   await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
 }
-
-// Unmount first, then restore the clock: withdraw.test.tsx has the reason.
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 describe('money flows — the behaviour the unification must preserve', () => {
   describe('RESULT_UNKNOWN: the screen that stands between a user and a double-spend', () => {

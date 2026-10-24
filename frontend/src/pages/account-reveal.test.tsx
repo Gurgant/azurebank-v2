@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
 import { mockState, seedMockSession } from '../mocks/state';
@@ -30,10 +30,6 @@ beforeEach(() => {
   // Every scenario starts un-elevated (level 1); the elevated cases opt in explicitly. Pinning it
   // here keeps each test independent of ordering and of the global reset's timing.
   mockState.authLevel = 1;
-});
-
-afterEach(() => {
-  vi.useRealTimers();
 });
 
 /*

@@ -177,6 +177,12 @@ afterEach(() => {
     later auto-cleanup becomes a no-op either way.
   */
   cleanup();
+  // Then the real clock, and only now: a timer created on the fake clock has to be cancelled
+  // on the fake clock. A tree unmounted after the restore hands a fake interval id to the real
+  // `clearInterval`, which cancels nothing, and the interval goes on setting state in the next
+  // test, where the console.error gate in this file reports it as act(...) warnings. A file's
+  // own `afterEach` runs before this one, so a file that restores the clock itself unmounts first.
+  vi.useRealTimers();
   server.resetHandlers();
   resetMockState();
   // Module-level client mirror of LastActivity — never let it leak between tests.

@@ -1,6 +1,6 @@
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
 import { Route, Routes } from 'react-router-dom';
 import { server } from '../mocks/server';
@@ -9,21 +9,6 @@ import { seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
-
-/*
-  UNMOUNT FIRST, then restore the clock — the order is load-bearing and cost a debugging round.
-
-  Vitest runs afterEach hooks in reverse registration order, so this file's hook runs BEFORE the
-  `cleanup()` in `test/setup.ts`. Restoring real timers here first left the countdown still mounted
-  with a live FAKE interval; its unmount then called `clearInterval` with a fake id against the real
-  implementation, so the interval was never cancelled and kept firing setState into the NEXT test —
-  which the console.error gate caught as act(...) violations, and only when the whole file ran.
-  `cleanup()` is idempotent, so calling it here and again in setup.ts is free.
-*/
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 /**
  * The PIN step's RECOVERY behaviour — the half of ADR-0041 that had no test at all.

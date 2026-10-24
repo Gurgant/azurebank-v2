@@ -29,3 +29,16 @@ it('primes the hooks (they run after this test, not before it)', () => {
 it('runs afterEach in REVERSE registration order, so registering first runs last', () => {
   expect(order).toEqual(['registered-second', 'registered-first']);
 });
+
+/*
+  `setup.ts` puts the real clock back after every test, so no file has to. The first test leaves
+  the clock fake on purpose; the next one must find it real.
+*/
+it('leaves the clock fake at the end of a test', () => {
+  vi.useFakeTimers();
+  expect(vi.isFakeTimers()).toBe(true);
+});
+
+it('starts the next test on the real clock, which setup.ts put back', () => {
+  expect(vi.isFakeTimers()).toBe(false);
+});

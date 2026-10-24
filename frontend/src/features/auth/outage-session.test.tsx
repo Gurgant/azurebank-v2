@@ -6,10 +6,10 @@ import {
   RouterProvider,
   Routes,
 } from 'react-router-dom';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { bffProblem, problem, serviceUnavailable } from '../../mocks/problem';
 import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../../mocks/state';
@@ -52,11 +52,6 @@ import { StepUpModal } from './StepUpModal';
  * sign-in page); and a read that times out while signed in (nothing happens to the session).
  * Beside them, the guards that must not move: a real 401, a 4xx at boot, the expiry at 0:00.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 const INACTIVITY_WINDOW_MS = 3 * 60_000;
 

@@ -61,10 +61,6 @@ const dialog = () => screen.queryByRole('alertdialog');
 const countdownText = () => screen.getByRole('alertdialog').textContent ?? '';
 
 describe('SessionExpiryWarning', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('says nothing while the deadline is far away', async () => {
     const store = await boot();
     vi.useFakeTimers({ shouldAdvanceTime: true });
