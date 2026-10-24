@@ -96,8 +96,8 @@ export function MoneyDialogShell({
         // The press that closes nothing must take nothing either. A mouse press on the backdrop
         // moves focus to `body`, and from there Escape reaches no dialog: measured in Chromium,
         // the view stayed and Escape no longer closed it. Refusing the press's default keeps focus
-        // where it was: on the went-through sentence, or on whatever the visitor had reached in
-        // the check view, which lands no focus of its own.
+        // where it was: on the went-through sentence or the check view's title, where each view
+        // puts lost focus, or on whatever the visitor has reached since.
         backdrop={
           keepOnOutsidePress ? { onMouseDown: (event) => event.preventDefault() } : undefined
         }

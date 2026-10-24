@@ -594,9 +594,9 @@ describe('deposit — the server says it went through', () => {
     expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(screen.queryByText(COPY.depositWentThrough)).not.toBeInTheDocument();
     expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
-    // This view lands no focus. The test puts it on an action, as a visitor who has reached one
-    // has: their own place. (In Chromium, Tab from `body` after a press on the backdrop went to
-    // Close, measured; jsdom is not asked where a Tab goes.)
+    // This view puts lost focus on its title. The test moves it to an action, as a visitor who
+    // has reached one has: their own place. (In Chromium one Tab from the title went to "Check
+    // again", measured against the mock dev server; jsdom is not asked where a Tab goes.)
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
     checkTransactions.focus();
 
@@ -1089,11 +1089,12 @@ describe('deposit — the listing by key after a lost answer', () => {
     await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
     expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
     const checkTransactions = screen.getByRole('button', { name: 'Check recent transactions' });
-    // Where the send left focus (`emulateFocusFixup`).
-    expect(document.body).toHaveFocus();
+    // The send left focus on `body` (`emulateFocusFixup`), and the view's title took it.
+    const title = screen.getByText("We couldn't confirm your deposit");
+    expect(title).toHaveFocus();
 
     await user.click(checkTransactions);
-    expect(document.body).toHaveFocus();
+    expect(title).toHaveFocus();
     expect(screen.queryByText('HISTORY PAGE')).not.toBeInTheDocument();
 
     // After the wait, the press takes focus as a press does, and its click acts.
@@ -1218,9 +1219,10 @@ describe('deposit — the listing by key after a lost answer', () => {
 
   it('drops a key pressed on the button an answer gave focus to, until the view has settled', async () => {
     /*
-      The view lands no focus when it appears, but an ask lands it on the view's first button once
-      the answer is drawn, and that can be another button than the one the key was meant for:
-      "Check again", focused, gives way at the bound to "Check recent transactions".
+      The view lands focus on its title when it appears, which is no button, but an ask lands it
+      on the view's first button once the answer is drawn, and that can be another button than
+      the one the key was meant for: "Check again", focused, gives way at the bound to "Check
+      recent transactions".
     */
     let sentAt = 0;
     server.use(

@@ -3,6 +3,7 @@ import { Warning24Regular } from '@fluentui/react-icons';
 import { PageHeader } from '../layout';
 import { useTransferWizardStyles } from '../../pages/transferWizardStyles';
 import { CHECK_AGAIN } from '../../api/problemMessages';
+import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import type { MovementCheck } from '../../hooks/useMovementCheck';
 import { useSettledPress } from '../../hooks/useSettledPress';
 import { MovementCheckStatus } from './MovementCheckStatus';
@@ -26,6 +27,13 @@ import { MovementCheckStatus } from './MovementCheckStatus';
  * never decides a destination — which is why moving this view here cannot quietly change what
  * "start over" means. `onStartOver` in particular must re-arm the idempotency intent, and only the
  * owning flow's wizard can do that.
+ *
+ * **Focus lands on its title so that it is read.** The PIN boxes are disabled during the send and
+ * gone with their step when this view mounts, so focus is on `body`, and a screen reader would
+ * say nothing. The title takes that lost focus (`useFocusWhenLost`), as `WentThroughView`'s
+ * sentence does, and for the same reasons it is a paragraph in no alert, status or live region,
+ * and describes no button. It lands before the listing by key has answered: each verdict is said
+ * by the status region of `MovementCheckStatus`.
  */
 export interface ResultUnknownViewProps {
   /** The flow's own header title, so the user does not appear to have changed screens. */
@@ -60,6 +68,8 @@ export function ResultUnknownView({
   const asking = check !== undefined && check.verdict !== 'off';
   const landing = check?.landingRef;
   const fullWidth = { width: '100%', height: '48px' };
+  // Mounted to be shown, so it is on screen from the first render.
+  const titleRef = useFocusWhenLost<HTMLParagraphElement>(true);
   // A press on the actions waits until what the view draws has settled, as in the money dialogs:
   // each verdict, and the new-key action at the bound, moves its buttons (`useSettledPress`).
   // "Start over" takes this view away and brings back the form step, whose account cards, quick
@@ -104,7 +114,9 @@ export function ResultUnknownView({
           <div className={styles.warningIcon}>
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
-          <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
+          <Text as="p" className={styles.outcomeSentence} ref={titleRef} tabIndex={-1}>
+            We couldn&apos;t confirm your transfer
+          </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}
           {check?.verdict !== 'none' && (

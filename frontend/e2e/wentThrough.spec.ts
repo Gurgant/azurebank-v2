@@ -543,8 +543,11 @@ test.describe('a payment the server says went through', () => {
     So the view's actions drop a press for 500 ms after the view appears and after each change of
     what it draws (`useSettledPress`), and what is under the point no longer decides. With that,
     at 360×800, 375×640 and 320×568, the dialog stayed, the address did not change and one
-    deposit was sent; focus stayed on `body`, where the send had left it, at 360×800 and
-    375×640, and went to the dialog itself at 320×568.
+    deposit was sent. Focus is on the view's title from the moment the view appears: the send
+    leaves it on `body`, and the title takes it from there (`useFocusWhenLost`). Measured against
+    the mock dev server on 2026-10-23, with the send answered in the page: the second press left
+    it on the title at 360×800 and 375×640, and gave it to the dialog itself at 320×568, where
+    the press is in the view's words.
 
     Each test below waits for "not yet" and presses four times. First where Deposit was, as
     soon as "not yet" is said, as the second press of a double click comes: that press must

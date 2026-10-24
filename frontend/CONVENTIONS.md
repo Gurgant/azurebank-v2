@@ -102,16 +102,18 @@ that started it, never as a page-level overlay.
   ask at the bound when focus was on the view's first button: that ask disables "Check again".
   Either lands on the view's first button as it is once the answer is drawn.
 
-**The view that says a send went through with no receipt puts lost focus on its sentence.** The
-control that sent is disabled during the send, so the view appears with focus on `body`, and a
-view that mounts with its words in it is not announced. The sentence is a `<Text as="p">` with
-`tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. It is not a live region, an alert or
-a status as well, and no button's `aria-describedby` points at it: each would say the sentence a
-second time. `WentThroughView` does this on the two transfer pages, and the same block in the
-deposit and withdrawal dialogs, where the action carries a `key` so that it is a new node and
-the dialog passes `keepOnOutsidePress`: a press outside closes nothing, the X and Escape do.
-The actions of that view and of the check view, in the dialogs and on the transfer pages, drop a
-press, a key's included, for 500 ms after the view appears and after each change of what it
+**The view that says a send went through with no receipt puts lost focus on its sentence, and
+the check view on its title.** The control that sent is disabled during the send, so either view
+appears with focus on `body`, and a view that mounts with its words in it is not announced. The
+sentence, and the title "We couldn't confirm your …", are each a `<Text as="p">` with
+`tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. Neither is a live region, an alert or
+a status as well, and no button's `aria-describedby` points at either: each would say the words
+a second time. `WentThroughView` and `ResultUnknownView` do this on the two transfer pages, and
+the same blocks in the deposit and withdrawal dialogs, where the went-through view's action
+carries a `key` so that it is a new node, and the dialog passes `keepOnOutsidePress` under both
+views: a press outside closes nothing, the X and Escape do. From the title Escape closes the dialog,
+as from anywhere inside it. The actions of both views, in the dialogs and on the transfer pages,
+drop a press, a key's included, for 500 ms after the view appears and after each change of what it
 draws: of its verdict and what that offers, of the size of the actions, of the box that holds them
 or of a box beside them, of the viewport where that moves the actions, or of where the actions
 are when the press comes. They stay enabled and named meanwhile, and a dropped press takes no
@@ -123,12 +125,12 @@ deposit's Deposit sends what they hold, and the withdrawal's Continue and the tr
 Review Transfer lead to confirming them. In the dialogs a view keeps the height of its words,
 and when it and its actions are taller than the dialog the surface scrolls as a whole: every word
 and every action is reached by scrolling, at 320×256 too, and the words come before the actions.
-The view of a movement the listing found by key is that view with the movement under the
-sentence, and lands focus the same way. Known limits: the landing does not run when another dialog
-holds focus or the visitor moved it during the wait; the check view ("We couldn't confirm …")
-lands no focus when it appears, only after an ask of its own (above), and says what the listing
-by key answered in a `role="status"` region of its own (`MovementCheckStatus`); and what is
-spoken on a focused paragraph depends on the screen reader (ADR-0059, Validation).
+The view of a movement the listing found by key is the went-through view with the movement under
+the sentence, and lands focus the same way. Known limits: the landing does not run when another
+dialog holds focus or the visitor moved it during the wait; the check view's title takes focus
+before the listing by key has answered, so what that listing answered is said in a
+`role="status"` region of its own (`MovementCheckStatus`); and what is spoken on a focused
+paragraph depends on the screen reader (ADR-0059, Validation).
 
 **A dialog gives focus back to the control that opened it.** The Fluent dialogs here are opened
 by a state, so Fluent has no trigger to go back to. A component that is mounted for as long as
