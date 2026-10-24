@@ -1,5 +1,5 @@
-using System.Reflection;
 using System.Text.Json;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 
 namespace AzureBank.Tests.Architecture;
@@ -47,21 +47,7 @@ public class ExportedSampleTests
         "anchoredValue", "previousAnchorPayloadHash", "payloadHash", "mac", "createdAt",
     ];
 
-    private static string SamplePath()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(
-            because: "the guard needs the committed sample; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "audit", "anchors.sample.jsonl");
-        File.Exists(path).Should().BeTrue(because: $"the exported sample is expected at {path}");
-        return path;
-    }
+    private static string SamplePath() => RepositoryFiles.ExistingFile("docs", "audit", "anchors.sample.jsonl");
 
     private static JsonElement[] Records()
     {

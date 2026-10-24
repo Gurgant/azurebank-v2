@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -26,19 +27,6 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class ErrorCodeConstantTests
 {
-    /// <summary>Walks up from the test assembly until it finds the solution file.</summary>
-    private static DirectoryInfo RepoBackendRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     /// <summary>
     /// All-caps string literals of six characters or more — the shape every error code has.
     /// </summary>
@@ -79,7 +67,7 @@ public class ErrorCodeConstantTests
         // SCREAMING_SNAKE literal here is either an error code that belongs in ErrorCodes, or
         // something that does not belong in these folders at all. Environment variables and header
         // names live in Program/Observability/Middleware, which are deliberately not scanned.
-        var root = RepoBackendRoot();
+        var root = RepositoryFiles.Backend();
         var offenders = new List<string>();
         var scanned = 0;
 

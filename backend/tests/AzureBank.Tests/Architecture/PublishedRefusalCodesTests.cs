@@ -1,6 +1,6 @@
-using System.Reflection;
 using System.Text.Json;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -35,31 +35,15 @@ public class PublishedRefusalCodesTests
     private static readonly string[] MoneyMoves =
         ["/api/transfers", "/api/transfers/internal", "/api/transactions/withdraw"];
 
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     private static string Description422(string path)
-        => Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+        => RepositoryFiles.PublishedContract().GetProperty("paths").GetProperty(path).GetProperty("post")
             .GetProperty("responses").GetProperty("422").GetProperty("description").GetString()!;
 
     /// <summary>
     /// The named member of an operation's 422 schema, or <c>null</c> when it declares none.
     /// </summary>
     private static JsonElement? Member422(string path, string member)
-        => Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+        => RepositoryFiles.PublishedContract().GetProperty("paths").GetProperty(path).GetProperty("post")
             .GetProperty("responses").GetProperty("422")
             .GetProperty("content").GetProperty("application/json").GetProperty("schema")
             .TryGetProperty("properties", out var properties)
@@ -100,7 +84,7 @@ public class PublishedRefusalCodesTests
           code. The scan reads every operation rather than a list, so a new one cannot slip past.
         */
         var declaredOn = new List<string>();
-        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        foreach (var path in RepositoryFiles.PublishedContract().GetProperty("paths").EnumerateObject())
         {
             foreach (var operation in path.Value.EnumerateObject())
             {
@@ -119,7 +103,8 @@ public class PublishedRefusalCodesTests
         declaredOn.Should().BeEquivalentTo(
             MoneyMoves, "the balance is checked by the three money moves and by nothing else");
 
-        Document().GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails")
+        RepositoryFiles.PublishedContract()
+            .GetProperty("components").GetProperty("schemas").GetProperty("ProblemDetails")
             .GetProperty("properties").TryGetProperty("available", out _).Should().BeFalse(
                 "the shared component is untouched: the member rides the operations' own inline "
                 + "schemas");
@@ -239,7 +224,7 @@ public class PublishedRefusalCodesTests
           sends it.
         */
         var named = new List<string>();
-        foreach (var path in Document().GetProperty("paths").EnumerateObject())
+        foreach (var path in RepositoryFiles.PublishedContract().GetProperty("paths").EnumerateObject())
         {
             foreach (var operation in path.Value.EnumerateObject())
             {
@@ -265,7 +250,8 @@ public class PublishedRefusalCodesTests
 
         foreach (var path in new[] { "/api/transfers", "/api/transfers/authorizations" })
         {
-            var notFound = Document().GetProperty("paths").GetProperty(path).GetProperty("post")
+            var notFound = RepositoryFiles.PublishedContract()
+                .GetProperty("paths").GetProperty(path).GetProperty("post")
                 .GetProperty("responses").GetProperty("404");
             var description = notFound.GetProperty("description").GetString()!;
 

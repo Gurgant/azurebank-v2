@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AzureBank.Tests.Fixtures;
@@ -511,7 +510,7 @@ public class LogPlaceholderClassTests
 
     private static List<Site> Sites()
     {
-        var root = BackendRoot();
+        var root = RepositoryFiles.Backend();
         var sites = new List<Site>();
         foreach (var project in Projects)
         {
@@ -956,17 +955,5 @@ public class LogPlaceholderClassTests
         }
 
         return new string(text);
-    }
-
-    private static DirectoryInfo BackendRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull("the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
     }
 }

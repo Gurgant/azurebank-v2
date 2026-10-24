@@ -1,6 +1,5 @@
-using System.Reflection;
-using System.Text.Json;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -24,22 +23,6 @@ public class PublishedPayloadTooLargeTests
         "POST /api/accounts/{id}/deletion-authorizations",
     ];
 
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     [Theory]
     [InlineData("/api/transfers/authorizations")]
     [InlineData("/api/transfers/internal/authorizations")]
@@ -47,7 +30,7 @@ public class PublishedPayloadTooLargeTests
     [InlineData("/api/accounts/{id}/deletion-authorizations")]
     public void Mint_declares_413_as_problem_details_naming_its_code(string path)
     {
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var operation = document.GetProperty("paths").GetProperty(path).GetProperty("post");
         var responses = operation.GetProperty("responses");
 
@@ -64,7 +47,7 @@ public class PublishedPayloadTooLargeTests
     [Fact]
     public void Exactly_eight_operations_declare_a_413()
     {
-        var document = Document();
+        var document = RepositoryFiles.PublishedContract();
         var declaring = new List<string>();
 
         foreach (var path in document.GetProperty("paths").EnumerateObject())

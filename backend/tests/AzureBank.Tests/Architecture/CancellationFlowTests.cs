@@ -173,7 +173,7 @@ public class CancellationFlowTests
     [Fact]
     public void EveryEfCall_PassesTheRequestsToken_AndNoneOnlyWhereItMustNotBeCancelled()
     {
-        var root = RepoRoot();
+        var root = RepositoryFiles.Root().FullName;
         var offenders = new List<string>();
         var efCalls = 0;
         var files = 0;
@@ -506,18 +506,6 @@ public class CancellationFlowTests
         {
             output.Append(source[k] == '\n' ? '\n' : ' ');
         }
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!.FullName;
     }
 }
 

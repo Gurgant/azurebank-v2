@@ -1,6 +1,5 @@
-using System.Reflection;
-using System.Text.Json;
 using AzureBank.Shared.Constants;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -49,26 +48,10 @@ public class PublishedMoneyBoundsTests
         "WithdrawalAuthorizationRequest",
     ];
 
-    private static JsonElement Document()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the guard needs the committed document; one that cannot run must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-
-        return JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
-    }
-
     [Fact]
     public void EveryMoneyRequestSchema_PublishesTheBoundsTheServerEnforces()
     {
-        var schemas = Document().GetProperty("components").GetProperty("schemas");
+        var schemas = RepositoryFiles.PublishedContract().GetProperty("components").GetProperty("schemas");
         var expectedDescription =
             $"Amount must be between {ValidationRules.DescribeAmount(ValidationRules.TransactionMinAmount)} "
             + $"and {ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)}.";
@@ -97,7 +80,7 @@ public class PublishedMoneyBoundsTests
     {
         // The affirmative half of ADR-0046: there is no inflow-specific bound on the server and the
         // document, so a client that gives deposits a higher cap is promising what the server refuses.
-        var schemas = Document().GetProperty("components").GetProperty("schemas");
+        var schemas = RepositoryFiles.PublishedContract().GetProperty("components").GetProperty("schemas");
         // Compared as decimals, not as rendered strings: a scale difference between two equal values
         // (100000 and 100000.00) is not two bounds.
         var maxima = MoneyRequestSchemas

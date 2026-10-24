@@ -1,4 +1,4 @@
-using AzureBank.Tests.Integration;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -30,7 +30,7 @@ namespace AzureBank.Tests.Architecture;
 public class BrunoEnvironmentSecretTests
 {
     private static string LocalEnvironment => Path.Combine(
-        RunbookSqlParsesSqlServerTests.RepositoryRoot().FullName,
+        RepositoryFiles.Root().FullName,
         "tests", "api-collection", "environments", "local.bru");
 
     [Fact]
@@ -54,7 +54,7 @@ public class BrunoEnvironmentSecretTests
     public void TheCollectionsReadme_DoesNotAskForTheKeyToBeWrittenIntoThatFile()
     {
         var readme = File.ReadAllText(Path.Combine(
-            RunbookSqlParsesSqlServerTests.RepositoryRoot().FullName,
+            RepositoryFiles.Root().FullName,
             "tests", "api-collection", "README.md"));
 
         readme.Should().Contain("--env-var serviceKey=", "the per-run flag is the documented method");

@@ -1,4 +1,4 @@
-using System.Reflection;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -26,19 +26,6 @@ namespace AzureBank.Tests.Architecture;
 /// </remarks>
 public class SourceHygieneTests
 {
-    /// <summary>Walks up from the test assembly until it finds the repository root.</summary>
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the scan needs the sources; a guard that cannot run must fail loudly");
-        return dir!;
-    }
-
     /// <summary>
     /// Hand-written source only. Generated artefacts are excluded not to be lenient but because they
     /// are not edited: a control character there would be the generator's doing, and this rule cannot
@@ -70,7 +57,7 @@ public class SourceHygieneTests
     [Fact]
     public void NoSourceFileCarriesAnInvisibleControlCharacter()
     {
-        var root = RepoRoot();
+        var root = RepositoryFiles.Root();
         var offenders = new List<string>();
         var scanned = 0;
 
@@ -142,7 +129,7 @@ public class SourceHygieneTests
     [Fact]
     public void NoDocumentationCommentCarriesTwoSummaries()
     {
-        var root = RepoRoot();
+        var root = RepositoryFiles.Root();
         var offenders = new List<string>();
         var runs = 0;
 
