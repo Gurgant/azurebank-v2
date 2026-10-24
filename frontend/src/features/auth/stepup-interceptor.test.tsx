@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -113,21 +113,6 @@ async function enterPin(pin: string) {
 */
 beforeEach(() => {
   seedMockSession();
-});
-
-/*
-  UNMOUNT FIRST, then restore the clock — the order is load-bearing and cost a debugging round.
-
-  Vitest runs afterEach hooks in reverse registration order, so this file's hook runs BEFORE the
-  `cleanup()` in `test/setup.ts`. Restoring real timers here first left the countdown still mounted
-  with a live FAKE interval; its unmount then called `clearInterval` with a fake id against the real
-  implementation, so the interval was never cancelled and kept firing setState into the NEXT test —
-  which the console.error gate caught as act(...) violations, and only when the whole file ran.
-  `cleanup()` is idempotent, so calling it here and again in setup.ts is free.
-*/
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
 });
 
 describe('step-up interceptor (PR-11)', () => {

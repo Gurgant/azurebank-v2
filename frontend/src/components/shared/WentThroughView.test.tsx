@@ -38,9 +38,7 @@ describe('WentThroughView', () => {
   afterEach(() => {
     outside?.remove();
     outside = null;
-    // Unmount first, then restore the clock a test installed: withdraw.test.tsx has the reason.
     cleanup();
-    vi.useRealTimers();
   });
 
   it("carries the flow's success title as the page's one heading, and the sentence as a paragraph", () => {

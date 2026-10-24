@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -43,11 +43,6 @@ import { TransferPage } from './TransferPage';
  * anything. A Retry's wait is drawn later than its request leaves: RTK hands the page a refetch's
  * start on the next animation frame. So a Retry's "by now" is measured from its spinner.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 const T1_DEPOSIT = '019f7b3f-0000-7000-8000-000000000b01';
 

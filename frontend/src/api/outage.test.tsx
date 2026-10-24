@@ -1,6 +1,6 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
@@ -29,11 +29,6 @@ import { CONNECTION_FAILED } from './problemMessages';
  * Every test here lets the retries settle on a fake clock before it looks, so what it reads is the
  * final state, not a moment between two attempts.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 function renderAccounts() {
   return renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });

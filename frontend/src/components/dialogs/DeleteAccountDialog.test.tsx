@@ -22,14 +22,10 @@ import {
 import { CONNECTION_FAILED } from '../../api/problemMessages';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 
-/*
-  UNMOUNT FIRST, then restore the clock — the order is load-bearing (see withdraw.test.tsx: a
-  countdown still mounted with a live FAKE interval leaks setState into the next test). The
-  `server.events` listeners some tests register are module-level and must not leak either.
-*/
+// The `server.events` listeners some tests register are module-level and must not leak into
+// the next test.
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   server.events.removeAllListeners();
 });
 

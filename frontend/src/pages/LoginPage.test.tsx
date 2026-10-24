@@ -2,7 +2,7 @@ import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppToaster } from '../components/feedback';
 import { apiSlice } from '../features/api/apiSlice';
 import { AuthBootstrap } from '../features/auth';
@@ -126,11 +126,6 @@ const poolEmpty = () =>
     detail: 'All demo copies are in use right now. Please try again later.',
     instance: '/api/auth/demo/claim',
   });
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 function LoginHarness() {
   return (

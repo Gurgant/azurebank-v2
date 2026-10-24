@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -33,11 +33,6 @@ import { WithdrawDialog } from './WithdrawDialog';
  * decision rather than catching a regression. It is kept because the decision is the kind that gets
  * quietly reversed by someone "hardening" the gate.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 const MAIN = mockState.accounts[0];
 const START_BALANCE = 1250.5;

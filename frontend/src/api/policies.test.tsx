@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { getStepUpSnapshot, settleStepUp } from '../features/auth/stepUpController';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import { mockState, seedMockSession } from '../mocks/state';
@@ -30,10 +30,6 @@ import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdemp
 import type { BaseQueryApi } from '@reduxjs/toolkit/query';
 import { problemBaseQuery, toApiProblem, type ApiProblem } from './problemBaseQuery';
 import { classifyMoneyProblem } from './moneyProblem';
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 /**
  * The six flagship policy tests (ADR-0022) — the data-layer contract as executable

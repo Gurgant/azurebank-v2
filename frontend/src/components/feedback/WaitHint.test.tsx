@@ -1,8 +1,8 @@
-import { cleanup, renderHook, screen, waitFor } from '@testing-library/react';
+import { renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button } from '@fluentui/react-components';
 import { http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
 import { COPY, advance, expectSilentHintTakesNoRoom, never } from '../../test/outage';
@@ -29,11 +29,6 @@ import { WaitHint } from './WaitHint';
  * The clock here is fully fake — nothing below awaits a response except `abortRunning`'s tests,
  * which use the real one — so each threshold is asserted to the millisecond.
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 describe('useWaitPhase', () => {
   it('waits 5 s for the first word, then 20 s for the second', () => {

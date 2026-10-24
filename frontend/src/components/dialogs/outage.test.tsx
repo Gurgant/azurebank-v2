@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { problem, serviceUnavailable } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
@@ -40,11 +40,6 @@ import { WithdrawDialog } from './WithdrawDialog';
  * says the change may already be saved. And an answer that arrives but cannot be read is no
  * answer at all: the money may have moved, so the dialog asks for a check, never "failed".
  */
-
-afterEach(() => {
-  cleanup();
-  vi.useRealTimers();
-});
 
 const MAIN = mockState.accounts[0];
 
