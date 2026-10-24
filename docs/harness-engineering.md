@@ -27,8 +27,8 @@ two more in full.
 This page takes the public part of the harness piece by piece, each with the file, the job or
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
 the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
-[the last table](#the-numbers) were counted on 12 October 2026, and the first of them again on
-14 October 2026; it says where each can be counted again.
+[the last table](#the-numbers) were counted on 12 October 2026, and the first four of them
+again on 23 October 2026; it says where each can be counted again.
 
 ## One change, start to finish
 
@@ -114,7 +114,7 @@ inferential when an AI model judges the result.
 | Part | What is here, and where it shows |
 |---|---|
 | Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
-| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 24 [architecture-test][arch] files |
+| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 25 [architecture-test][arch] files |
 | Checks a model judges (inferential sensors) | An AI review on pull requests; a [second reader][who] |
 | Limits and my checkpoints | The [rule set][rs], 11 required checks; my merge; a [deploy][dep] |
 | Isolation | A separate folder and branch per agent ([the path of a change][path]): it separates files, nothing else |
@@ -273,7 +273,7 @@ elsewhere. I keep the merge decision because these changes can affect rules abou
 |--:|---|
 | 11 | The required checks listed on the [rule set][rs] page |
 | 64 | The numbered files in [`docs/adr/`][adrdir]: 65, one of which is the template |
-| 24 | The files in the [architecture tests' folder][arch]: 25, one of which holds no test |
+| 25 | The files in the [architecture tests' folder][arch]: 26, one of which holds no test |
 | 9 | Eight steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |
 | 17 | The results on the last commit of [#283][p283]: 16 check runs and one status |
 | 273, of which 202 before 25 September | GitHub's list of [merged pull requests][merged] up to #283; [the same list before that day][early] |
