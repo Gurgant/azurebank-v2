@@ -44,4 +44,9 @@
     resolved = 'light';
   }
   document.documentElement.setAttribute('data-theme', resolved);
+  // The browser draws its own parts from the declared colour scheme, not from the stylesheet: the
+  // canvas before any stylesheet applies, the scroll bars, its default focus ring and native
+  // popups such as a select's list. Undeclared, they stay light under the dark theme. A write
+  // through the CSSOM, which `style-src` does not govern, and one that cannot throw.
+  document.documentElement.style.colorScheme = resolved;
 })();
