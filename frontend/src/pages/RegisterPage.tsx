@@ -62,14 +62,26 @@ const useStyles = makeStyles({
     gap: '16px',
   },
 
+  // Top, not the default stretch: a message under one name field would otherwise stretch the
+  // other field's input to the taller field's height.
   nameRow: {
     display: 'flex',
+    alignItems: 'flex-start',
     gap: '12px',
     width: '100%',
   },
 
+  // A flex item and Fluent's Input root both keep `min-width: auto`, so without these the inner
+  // input's built-in size (20 characters: 217 px, 219 px with the root's borders) holds each name
+  // field wide and the row runs past the column: 470 px of page on a 320 px phone.
   nameField: {
     flex: 1,
+    minWidth: 0,
+  },
+
+  nameInput: {
+    width: '100%',
+    minWidth: 0,
   },
 
   passwordWrapper: {
@@ -271,6 +283,7 @@ export function RegisterPage() {
             <Input
               placeholder="John"
               size="large"
+              className={styles.nameInput}
               autoComplete="given-name"
               {...register('firstName')}
               aria-invalid={errors.firstName ? 'true' : 'false'}
@@ -286,6 +299,7 @@ export function RegisterPage() {
             <Input
               placeholder="Doe"
               size="large"
+              className={styles.nameInput}
               autoComplete="family-name"
               {...register('lastName')}
               aria-invalid={errors.lastName ? 'true' : 'false'}
