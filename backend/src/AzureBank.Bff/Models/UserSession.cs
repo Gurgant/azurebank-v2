@@ -1,3 +1,5 @@
+using AzureBank.Shared.DTOs.Auth;
+
 namespace AzureBank.Bff.Models;
 
 /// <summary>
@@ -188,4 +190,19 @@ public class UserSessionInfo
     /// </summary>
     public required string AzureTag { get; set; }
     public bool HasPin { get; set; }
+
+    /// <summary>
+    /// The block for a user the API has just signed in, as a NEW object on every call: the session
+    /// keeps the one it is given and <c>UpdateUserInfo</c> changes it in place (a PIN set, a
+    /// rename), so a sign-in's answer must never hold that same object.
+    /// </summary>
+    public static UserSessionInfo From(UserLoginInfo user) => new UserSessionInfo
+    {
+        Id = user.Id,
+        Email = user.Email,
+        FirstName = user.FirstName,
+        LastName = user.LastName,
+        AzureTag = user.AzureTag,
+        HasPin = user.HasPin
+    };
 }
