@@ -1,7 +1,8 @@
 import { makeStyles, mergeClasses } from '@fluentui/react-components';
-import { componentSizes, safeArea, surfaces } from '../../theme/tokens';
+import { safeArea, surfaces } from '../../theme/tokens';
 import { useResponsive } from '../../hooks/useResponsive';
 import { BottomNav } from './BottomNav';
+import { BOTTOM_NAV_ROOM, bottomNavRoom } from './bottomNavRoom';
 import { Sidebar } from './Sidebar';
 
 // ============================================
@@ -99,7 +100,10 @@ const useStyles = makeStyles({
     // being true when the bar was attached to the edge (`bottom: 0`, only the top corners rounded).
     // The number survived the redesign as a breathing gap, which is worth keeping; the reason for
     // it did not.
-    paddingBottom: `calc(${componentSizes.bottomNav.height} + 10px + ${safeArea.bottom})`,
+    //
+    // The bar keeps the room it covers on the root, taller while its utility row is open, so the
+    // last control can scroll clear of the open bar. The fallback is the closed bar's room.
+    paddingBottom: `var(${BOTTOM_NAV_ROOM}, ${bottomNavRoom(false)})`,
   },
 
   // No bar to clear, but the home indicator is still there. This was a flat `0` until a reviewer
