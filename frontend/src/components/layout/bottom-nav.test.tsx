@@ -85,12 +85,17 @@ describe('BottomNav — the room the browser keeps for it when focus moves', () 
 
     fireEvent.click(more);
     expect(rootRoom()).toBe(CLOSED_ROOM);
+    expect(rootScrollPadding()).toBe('var(--ab-bottom-nav-room)');
   });
 
   it('has the shell reserve under the page the room the bar keeps, closed when it keeps none', () => {
     setViewportWidth(390);
     renderShell();
 
+    expect(shellReservation()).toBe(`var(--ab-bottom-nav-room, ${CLOSED_ROOM})`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    expect(rootRoom()).toBe(OPEN_ROOM);
     expect(shellReservation()).toBe(`var(--ab-bottom-nav-room, ${CLOSED_ROOM})`);
   });
 
