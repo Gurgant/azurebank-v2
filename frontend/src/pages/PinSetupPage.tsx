@@ -17,6 +17,7 @@ import { colors, surfaces, transitions } from '../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
+import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { PinInput } from '../components/PinInput';
 import { WaitHint } from '../components/feedback';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../api/problemMessages';
@@ -204,7 +205,7 @@ export function PinSetupPage() {
           </div>
           <Text className={styles.title}>PIN Setup Complete!</Text>
           <Text className={styles.subtitle}>
-            Your 6-digit PIN is set. You&apos;ll use it to confirm withdrawals.
+            {`Your 6-digit PIN is set. You'll use it to ${PIN_PURPOSE}.`}
           </Text>
           <div className={styles.actions}>
             <Button
@@ -232,7 +233,7 @@ export function PinSetupPage() {
         <Text className={styles.title}>{onEnter ? 'Create your PIN' : 'Confirm your PIN'}</Text>
         <Text className={styles.subtitle}>
           {onEnter
-            ? 'Choose a 6-digit PIN. You’ll enter it to confirm withdrawals.'
+            ? `Choose a 6-digit PIN. You’ll enter it to ${PIN_PURPOSE}.`
             : 'Re-enter your PIN to make sure it matches.'}
         </Text>
 
