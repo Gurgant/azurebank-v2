@@ -579,6 +579,21 @@ export function DashboardPage() {
 
   const money = (n: number) => (hidden ? '••••••' : formatCurrency(n));
 
+  // A bar inside a line of text, in place of its words: the line keeps its height, so nothing below
+  // moves when the words arrive.
+  const lineBar = (width: number | string) => (
+    <span
+      className={styles.skeletonBar}
+      style={{ display: 'inline-block', width, verticalAlign: 'middle' }}
+    />
+  );
+  // The line under the balance and the month card's last line. Across all accounts they count
+  // them, which are none while they load; on one account they name it from data that a Retry
+  // after an error may hold stale. Either way a bar, as the balance has, until the accounts are here.
+  const countLine = (className: string, line: string) => (
+    <Text className={className}>{accountsWaiting ? lineBar(120) : line}</Text>
+  );
+
   // ---- Page-gating states ----
   // The accounts bar stands in for the whole page. Never "Welcome" while the accounts are on
   // their way, a Retry's wait included.
@@ -586,6 +601,9 @@ export function DashboardPage() {
   const sectionsShown = !accountsProblem && !welcome;
 
   const scopeLabel = selected ? selected.name : `all ${accounts.length} accounts`;
+  // The feed is asked beside the accounts, not after them. An empty one that answers first would
+  // say it is empty for "all 0 accounts": its rows stay skeletons until the accounts are here.
+  const ledgerWaiting = recentWaiting || (accountsWaiting && entries.length === 0);
 
   /*
     One page, whatever it shows, so that the hint and the alert stay the same two elements from
@@ -690,11 +708,12 @@ export function DashboardPage() {
                       {money(shownBalance)}
                     </Text>
                   )}
-                  <Text className={styles.heroMeta}>
-                    {selected
+                  {countLine(
+                    styles.heroMeta,
+                    selected
                       ? `${selected.name} · ${maskAccountNumber(selected.accountNumber)}`
-                      : `Across ${accounts.length} account${accounts.length === 1 ? '' : 's'}`}
-                  </Text>
+                      : `Across ${accounts.length} account${accounts.length === 1 ? '' : 's'}`,
+                  )}
                 </div>
                 <Button
                   className={styles.eyeButton}
@@ -775,9 +794,10 @@ export function DashboardPage() {
                   {/* Says what the figures COVER, where it used to say what they could not do. The
                   line stays because the answer still changes with the scope and a bare total does
                   not carry that; it is now a label rather than an apology. */}
-                  <Text className={styles.muted}>
-                    {selected ? `${selected.name} only` : `Across all ${accounts.length} accounts`}
-                  </Text>
+                  {countLine(
+                    styles.muted,
+                    selected ? `${selected.name} only` : `Across all ${accounts.length} accounts`,
+                  )}
                 </>
               )}
             </section>
@@ -815,10 +835,20 @@ export function DashboardPage() {
               </div>
             </section>
 
-            {/* ===== Pending attention — a task, not a statistic. Absent when there is nothing. ===== */}
+            {/* ===== Pending attention — a task, not a statistic. ===== */}
             <section className={mergeClasses(styles.card, styles.areaAttention)}>
               <Text className={styles.sectionTitle}>Needs attention</Text>
-              {pending.length === 0 ? (
+              {/* What is pending is read from the recent rows: until they are here the card cannot
+                  say that nothing is. A failure is said in the page's alert, as for the ledger.
+                  The wait is a bar in a row as tall as the sentence's, so that the ledger below
+                  does not move when the rows arrive. */}
+              {recentFailed ? null : recentWaiting ? (
+                <div className={styles.railRow}>
+                  <Text className={styles.muted} style={{ flex: 1 }}>
+                    {lineBar('100%')}
+                  </Text>
+                </div>
+              ) : pending.length === 0 ? (
                 // Rendered rather than hidden. In a bank "nothing is pending" IS information — it is
                 // reassurance — and a section that vanishes makes the page reshuffle itself between
                 // one day and the next.
@@ -864,7 +894,7 @@ export function DashboardPage() {
                 <TransactionTable>
                   <TransactionHead showBalance={!!selected} />
                   <TransactionBody>
-                    {recentWaiting
+                    {ledgerWaiting
                       ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
                           <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
                         ))
@@ -877,7 +907,7 @@ export function DashboardPage() {
                             onOpen={(id) => navigate(`/transactions/${id}`)}
                           />
                         ))}
-                    {!recentWaiting && entries.length === 0 && (
+                    {!ledgerWaiting && entries.length === 0 && (
                       <TransactionEmptyRow columns={selected ? 5 : 4}>
                         No transactions yet for {scopeLabel}.
                       </TransactionEmptyRow>
