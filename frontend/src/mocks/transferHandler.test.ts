@@ -416,7 +416,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     expect(mockState.accounts[1].balance).toBe(toBefore);
   });
 
-  it('double-entry: debits source, credits destination, writes both ledger rows, replays bytes', async () => {
+  it('double-entry: debits source, credits destination, writes both ledger rows, replays bytes; 422s on same key+different body', async () => {
     const fromBefore = mockState.accounts[0].balance; // 1250.5
     const toBefore = mockState.accounts[1].balance; // 830
     const body = { fromAccountId: acct(), toAccountId: acct2(), amount: 100, pin: MOCK_PIN };
@@ -441,6 +441,12 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     expect(replay.headers.get('Idempotency-Replayed')).toBe('true');
     expect(await replay.text()).toBe(firstText); // byte-identical stored response
     expect(mockState.accounts[0].balance).toBe(fromBefore - 100); // NOT double-applied
+    expect(mockState.accounts[1].balance).toBe(toBefore + 100);
+
+    const reuse = await internal(FIXED, { ...body, amount: 200 });
+    expect(reuse.status).toBe(422);
+    expect((await reuse.json()).errorCode).toBe('IDEMPOTENCY_KEY_REUSE');
+    expect(mockState.accounts[0].balance).toBe(fromBefore - 100); // the refusal moved nothing
     expect(mockState.accounts[1].balance).toBe(toBefore + 100);
   });
 
@@ -1726,7 +1732,7 @@ describe('the daily transfer limit (ADR-0050)', () => {
 
     // The three properties the rung's POSITION buys, asserted rather than assumed: the authorisation
     // is untouched (the rung is above `spendAuthorization`) and the key left no row (the rung is
-    // above `mockState.idempotency.set`, which is on the 201 path only).
+    // above `keepMoneySendAnswer`, which is on the 201 path only).
     expect(mockState.stepUpAuthorizations.get(idB)?.consumed).toBe(false);
     expect(mockState.idempotency.has(`transfer|${key}`)).toBe(false);
 
