@@ -17,6 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
+using static AzureBank.Bff.Tests.Polling;
 
 namespace AzureBank.Bff.Tests;
 
@@ -236,11 +237,6 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
         }
         """;
 
-    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
-    {
-        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
-    }
-
     /// <summary>A host with the demo on or off, in front of a scripted API of its own.</summary>
     private (WebApplicationFactory<Program> Host, Upstream Upstream) NewHost(
         bool demo, Action<IWebHostBuilder>? configure = null)
@@ -321,22 +317,6 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
                 LastName = "Visitor",
                 HasPin = true,
             });
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-
-            await Task.Delay(25);
-        }
-
-        return true;
-    }
 
     private static IEnumerable<string> NamesOf(JsonElement json) => json.EnumerateObject().Select(member => member.Name);
 

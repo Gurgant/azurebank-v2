@@ -1,4 +1,3 @@
-using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
@@ -23,6 +22,8 @@ using Microsoft.Extensions.Options;
 using Serilog.Core;
 using Serilog.Events;
 using Yarp.ReverseProxy.Forwarder;
+using static AzureBank.Bff.Tests.Polling;
+using static AzureBank.Bff.Tests.UnsignedJwt;
 
 namespace AzureBank.Bff.Tests;
 
@@ -228,21 +229,6 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     }
 
     /// <summary>
-    /// A JWT-shaped token whose payload carries <paramref name="issuedAt"/> and
-    /// <paramref name="expiresAt"/>, so the BFF reads its own lifetime from it. Unsigned: the BFF
-    /// reads a token, it never verifies one.
-    /// </summary>
-    private static string Jwt(string subject, DateTime issuedAt, DateTime expiresAt)
-    {
-        static string Part(string json) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(json));
-        var iat = new DateTimeOffset(issuedAt).ToUnixTimeSeconds();
-        var exp = new DateTimeOffset(expiresAt).ToUnixTimeSeconds();
-        return Part("""{"alg":"none","typ":"JWT"}""")
-            + "." + Part($$"""{"sub":"{{subject}}","iat":{{iat}},"exp":{{exp}}}""")
-            + ".test-signature";
-    }
-
-    /// <summary>
     /// A session holding a JWT of <paramref name="lifetimeSeconds"/> with
     /// <paramref name="leftSeconds"/> of it left, as if issued that long ago.
     /// </summary>
@@ -251,7 +237,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     {
         var now = DateTime.UtcNow;
         var expiresAt = now.AddSeconds(leftSeconds);
-        var token = Jwt("held", now.AddSeconds(leftSeconds - lifetimeSeconds), expiresAt);
+        var token = Jwt(now.AddSeconds(leftSeconds - lifetimeSeconds), expiresAt);
         var (sessionId, cookieName) = NewSession(factory, expiresAt, "rt-0", token, grantExpiresAt);
         return (sessionId, cookieName, token);
     }
@@ -282,21 +268,6 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     }
 
     private readonly record struct UserSessionRef(AzureBank.Bff.Models.UserSession? Value);
-
-    /// <summary>Polls until <paramref name="condition"/> holds, or the timeout passes.</summary>
-    private static async Task<bool> Eventually(Func<bool> condition, TimeSpan? timeout = null)
-    {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-            await Task.Delay(25);
-        }
-        return true;
-    }
 
     private static readonly DateTime Expired = DateTime.UtcNow.AddSeconds(-1);
     private static readonly DateTime Fresh = DateTime.UtcNow.AddHours(1);
@@ -449,25 +420,6 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             length = 0;
             return false;
         }
-    }
-
-    private sealed class QueueSink(ConcurrentQueue<LogEvent> events) : ILogEventSink
-    {
-        public void Emit(LogEvent logEvent) => events.Enqueue(logEvent);
-    }
-
-    private static async Task<bool> Eventually(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-            {
-                return false;
-            }
-            await Task.Delay(25);
-        }
-        return true;
     }
 
     [Theory]

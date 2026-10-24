@@ -1,4 +1,3 @@
-using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
@@ -12,6 +11,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using static AzureBank.Bff.Tests.UnsignedJwt;
 
 namespace AzureBank.Bff.Tests;
 
@@ -170,19 +170,5 @@ public sealed class RenewalOutsideTheContractTests : IClassFixture<WebApplicatio
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         api.Calls.Should().Equal(
             [("/api/auth/pin/verify", "Bearer " + token)], "the held token is sent, and nothing asks for another");
-    }
-
-    /// <summary>
-    /// A JWT-shaped token that carries its own issue time and expiry. Unsigned: the BFF reads a
-    /// token, it never verifies one.
-    /// </summary>
-    private static string Jwt(DateTime issuedAt, DateTime expiresAt)
-    {
-        static string Part(string json) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(json));
-        var iat = new DateTimeOffset(issuedAt).ToUnixTimeSeconds();
-        var exp = new DateTimeOffset(expiresAt).ToUnixTimeSeconds();
-        return Part("""{"alg":"none","typ":"JWT"}""")
-            + "." + Part($$"""{"sub":"held","iat":{{iat}},"exp":{{exp}}}""")
-            + ".test-signature";
     }
 }
