@@ -77,6 +77,7 @@ const EXPECTED: { path: string; label: string; value: 'page' | 'true' }[] = [
   { path: '/history', label: 'History', value: 'page' },
   { path: `/transactions/${TX_ID}`, label: 'History', value: 'true' },
   { path: '/settings', label: 'Settings', value: 'page' },
+  { path: '/contact', label: 'Contact', value: 'page' },
 ];
 
 describe.each(SURFACES)('%s', (surface) => {
@@ -110,7 +111,7 @@ describe.each(SURFACES)('%s', (surface) => {
       '/dashboard',
       '/accounts',
       '/history',
-      '/about',
+      '/contact',
       '/settings',
     ]);
   });
@@ -318,7 +319,7 @@ describe('BottomNav — the row behind More, in use', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'Contact' }));
 
-    expect(where()).toBe('/about');
+    expect(where()).toBe('/contact');
     expectRowClosed();
   });
 

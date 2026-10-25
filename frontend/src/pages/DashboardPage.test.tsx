@@ -34,7 +34,7 @@ function renderDashboard() {
       <Route path="/" element={<DashboardPage />} />
       <Route path="/transactions/:id" element={<div>TX DETAIL</div>} />
       <Route path="/accounts" element={<div>ACCOUNTS PAGE</div>} />
-      <Route path="/about" element={<div>ABOUT PAGE</div>} />
+      <Route path="/contact" element={<div>CONTACT PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'] },
   );
@@ -197,7 +197,7 @@ describe('the rest of the page', () => {
     await screen.findByText('Salary');
 
     const month = `${format(new Date(), 'MMMM')} so far`;
-    const titles = [month, 'Needs attention', 'Recent activity', 'Need help?'];
+    const titles = [month, 'Needs attention', 'Recent activity', 'Questions about this demo?'];
     expect({
       tree: screen
         .getAllByRole('heading')
@@ -233,8 +233,10 @@ describe('the rest of the page', () => {
     await screen.findByRole('heading', { level: 1 });
 
     expect(screen.queryByText(/24\/7/)).toBeNull();
-    await userEvent.click(screen.getByRole('link', { name: /Get in touch/ }));
-    expect(await screen.findByText('ABOUT PAGE')).toBeInTheDocument();
+    const contact = screen.getByRole('link', { name: 'Contact the developer' });
+    expect(contact).toHaveAttribute('href', '/contact');
+    await userEvent.click(contact);
+    expect(await screen.findByText('CONTACT PAGE')).toBeInTheDocument();
   });
 
   it('hides every figure at once when asked, and says which state it is in', async () => {

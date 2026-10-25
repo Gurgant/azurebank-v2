@@ -67,7 +67,7 @@ test.describe('anonymous visitors', () => {
     await page.goto('/dashboard');
 
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign in to AzureBank' })).toBeVisible();
 
     // The real claim: it never rendered AT ANY POINT, not merely that it is absent now.
     expect(await sawProtectedContent(page)).toBe(false);
