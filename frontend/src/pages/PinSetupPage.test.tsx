@@ -183,6 +183,48 @@ describe('PIN setup wizard (PR-10)', () => {
     expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
   });
 
+  it('each step and the finished view has one heading, its title', async () => {
+    const headings = () => screen.getAllByRole('heading').map((h) => [h.tagName, h.textContent]);
+    renderPinSetup();
+    const choosing = headings();
+
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    const confirming = headings();
+
+    await typePassword();
+    await pasteDigits('123456');
+    await screen.findByText('PIN Setup Complete!');
+
+    expect({ choosing, confirming, finished: headings() }).toEqual({
+      choosing: [['H1', 'Create your PIN']],
+      confirming: [['H1', 'Confirm your PIN']],
+      finished: [['H1', 'PIN Setup Complete!']],
+    });
+  });
+
+  it('puts focus on the finished title when the PIN is set from the keyboard', async () => {
+    /*
+      The sixth digit sends, the boxes are disabled while the save is out, and the confirm step
+      goes with them: the finished view appears with nothing focused, and a view that mounts with
+      its words in it is not read. Its title takes that lost focus.
+    */
+    renderPinSetup();
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.keyboard('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await typePassword();
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.keyboard('123456');
+
+    const title = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(title).toHaveFocus());
+    // It takes focus without joining the Tab order.
+    expect(title).toHaveAttribute('tabindex', '-1');
+  });
+
   it('bounces a user who already has a PIN straight to returnTo', async () => {
     renderPinSetup(storeWithUser(true));
 
@@ -260,6 +302,26 @@ describe('PIN setup during an outage', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
     expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
+  });
+
+  it('a 503 empties the boxes: a PIN that may be saved is not one click away', async () => {
+    server.use(
+      http.post('*/bff/auth/set-pin', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+      ),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+    const boxes = Array.from({ length: 6 }, (_, index) =>
+      screen.getByLabelText(`Digit ${index + 1} of 6`),
+    );
+    expect({
+      digits: boxes.map((box) => (box as HTMLInputElement).value).join(''),
+      invalid: boxes.map((box) => box.getAttribute('aria-invalid')),
+      setPin: (screen.getByRole('button', { name: 'Set PIN' }) as HTMLButtonElement).disabled,
+    }).toEqual({ digits: '', invalid: Array(6).fill('true'), setPin: true });
   });
 
   it('no answer in 65 s says the same, not "check your connection"', async () => {
@@ -442,6 +504,132 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     expect(alert).toHaveTextContent(
       'Too many incorrect passwords. Your account is locked; try again later.',
     );
+  });
+
+  /** The six boxes of the confirm step, in order. */
+  const boxes = () =>
+    Array.from({ length: 6 }, (_, index) => screen.getByLabelText(`Digit ${index + 1} of 6`));
+
+  /** What each of the confirm step's two fields says about the refusal on screen. */
+  function fields() {
+    const alertId = screen.getByRole('alert').id;
+    const password = screen.getByLabelText('Account password');
+    return {
+      password: {
+        invalid: password.getAttribute('aria-invalid'),
+        describedByTheAlert: (password.getAttribute('aria-describedby') ?? '')
+          .split(' ')
+          .includes(alertId),
+        focused: document.activeElement === password,
+      },
+      boxes: {
+        invalid: boxes().map((box) => box.getAttribute('aria-invalid')),
+        describedBy: screen
+          .getByRole('group', { name: 'Confirm your PIN' })
+          .getAttribute('aria-describedby'),
+        digits: boxes()
+          .map((box) => (box as HTMLInputElement).value)
+          .join(''),
+      },
+    };
+  }
+
+  /*
+    A refusal of the password is about the password field: it is marked invalid, described by the
+    alert and given focus, and the PIN boxes, which were fine, keep their six digits and are not
+    marked. Each refusal is answered as the API answers it: a wrong password by the mock itself,
+    the missing password in the API's envelope, and the lock by the mock's own lock.
+  */
+  it.each([
+    {
+      code: 'INVALID_CREDENTIALS',
+      says: 'That password is not correct.',
+      typed: 'WrongPassword1!',
+      arrange: () => {},
+    },
+    {
+      code: 'PASSWORD_REQUIRED',
+      says: 'Enter your account password to set a PIN.',
+      typed: MOCK_PASSWORD,
+      arrange: () =>
+        server.use(
+          http.post('*/bff/auth/set-pin', () =>
+            problem({
+              instance: '/api/auth/pin',
+              status: 422,
+              errorCode: 'PASSWORD_REQUIRED',
+              detail: 'Your password is required to set a PIN.',
+            }),
+          ),
+        ),
+    },
+    {
+      code: 'ACCOUNT_LOCKED',
+      says: 'Too many incorrect passwords. Your account is locked; try again later.',
+      typed: MOCK_PASSWORD,
+      arrange: () => {
+        mockState.loginLockedUntil[MOCK_USER.email] = new Date(
+          Date.now() + 15 * 60_000,
+        ).toISOString();
+      },
+    },
+  ])(
+    '$code is shown on the password field, which takes focus, and the PIN stays typed',
+    async ({ says, typed, arrange }) => {
+      arrange();
+      const saves = watchSaves();
+      await toTheConfirmation();
+      await typePassword(typed);
+      await pasteDigits('123456');
+      expect(await screen.findByRole('alert')).toHaveTextContent(says);
+
+      await waitFor(() => expect(screen.getByLabelText('Account password')).toHaveFocus());
+      expect(fields()).toEqual({
+        password: { invalid: 'true', describedByTheAlert: true, focused: true },
+        boxes: { invalid: Array(6).fill(null), describedBy: null, digits: '123456' },
+      });
+      // The six digits kept are not sent again by themselves: one save, the visitor's.
+      expect(saves).toHaveLength(1);
+    },
+  );
+
+  it("a mismatch is still the boxes' error: they are marked, described and emptied", async () => {
+    await toTheConfirmation();
+    await typePassword();
+    await pasteDigits('654321');
+    await screen.findByText('PINs do not match. Please try again.');
+
+    const alertId = screen.getByRole('alert').id;
+    expect(fields()).toEqual({
+      password: { invalid: null, describedByTheAlert: false, focused: false },
+      boxes: { invalid: Array(6).fill('true'), describedBy: alertId, digits: '' },
+    });
+  });
+
+  it('after a wrong password, the kept PIN is sent again only from "Set PIN"', async () => {
+    /*
+      The PIN authorises money leaving the account, so keeping it typed must not send it by
+      itself: correcting the password clears the refusal and sends nothing, and the second save is
+      the visitor's press of "Set PIN", with the kept PIN and the corrected password.
+    */
+    const saves = watchSaves();
+    await toTheConfirmation();
+    await typePassword('WrongPassword1!');
+    await pasteDigits('123456');
+    await screen.findByText('That password is not correct.');
+
+    await userEvent.clear(screen.getByLabelText('Account password'));
+    await typePassword();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(saves).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
+
+    expect(await screen.findByText('PIN Setup Complete!')).toBeInTheDocument();
+    expect(saves).toEqual([
+      { pin: '123456', password: 'WrongPassword1!' },
+      { pin: '123456', password: MOCK_PASSWORD },
+    ]);
   });
 
   it('says to check the connection when the request never reaches the server', async () => {

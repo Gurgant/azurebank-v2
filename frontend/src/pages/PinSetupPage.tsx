@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   makeStyles,
+  mergeClasses,
   Text,
   Button,
   Spinner,
@@ -14,6 +15,8 @@ import {
 } from '@fluentui/react-components';
 import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-icons';
 import { colors, surfaces, transitions } from '../theme/tokens';
+import { landingRing } from '../theme/landingRing';
+import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
@@ -68,12 +71,17 @@ const useStyles = makeStyles({
     justifyContent: 'center',
     color: colors.semantic.success.main,
   },
+  // Each view's title is its `h1`. index.css also takes a heading's margin off; the title keeps
+  // its own 0 so the boxes stay where they were when it was a `span`, whatever that sheet says.
   title: {
     fontSize: '22px',
     fontWeight: 700,
     color: colors.neutral[800],
     textAlign: 'center',
+    margin: 0,
   },
+  // The finished view's title takes the focus the save lost, and draws the app's landing ring.
+  landing: landingRing,
   subtitle: {
     fontSize: '15px',
     color: colors.neutral[500],
@@ -98,6 +106,15 @@ const useStyles = makeStyles({
 // ============================================
 
 type Step = 'enter' | 'confirm' | 'success';
+
+/**
+ * What the page says when the save is refused, and which field the refusal is about: the
+ * password field for a refusal of the password, the PIN boxes for everything else.
+ */
+interface SetupError {
+  message: string;
+  field: 'pin' | 'password';
+}
 
 /**
  * Only same-origin absolute paths are honored — never an open redirect (CWE-601). Rejects
@@ -141,7 +158,25 @@ export function PinSetupPage() {
     the proof belongs here, and adding a fourth screen to a three-screen wizard buys nothing.
   */
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SetupError | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const pinOwnsError = error?.field === 'pin';
+  const passwordOwnsError = error?.field === 'password';
+  /*
+    The boxes and the password are disabled while the save is out, so a refusal mostly arrives with
+    focus on `body`; the PIN's Show button stays enabled and may still hold it. A refusal of the
+    password moves focus to that field from wherever it is, once the request has ended and the
+    field can take it.
+  */
+  useEffect(() => {
+    if (!isLoading && passwordOwnsError) passwordRef.current?.focus();
+  }, [isLoading, passwordOwnsError]);
+  /*
+    The finished view mounts with its words in it, which a screen reader does not read, and the
+    control that sent is gone with the confirm step: its title takes that lost focus, as the
+    money receipts' titles do. Called here, above the early return of the finished view.
+  */
+  const successTitle = useFocusWhenLost<HTMLHeadingElement>(step === 'success');
 
   // A user who already has a PIN has nothing to do here — bounce them to where they were
   // headed. `settled` suppresses this once WE flip hasPin via a successful set (so the
@@ -155,7 +190,7 @@ export function PinSetupPage() {
 
   const handleConfirmComplete = async (confirmed: string) => {
     if (confirmed !== firstPin) {
-      setError('PINs do not match. Please try again.');
+      setError({ message: 'PINs do not match. Please try again.', field: 'pin' });
       setConfirmPin('');
       return;
     }
@@ -167,32 +202,42 @@ export function PinSetupPage() {
     } catch (caught) {
       settled.current = false;
       const problem = caught as ApiProblem;
+      const pinError = (message: string): SetupError => ({ message, field: 'pin' });
+      const passwordError = (message: string): SetupError => ({ message, field: 'password' });
+      let refusal: SetupError;
       if (problem.errorCode === 'VALIDATION_ERROR') {
         const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
-        setError(firstFieldError ?? 'That PIN is not allowed. Please choose another.');
+        refusal = pinError(firstFieldError ?? 'That PIN is not allowed. Please choose another.');
       } else if (problem.errorCode === 'PASSWORD_REQUIRED') {
-        setError('Enter your account password to set a PIN.');
+        refusal = passwordError('Enter your account password to set a PIN.');
       } else if (problem.errorCode === 'INVALID_CREDENTIALS') {
         // Named, not generic: the PIN boxes are fine and re-entering them would be busywork.
-        setError('That password is not correct.');
+        refusal = passwordError('That password is not correct.');
       } else if (problem.errorCode === 'ACCOUNT_LOCKED') {
         // Wrong passwords here count toward the SAME login lockout — say so, rather than leaving
         // the user to discover it at the login screen.
-        setError('Too many incorrect passwords. Your account is locked; try again later.');
+        refusal = passwordError(
+          'Too many incorrect passwords. Your account is locked; try again later.',
+        );
       } else if (isServiceOutage(problem)) {
         // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'`
         // too, and the connection was not the problem. The PIN may have been saved, and the
         // request carries no key, so this cannot say it failed.
-        setError(SAVE_OUTCOME_UNKNOWN);
+        refusal = pinError(SAVE_OUTCOME_UNKNOWN);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError(CONNECTION_FAILED);
+        refusal = pinError(CONNECTION_FAILED);
       } else {
-        setError(problem.detail || 'Could not set your PIN. Please try again.');
+        refusal = pinError(problem.detail || 'Could not set your PIN. Please try again.');
       }
-      // Restart the confirm step so the boxes are usable again. The password is KEPT: retyping a
-      // correct password because the PIN needed re-entering is the kind of friction that teaches
-      // people to choose shorter passwords.
-      setConfirmPin('');
+      setError(refusal);
+      /*
+        A refusal of the password keeps the confirmed PIN: it was not the problem, and the save is
+        sent again only by the visitor, from "Set PIN" or an edit of the boxes. Every other refusal
+        empties the boxes, so that the PIN is typed again. The password is KEPT either way:
+        retyping a correct password because the PIN needed re-entering is the kind of friction
+        that teaches people to choose shorter passwords.
+      */
+      if (refusal.field === 'pin') setConfirmPin('');
     }
   };
 
@@ -203,7 +248,14 @@ export function PinSetupPage() {
           <div className={styles.successIcon}>
             <CheckmarkCircle24Filled style={{ width: '40px', height: '40px' }} />
           </div>
-          <Text className={styles.title}>PIN Setup Complete!</Text>
+          <Text
+            as="h1"
+            className={mergeClasses(styles.title, styles.landing)}
+            ref={successTitle}
+            tabIndex={-1}
+          >
+            PIN Setup Complete!
+          </Text>
           <Text className={styles.subtitle}>
             {`Your 6-digit PIN is set. You'll use it to ${PIN_PURPOSE}.`}
           </Text>
@@ -230,7 +282,9 @@ export function PinSetupPage() {
         <div className={styles.icon}>
           <LockClosed24Regular style={{ width: '36px', height: '36px' }} />
         </div>
-        <Text className={styles.title}>{onEnter ? 'Create your PIN' : 'Confirm your PIN'}</Text>
+        <Text as="h1" className={styles.title}>
+          {onEnter ? 'Create your PIN' : 'Confirm your PIN'}
+        </Text>
         <Text className={styles.subtitle}>
           {onEnter
             ? `Choose a 6-digit PIN. You’ll enter it to ${PIN_PURPOSE}.`
@@ -271,11 +325,11 @@ export function PinSetupPage() {
             onComplete={(value) => {
               if (password.length > 0) void handleConfirmComplete(value);
             }}
-            error={!!error}
+            error={pinOwnsError}
             disabled={isLoading}
             autoFocus
             ariaLabel="Confirm your PIN"
-            ariaDescribedBy={error ? errorId : undefined}
+            ariaDescribedBy={pinOwnsError ? errorId : undefined}
             purpose="new"
           />
         )}
@@ -285,8 +339,15 @@ export function PinSetupPage() {
             label="Account password"
             hint="Proves it is you setting this PIN, not just someone using your open session."
             style={{ width: '100%' }}
+            validationState={passwordOwnsError ? 'error' : undefined}
           >
+            {/*
+              Field puts its hint's id before this one, and sets `aria-invalid` from
+              `validationState`.
+            */}
             <Input
+              ref={passwordRef}
+              aria-describedby={passwordOwnsError ? errorId : undefined}
               type="password"
               value={password}
               onChange={(_, data) => {
@@ -303,7 +364,7 @@ export function PinSetupPage() {
         {error && (
           <div role="alert" id={errorId} className={styles.fullError}>
             <MessageBar intent="error">
-              <MessageBarBody>{error}</MessageBarBody>
+              <MessageBarBody>{error.message}</MessageBarBody>
             </MessageBar>
           </div>
         )}
