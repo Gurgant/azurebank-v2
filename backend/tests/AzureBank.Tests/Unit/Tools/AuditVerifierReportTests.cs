@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
@@ -7,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -23,28 +23,6 @@ namespace AzureBank.Tests.Unit.Tools;
 /// </remarks>
 public class AuditVerifierReportTests
 {
-    /// <summary>
-    /// Walks up from the test assembly until it finds the repository root.
-    /// </summary>
-    /// <remarks>
-    /// Same shape as <c>AuditProseGuardTests.RepoRoot</c>, and here for the same reason: a guard
-    /// that derives its expectation from a source file must FAIL when it cannot find that file
-    /// rather than quietly assert something weaker.
-    /// </remarks>
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(
-            because: "the expected path count is read out of AuditChain.cs; a run that cannot find "
-            + "it must say so rather than pass");
-        return dir!;
-    }
-
     [Fact]
     public async Task AnUnreachableDatabase_IsNoVerdict_AndMustNotLookLikeABrokenChain()
     {
@@ -643,9 +621,8 @@ public class AuditVerifierReportTests
           epoch (a designation that is not the oldest, or a sequence below 1). So the bullets are
           the paths minus those two collapses, and adding a path without a bullet reddens here.
         */
-        var walk = File.ReadAllLines(Path.Combine(
-            RepoRoot().FullName, "backend", "src", "AzureBank.Infrastructure", "Data",
-            "AuditChain.cs"));
+        var walk = File.ReadAllLines(RepositoryFiles.ExistingFile(
+            "backend", "src", "AzureBank.Infrastructure", "Data", "AuditChain.cs"));
 
         /*
           ⚠️ EQUALITY, NOT Contains, AND THE DIFFERENCE IS THE WHOLE COUNT. AuditChain.cs mentions

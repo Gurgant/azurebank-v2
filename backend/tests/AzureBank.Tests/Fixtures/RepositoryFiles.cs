@@ -36,8 +36,11 @@ internal static class RepositoryFiles
         return dir;
     }
 
-    /// <summary>The <c>backend</c> folder under <see cref="Root"/>, which holds the solution file.</summary>
-    public static DirectoryInfo Backend() => new(Path.Combine(Root().FullName, "backend"));
+    /// <summary>
+    /// The <c>backend</c> folder under <see cref="Root"/>, which holds the solution file. The test
+    /// fails when the solution file is not there.
+    /// </summary>
+    public static DirectoryInfo Backend() => new(Path.GetDirectoryName(ExistingFile("backend", "AzureBank.slnx"))!);
 
     /// <summary>
     /// The path of a file under <see cref="Root"/>, named by its folders and its file name. The test

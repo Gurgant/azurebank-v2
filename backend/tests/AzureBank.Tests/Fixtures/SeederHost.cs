@@ -1,7 +1,5 @@
 extern alias seeder;
 
-using System.Reflection;
-using FluentAssertions;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,7 +27,7 @@ internal static class SeederHost
 
     /// <summary>The settings file the tools image ships.</summary>
     public static string CommittedSettingsPath =>
-        Path.Combine(RepoRoot(), "backend", "tools", "AzureBank.Seeder", "appsettings.json");
+        RepositoryFiles.ExistingFile("backend", "tools", "AzureBank.Seeder", "appsettings.json");
 
     /// <summary>
     /// The provider. <paramref name="onCommittedSettings"/> puts the Seeder's committed
@@ -64,18 +62,5 @@ internal static class SeederHost
 
         SeederServices.AddSeederServices(services, configuration, environment.Object);
         return services.BuildServiceProvider();
-    }
-
-    /// <summary>The repository's root: the first folder above the test assembly holding <c>.github</c>.</summary>
-    public static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the test reads the Seeder's committed files");
-        return dir!.FullName;
     }
 }

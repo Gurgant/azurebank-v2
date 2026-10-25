@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -136,7 +135,7 @@ public class CommittedOpenApiDocumentTests : IntegrationTestBase
             "the API publishes 31 operations (2026-10-03); a generated document with almost none means the provider "
             + "or the composition is wrong, and comparing two empty documents would prove nothing");
 
-        var path = CommittedPath();
+        var path = RepositoryFiles.ExistingFile("docs", "api", "openapiv1.json");
 
         if (Environment.GetEnvironmentVariable(RegenerateVariable) == "1")
         {
@@ -234,22 +233,6 @@ public class CommittedOpenApiDocumentTests : IntegrationTestBase
             ? "The two parse to the same JSON and differ only in bytes — a formatting difference, which can "
               + "come from an edit to the file or from a change in how the serialiser writes it."
             : "First differences, committed → generated:\n  " + string.Join("\n  ", differences);
-    }
-
-    private static string CommittedPath()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(
-            because: "the gate needs the committed document; one that cannot find it must fail loudly");
-
-        var path = Path.Combine(dir!.FullName, "docs", "api", "openapiv1.json");
-        File.Exists(path).Should().BeTrue(because: $"the published contract is expected at {path}");
-        return path;
     }
 
     private static int CountOperations(JsonNode document)
