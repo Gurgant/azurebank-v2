@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Account;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
@@ -261,25 +260,5 @@ public class TransferLedgerTests : IntegrationTestBase
         referenced.Type.Should().Be(TransactionType.TransferOut);
         body.NewBalance.Should().Be(referenced.BalanceAfter,
             "the balance shown on the receipt is the one written to the ledger");
-    }
-
-    /// <summary>Registers a counterparty named "Recipient User", so the mask is "Recipient U.".</summary>
-    private async Task<(string AzureTag, Guid UserId, Guid AccountId)> RegisterRecipientAsync()
-    {
-        var uniqueId = Guid.NewGuid().ToString("N")[..8];
-        var azureTag = $"recipient_{uniqueId}";
-
-        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = azureTag,
-            Email = $"recipient{uniqueId}@example.com",
-            Password = "TestPass123!",
-            FirstName = "Recipient",
-            LastName = "User",
-        }, JsonOptions);
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
-        return (azureTag, result!.Data!.User.Id, result.Data.Account.Id);
     }
 }

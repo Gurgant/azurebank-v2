@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
@@ -621,26 +620,6 @@ public class IdempotencyEndpointTests : IntegrationTestBase
     {
         var text = await response.Content.ReadAsStringAsync();
         return JsonSerializer.Deserialize<JsonElement>(text);
-    }
-
-    private async Task<(string AzureTag, Guid UserId, Guid AccountId)> RegisterRecipientAsync()
-    {
-        var uniqueId = Guid.NewGuid().ToString("N")[..8];
-        var azureTag = $"recipient_{uniqueId}";
-
-        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = azureTag,
-            Email = $"recipient{uniqueId}@example.com",
-            Password = "TestPass123!",
-            FirstName = "Recipient",
-            LastName = "User"
-        }, JsonOptions);
-
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
-        return (azureTag, result!.Data!.User.Id, result.Data.Account.Id);
     }
 
     #endregion

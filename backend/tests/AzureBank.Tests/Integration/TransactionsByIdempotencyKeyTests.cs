@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AzureBank.Shared.DTOs.Account;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
@@ -169,7 +168,7 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
     {
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
         await SetPinAsync(senderToken);
-        var payee = await RegisterPayeeAsync();
+        var payee = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
 
         var key = Guid.NewGuid();
@@ -249,23 +248,5 @@ public class TransactionsByIdempotencyKeyTests : IntegrationTestBase
             new CreateAccountRequest { Name = "Savings", Type = AccountType.Savings }, JsonOptions);
         created.EnsureSuccessStatusCode();
         return (await created.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
-    }
-
-    /// <summary>Registers another user, with the handle a transfer names.</summary>
-    private async Task<(string Token, string AzureTag)> RegisterPayeeAsync()
-    {
-        var unique = Guid.NewGuid().ToString("N")[..8];
-        var azureTag = $"payee_{unique}";
-        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = azureTag,
-            Email = $"payee{unique}@example.com",
-            Password = TestUserPassword,
-            FirstName = "Payee",
-            LastName = "User"
-        }, JsonOptions);
-        response.EnsureSuccessStatusCode();
-        var registered = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
-        return (registered!.Data!.Token.AccessToken, azureTag);
     }
 }

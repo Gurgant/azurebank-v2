@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Account;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
@@ -531,26 +530,6 @@ public class TransferEndpointTests : IntegrationTestBase
         closed.StatusCode.Should().Be(HttpStatusCode.OK, "the account under test has to be closed");
 
         return accountId;
-    }
-
-    private async Task<(string AzureTag, Guid UserId, Guid AccountId)> RegisterRecipientAsync()
-    {
-        var uniqueId = Guid.NewGuid().ToString("N")[..8];
-        var azureTag = $"recipient_{uniqueId}";
-
-        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = azureTag,
-            Email = $"recipient{uniqueId}@example.com",
-            Password = "TestPass123!",
-            FirstName = "Recipient",
-            LastName = "User"
-        }, JsonOptions);
-
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
-        return (azureTag, result!.Data!.User.Id, result.Data.Account.Id);
     }
 
     #endregion

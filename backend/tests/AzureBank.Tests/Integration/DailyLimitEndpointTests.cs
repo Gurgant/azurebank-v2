@@ -74,14 +74,6 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
             response);
     }
 
-    private async Task<string> RegisterPayeeTagAsync()
-    {
-        var (_, payeeId, _) = await RegisterTestUserAsync();
-        using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
-        return (await db.Users.AsNoTracking().SingleAsync(u => u.Id == payeeId)).AzureTag;
-    }
-
     private Task<HttpResponseMessage> MintAsync(Guid fromAccountId, string payeeTag, decimal amount, string pin = Pin)
         => Client.PostAsJsonAsync(
             "/api/transfers/authorizations",
@@ -154,7 +146,7 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
         var today = _factory.Clock.GetUtcNow().UtcDateTime.Date;
         var resetsAt = today.AddDays(1);
 
-        var payeeTag = await RegisterPayeeTagAsync();
+        var payeeTag = (await RegisterRecipientAsync()).AzureTag;
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token);
@@ -237,7 +229,7 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
     {
         // The cheap contract row the real-stack suite will use: one per-transaction-valid request
         // of limit + 0.01 refuses with nothing moved and nothing spent.
-        var payeeTag = await RegisterPayeeTagAsync();
+        var payeeTag = (await RegisterRecipientAsync()).AzureTag;
         var (token, _, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token);

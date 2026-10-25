@@ -4,7 +4,6 @@ using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -48,17 +47,7 @@ public class EvidencePackTests : IntegrationTestBase
     {
         var (token, userId, account) = await RegisterTestUserAsync();
 
-        var unique = Guid.NewGuid().ToString("N")[..8];
-        var recipientTag = $"payee_{unique}";
-        var registered = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = recipientTag,
-            Email = $"payee{unique}@example.com",
-            Password = TestUserPassword,
-            FirstName = "Payee",
-            LastName = "User",
-        }, JsonOptions);
-        registered.EnsureSuccessStatusCode();
+        var recipientTag = (await RegisterRecipientAsync()).AzureTag;
 
         await DepositAsync(token, account, 500m);
         await SetPinAsync(token);
@@ -381,17 +370,7 @@ public class EvidencePackBrokenChainTests : IntegrationTestBase
     private async Task<(Guid Account, string RecipientTag)> ScenarioAsync()
     {
         var (token, _, account) = await RegisterTestUserAsync();
-        var unique = Guid.NewGuid().ToString("N")[..8];
-        var recipientTag = $"payee_{unique}";
-        var registered = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = recipientTag,
-            Email = $"payee{unique}@example.com",
-            Password = TestUserPassword,
-            FirstName = "Payee",
-            LastName = "User",
-        }, JsonOptions);
-        registered.EnsureSuccessStatusCode();
+        var recipientTag = (await RegisterRecipientAsync()).AzureTag;
         await DepositAsync(token, account, 500m);
         await SetPinAsync(token);
         SetAuthHeader(token);
@@ -530,17 +509,7 @@ public class EvidencePackUncoveredWindowTests : IntegrationTestBase
     private async Task<(Guid Account, string RecipientTag)> ScenarioAsync()
     {
         var (token, _, account) = await RegisterTestUserAsync();
-        var unique = Guid.NewGuid().ToString("N")[..8];
-        var recipientTag = $"payee_{unique}";
-        var registered = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = recipientTag,
-            Email = $"payee{unique}@example.com",
-            Password = TestUserPassword,
-            FirstName = "Payee",
-            LastName = "User",
-        }, JsonOptions);
-        registered.EnsureSuccessStatusCode();
+        var recipientTag = (await RegisterRecipientAsync()).AzureTag;
         await DepositAsync(token, account, 500m);
         await SetPinAsync(token);
         SetAuthHeader(token);
