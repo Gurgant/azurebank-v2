@@ -1,10 +1,10 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
+using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -88,11 +88,7 @@ public class ExportedSampleLadderTests
 
     private static List<AuditAnchor> SampleRecords()
     {
-        var path = Path.Combine(RepoRoot().FullName, "docs", "audit", "anchors.sample.jsonl");
-
-        File.Exists(path).Should().BeTrue(
-            "the sample is the fixture; a missing file must fail loudly rather than read as zero "
-            + "records that all authenticate");
+        var path = RepositoryFiles.ExistingFile("docs", "audit", "anchors.sample.jsonl");
 
         return File.ReadAllLines(path)
             .Where(line => !string.IsNullOrWhiteSpace(line))
@@ -132,17 +128,4 @@ public class ExportedSampleLadderTests
 
     private static string? StringOrNull(JsonElement e, string name) =>
         e.GetProperty(name).ValueKind == JsonValueKind.Null ? null : e.GetProperty(name).GetString();
-
-    private static DirectoryInfo RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(
-            "this test reads a committed document; one that cannot run must say so rather than pass");
-        return dir!;
-    }
 }

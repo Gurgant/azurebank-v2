@@ -209,7 +209,7 @@ public sealed class NoticeFunctionStartupTests : IDisposable
           at rest, and one under a repository is one commit away from being published. Before
           ADR-0051 this exact configuration started the API without a word.
         */
-        var inside = Path.Combine(RepoRoot(), "backend", "src", "AzureBank.Functions.NoticeRelay");
+        var inside = Path.Combine(RepositoryFiles.Backend().FullName, "src", "AzureBank.Functions.NoticeRelay");
 
         FailuresOf(
                 ("Notices:Runner", "Function"),
@@ -423,18 +423,6 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         var refusal = resolve.Should().Throw<OptionsValidationException>(
             "a partial Notices section must be refused by the validator the Function's own root registers").Which;
         return refusal.Failures.ToList();
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "backend", "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull("this guard reads the sources; one that cannot find them must say so rather than pass");
-        return dir!.FullName;
     }
 
     /// <summary>

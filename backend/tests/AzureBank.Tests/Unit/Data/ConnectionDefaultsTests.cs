@@ -1,7 +1,6 @@
 extern alias seeder;
 
 using System.Globalization;
-using System.Reflection;
 using AzureBank.Api.Extensions;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Infrastructure.Extensions;
@@ -186,7 +185,7 @@ public class ConnectionDefaultsTests
         // registration, so no Database__ variable is needed where it runs. The file ships no
         // connection string (the environment supplies it), so one is added here as the environment
         // would: the pool is read off the string a connection would be opened with.
-        var path = Path.Combine(RepoRoot(), "backend", "tools", "AzureBank.Seeder", "appsettings.json");
+        var path = SeederHost.CommittedSettingsPath;
         var configuration = new ConfigurationBuilder()
             .AddJsonFile(path, optional: false)
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -229,18 +228,6 @@ public class ConnectionDefaultsTests
             LogLevel.Information,
             "Database limits: connect timeout 10 s, connect retries 0, pool 12, pool blocking NeverBlock; "
             + "EF retries 4, back-off capped at 00:00:10; request deadline 40 s"));
-    }
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull(because: "the test reads the seeder's committed settings");
-        return dir!.FullName;
     }
 }
 

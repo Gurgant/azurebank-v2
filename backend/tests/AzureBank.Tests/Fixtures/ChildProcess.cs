@@ -77,6 +77,6 @@ internal static class ChildProcess
         var framework = own.Name;
         var configuration = own.Parent!.Name;
         return Path.Combine(
-            SeederHost.RepoRoot(), "backend", "tools", project, "bin", configuration, framework, fileName);
+            RepositoryFiles.Root().FullName, "backend", "tools", project, "bin", configuration, framework, fileName);
     }
 }

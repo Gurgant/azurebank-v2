@@ -1,4 +1,3 @@
-using System.Reflection;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
@@ -252,16 +251,20 @@ public sealed class RunbookSqlParsesSqlServerTests
             .Which.Message.Should().Contain("Incorrect syntax near 'dbo'");
     }
 
-    /// <summary>Walks up from the test assembly to the repository root.</summary>
+    /// <summary>
+    /// The repository root, for the runbook tests. The test fails, with one sentence, when it holds
+    /// no <c>docs/runbooks</c>.
+    /// </summary>
     internal static DirectoryInfo RepositoryRoot()
     {
-        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "docs", "runbooks")))
+        var root = RepositoryFiles.Root();
+        if (!Directory.Exists(Path.Combine(root.FullName, "docs", "runbooks")))
         {
-            dir = dir.Parent;
+            Assert.Fail(
+                $"{root.FullName} holds no docs/runbooks, and a test that reads the runbooks must fail, "
+                + "never pass, without them.");
         }
 
-        dir.Should().NotBeNull(because: "a guard that cannot find the repository must fail loudly");
-        return dir!;
+        return root;
     }
 }

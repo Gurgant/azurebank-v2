@@ -89,7 +89,9 @@ public sealed class FailedStartupExitCodeTests
     {
         var start = new ProcessStartInfo(ChildProcess.DotnetHost())
         {
-            WorkingDirectory = Path.Combine(BackendRoot().FullName, "src", "AzureBank.Api"),
+            // The API takes its content root from the working directory, so the child starts in the
+            // API's own folder; Backend() fails the test when the sources are not there.
+            WorkingDirectory = Path.Combine(RepositoryFiles.Backend().FullName, "src", "AzureBank.Api"),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -120,18 +122,5 @@ public sealed class FailedStartupExitCodeTests
             "running STARTED, so the refusal under test never happened. Output:" +
             $"{Environment.NewLine}{output}");
         return (output, exitCode);
-    }
-
-    /// <summary>Walks up from the test assembly to the directory holding the solution.</summary>
-    private static DirectoryInfo BackendRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AzureBank.slnx")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull("the API runs from its own content root, so the sources must exist");
-        return dir!;
     }
 }
