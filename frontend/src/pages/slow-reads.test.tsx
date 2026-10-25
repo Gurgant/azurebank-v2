@@ -155,6 +155,10 @@ describe('a slow read says so', () => {
       const before = calls;
       const retriedAt = Date.now();
       await user.click(screen.getByRole('button', { name: 'Retry' }));
+      // The request can reach the server before the page draws its wait: RTK hands the refetch's
+      // start to React on the next animation frame. So the test waits for the spinner, which only
+      // the new wait draws, and only then counts the request and reads the rest of the page.
+      await screen.findByLabelText('Loading accounts');
       await waitFor(() => expect(calls).toBe(before + 1));
 
       // The bar goes while the read runs again; the spinner and the hint come back, timed from
