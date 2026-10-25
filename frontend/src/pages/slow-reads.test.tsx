@@ -14,6 +14,7 @@ import {
   alertSlot,
   fakeClockUser,
   hintRegion,
+  hintShownAt,
   never,
   sleep,
   installFakeClock,
@@ -41,7 +42,8 @@ import { TransferPage } from './TransferPage';
  * the wait was certainly on screen — so neither can pass by the test being slow. For a first load
  * that is when the request reached the server: the page draws its first wait before it sends
  * anything. A Retry's wait is drawn later than its request leaves: RTK hands the page a refetch's
- * start on the next animation frame. So a Retry's "by now" is measured from its spinner.
+ * start on the next animation frame. So a Retry's "by now" is measured from its spinner, and a
+ * "Load more"'s, drawn late for the same reason, from its hint.
  */
 
 const T1_DEPOSIT = '019f7b3f-0000-7000-8000-000000000b01';
@@ -304,12 +306,13 @@ describe('a slow read says so', () => {
     installFakeClock();
     const user = fakeClockUser();
     await user.click(screen.getByRole('button', { name: 'Load more' }));
+    const shownAt = await hintShownAt();
     await waitFor(() => expect(nextPage).toHaveLength(1));
 
-    await advanceUntil(nextPage[0], 5_000);
+    await advanceUntil(shownAt, 5_000);
     expect(screen.getAllByText(COPY.slow)).toHaveLength(1);
     hintRegion(COPY.slow);
-    await advanceUntil(nextPage[0], 20_000);
+    await advanceUntil(shownAt, 20_000);
     hintRegion(COPY.stillTrying);
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
     expect(screen.getByText('Salary')).toBeInTheDocument();
@@ -522,8 +525,9 @@ describe('a read that said it was slow says when it has loaded', () => {
     installFakeClock();
     const user = fakeClockUser();
     await user.click(screen.getByRole('button', { name: 'Load more' }));
+    const shownAt = await hintShownAt();
     await waitFor(() => expect(nextPage).toHaveLength(1));
-    await advanceUntil(nextPage[0], 5_000);
+    await advanceUntil(shownAt, 5_000);
     const region = hintRegion(COPY.slow);
 
     await advanceUntil(nextPage[0], 6_100);
