@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
-import { Text, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
+import { Text, makeStyles, mergeClasses, shorthands, tokens } from '@fluentui/react-components';
 import { Eye16Regular, EyeOff16Regular } from '@fluentui/react-icons';
 import { isDemoMode } from '../features/demo/demoMode';
 import { DEMO_PIN } from '../features/demo/demoPin';
@@ -17,13 +17,28 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '10px',
   },
+  // Six boxes of 48 px and five gaps of 8 px: the row is 328 px where there is room. In a
+  // narrower container, a dialog or the PIN setup card on a 320 px screen, the boxes share what it
+  // has instead of running past both of its edges.
   group: {
     display: 'flex',
     gap: '8px',
     justifyContent: 'center',
+    width: '100%',
+    maxWidth: '328px',
   },
   box: {
-    width: '48px',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    // Not for the box's own width, which the flex line sets: an input with a percentage width
+    // asks for no room of its own when a container measures its narrowest content. Most callers
+    // centre the boxes, and a centred container is never narrower than that content: with a
+    // width of auto, the step-up dialog, the withdrawal and delete-account PIN steps and the PIN
+    // setup page keep the row at 328 px.
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '48px',
     height: '56px',
     textAlign: 'center',
     fontSize: '24px',
@@ -31,14 +46,30 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
     // WCAG 1.4.11: the box border is the sole affordance on a white dialog, so it must be
     // ≥3:1 against white — neutral[500] (5.59:1), not the too-faint neutral[300].
-    border: `1px solid ${colors.neutral[500]}`,
+    ...shorthands.borderWidth('1px'),
+    ...shorthands.borderStyle('solid'),
+    ...shorthands.borderColor(colors.neutral[500]),
+    // The flex line shares the row from a basis of 0, so each box keeps its border and its
+    // horizontal padding on top of its share. A 2 px border, on focus or on an error, takes 1 px
+    // of this padding, so that every box keeps the same width and the row does not slide as
+    // focus moves along it. 2 px is what the browser gives an input of its own.
+    paddingLeft: '2px',
+    paddingRight: '2px',
     borderRadius: '12px',
     outline: 'none',
     backgroundColor: tokens.colorNeutralBackground1,
-    transition: `all ${transitions.fast}`,
+    // Colours only. The browser draws a border in whole pixels, so a border width eased from 1 to
+    // 2 px stays at 1 px while the padding eases from 2 to 1 px: for those 150 ms the box is
+    // narrower and the row slides. Width and padding change at once and together.
+    transition: ['border-color', 'background-color', 'color']
+      .map((property) => `${property} ${transitions.fast}`)
+      .join(', '),
     caretColor: colors.brand[60],
     ':focus': {
-      border: `2px solid ${colors.brand[60]}`,
+      ...shorthands.borderWidth('2px'),
+      ...shorthands.borderColor(colors.brand[60]),
+      paddingLeft: '1px',
+      paddingRight: '1px',
     },
     ':disabled': {
       backgroundColor: colors.neutral[100],
@@ -47,9 +78,12 @@ const useStyles = makeStyles({
     },
   },
   boxError: {
-    border: `2px solid ${colors.semantic.error.main}`,
+    ...shorthands.borderWidth('2px'),
+    ...shorthands.borderColor(colors.semantic.error.main),
+    paddingLeft: '1px',
+    paddingRight: '1px',
     ':focus': {
-      border: `2px solid ${colors.semantic.error.main}`,
+      ...shorthands.borderColor(colors.semantic.error.main),
     },
   },
   // The demo's line under the boxes: words to read, in the size of the button below it, centred

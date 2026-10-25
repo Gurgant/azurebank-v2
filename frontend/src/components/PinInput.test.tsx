@@ -13,7 +13,7 @@ import { PinInput, type PinInputProps } from './PinInput';
  * per-box typing, paste distribution, backspace splice, and the onComplete latch.
  */
 
-function Harness({ length = 6 }: { length?: number }) {
+function Harness({ length = 6, error = false }: { length?: number; error?: boolean }) {
   const [value, setValue] = useState('');
   const [completed, setCompleted] = useState('');
   return (
@@ -23,6 +23,7 @@ function Harness({ length = 6 }: { length?: number }) {
         onChange={setValue}
         onComplete={setCompleted}
         length={length}
+        error={error}
         ariaLabel="PIN"
       />
       <div data-testid="value">{value}</div>
@@ -174,6 +175,82 @@ describe('PinInput (PR-10)', () => {
     expect(screen.getByTestId('value').textContent).toBe('12');
     expect(screen.getByLabelText('Digit 3 of 6')).toHaveFocus();
   });
+
+  /*
+    Six boxes of 48 px and five gaps of 8 px make a row of 328 px, wider than a dialog's content
+    or the PIN setup card on a 320 px screen, where the row ran past both edges of its container.
+    The row shares what its container has, with each box at most 48 px. jsdom lays nothing out,
+    so this reads the declared rules; the widths themselves were measured in a browser.
+  */
+  it('lets the boxes shrink to their container, up to 48 px each in a row of 328 px', () => {
+    renderWithProviders(<Harness />);
+    const group = screen.getByRole('group', { name: 'PIN' });
+    const style = (el: Element) => {
+      const { width, maxWidth, minWidth, flexGrow, flexShrink, flexBasis, height } =
+        getComputedStyle(el);
+      return { width, maxWidth, minWidth, flexGrow, flexShrink, flexBasis, height };
+    };
+
+    expect({
+      group: { width: style(group).width, maxWidth: style(group).maxWidth },
+      boxes: screen.getAllByLabelText(/Digit \d of 6/).map(style),
+    }).toEqual({
+      group: { width: '100%', maxWidth: '328px' },
+      boxes: Array.from({ length: 6 }, () => ({
+        // A percentage, so that a centred container can be narrower than six boxes of 48 px.
+        width: '100%',
+        maxWidth: '48px',
+        minWidth: '0px',
+        flexGrow: '1',
+        flexShrink: '1',
+        flexBasis: '0px',
+        height: '56px',
+      })),
+    });
+  });
+
+  /*
+    The flex line shares the row from a basis of 0, so what a box keeps of its own is its border
+    and its padding. The focus border is 2 px where the others have 1 px: unless the padding gives
+    that pixel back, the focused box is 2 px wider and the row slides on every digit typed. The
+    two must also change at the same instant: only colours are eased, because a border width is
+    drawn in whole pixels and would lag behind an eased padding.
+
+    jsdom keeps the computed styles it has read until the document changes, and focus alone is
+    no change. The value printed under the boxes changes with each digit typed, so each read
+    follows the focus.
+  */
+  it.each([false, true])(
+    'keeps every box the same width when one of them has focus (error: %s)',
+    async (error) => {
+      renderWithProviders(<Harness error={error} />);
+      await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+      await userEvent.keyboard('12');
+      expect(screen.getByLabelText('Digit 3 of 6')).toHaveFocus();
+
+      const boxes = screen.getAllByLabelText(/Digit \d of 6/).map((el) => {
+        const s = getComputedStyle(el);
+        return {
+          border: s.borderLeftWidth,
+          // Border and padding on both sides: 1 + 2 + 1 + 2, or 2 + 1 + 2 + 1.
+          edges: [s.borderLeftWidth, s.paddingLeft, s.borderRightWidth, s.paddingRight]
+            .map((v) => parseFloat(v))
+            .reduce((a, b) => a + b, 0),
+          // jsdom reads the shorthand whole and leaves transition-property at its initial value.
+          eased: s.transition.split(',').map((t) => t.trim().split(' ')[0]),
+        };
+      });
+
+      const borders = error ? [2, 2, 2, 2, 2, 2] : [1, 1, 2, 1, 1, 1];
+      expect(boxes).toEqual(
+        borders.map((w) => ({
+          border: `${w}px`,
+          edges: 6,
+          eased: ['border-color', 'background-color', 'color'],
+        })),
+      );
+    },
+  );
 
   it('the arrow keys move between the boxes and stop at both ends', async () => {
     renderWithProviders(<Harness />);
