@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
@@ -17,6 +18,7 @@ import { atMedia } from '../theme/breakpoints';
 import { colors, shadows } from '../theme/tokens';
 import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import { PageHeader } from '../components/layout/PageHeader';
+import { SectionTitle } from '../components/shared/SectionTitle';
 import type { TransactionStatus, TransactionType } from '../api/enums';
 import { useGetTransactionQuery } from '../features/api/apiSlice';
 import { usePageRead } from '../hooks/usePageRead';
@@ -182,12 +184,17 @@ const useStyles = makeStyles({
     boxShadow: shadows.sm,
   },
 
+  // A smaller grey label than the other pages' section titles, over the shared rule.
   sectionTitle: {
-    display: 'block',
     fontSize: '14px',
-    fontWeight: 600,
     color: colors.neutral[500],
     padding: '12px 0 4px',
+  },
+
+  // The rows are a description list for what a screen reader says, and keep the look they had as
+  // `div`s: a list brings the browser's margins with it, and so does each value.
+  detailList: {
+    margin: 0,
   },
 
   detailRow: {
@@ -202,13 +209,19 @@ const useStyles = makeStyles({
     },
   },
 
+  // The type that Fluent's `Text` gave these before they were `dt` and `dd`.
   detailLabel: {
+    fontFamily: tokens.fontFamilyBase,
+    lineHeight: tokens.lineHeightBase300,
     fontSize: '14px',
     color: colors.neutral[500],
     flexShrink: 0,
   },
 
   detailValue: {
+    margin: 0,
+    fontFamily: tokens.fontFamilyBase,
+    lineHeight: tokens.lineHeightBase300,
     fontSize: '14px',
     fontWeight: 500,
     color: colors.neutral[800],
@@ -246,6 +259,7 @@ const useStyles = makeStyles({
   },
 
   stateTitle: {
+    margin: 0,
     fontSize: '18px',
     fontWeight: 600,
     color: colors.neutral[800],
@@ -301,6 +315,7 @@ export function TransactionDetailPage() {
     { endpoint: 'getTransaction', arg: id ?? '' },
   );
   const isNotFound = problem?.status === 404;
+  const detailsTitleId = useId();
 
   // [badge background, dot fill, label text color] — the dot needs a FILL, the
   // label a color only; one shared class painted a block behind the text.
@@ -332,7 +347,9 @@ export function TransactionDetailPage() {
           <div className={styles.stateIcon}>
             <Search24Regular style={{ width: '32px', height: '32px' }} />
           </div>
-          <Text className={styles.stateTitle}>Transaction not found</Text>
+          <Text as="h2" className={styles.stateTitle}>
+            Transaction not found
+          </Text>
           <Text className={styles.stateSubtitle}>
             This transaction doesn&apos;t exist or is not yours to see.
           </Text>
@@ -391,56 +408,60 @@ export function TransactionDetailPage() {
           </div>
 
           {/* Details — the CONTRACT's fields, nothing fabricated */}
-          <div className={styles.detailsCard}>
-            <Text className={styles.sectionTitle}>Transaction Information</Text>
+          <section className={styles.detailsCard} aria-labelledby={detailsTitleId}>
+            <SectionTitle id={detailsTitleId} className={styles.sectionTitle}>
+              Transaction Information
+            </SectionTitle>
 
-            <div className={styles.detailRow}>
-              <Text className={styles.detailLabel}>Transaction number</Text>
-              <Text className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
-                {transaction.transactionNumber}
-              </Text>
-            </div>
-
-            <div className={styles.detailRow}>
-              <Text className={styles.detailLabel}>Date &amp; time</Text>
-              <Text className={styles.detailValue}>
-                {formatDateHeading(transaction.createdAt)} · {formatTime(transaction.createdAt)}
-              </Text>
-            </div>
-
-            <div className={styles.detailRow}>
-              <Text className={styles.detailLabel}>Type</Text>
-              <Text className={styles.detailValue}>{TYPE_LABELS[transaction.type]}</Text>
-            </div>
-
-            {transaction.recipientAzureTag && (
+            <dl className={styles.detailList}>
               <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>To</Text>
-                <Text className={styles.detailValue}>@{transaction.recipientAzureTag}</Text>
+                <dt className={styles.detailLabel}>Transaction number</dt>
+                <dd className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
+                  {transaction.transactionNumber}
+                </dd>
               </div>
-            )}
 
-            {transaction.senderAzureTag && (
               <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>From</Text>
-                <Text className={styles.detailValue}>@{transaction.senderAzureTag}</Text>
+                <dt className={styles.detailLabel}>Date &amp; time</dt>
+                <dd className={styles.detailValue}>
+                  {formatDateHeading(transaction.createdAt)} · {formatTime(transaction.createdAt)}
+                </dd>
               </div>
-            )}
 
-            {transaction.description && (
               <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>Description</Text>
-                <Text className={styles.detailValue}>{transaction.description}</Text>
+                <dt className={styles.detailLabel}>Type</dt>
+                <dd className={styles.detailValue}>{TYPE_LABELS[transaction.type]}</dd>
               </div>
-            )}
 
-            <div className={styles.detailRow}>
-              <Text className={styles.detailLabel}>Balance after</Text>
-              <Text className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
-                {formatCurrency(transaction.balanceAfter)}
-              </Text>
-            </div>
-          </div>
+              {transaction.recipientAzureTag && (
+                <div className={styles.detailRow}>
+                  <dt className={styles.detailLabel}>To</dt>
+                  <dd className={styles.detailValue}>@{transaction.recipientAzureTag}</dd>
+                </div>
+              )}
+
+              {transaction.senderAzureTag && (
+                <div className={styles.detailRow}>
+                  <dt className={styles.detailLabel}>From</dt>
+                  <dd className={styles.detailValue}>@{transaction.senderAzureTag}</dd>
+                </div>
+              )}
+
+              {transaction.description && (
+                <div className={styles.detailRow}>
+                  <dt className={styles.detailLabel}>Description</dt>
+                  <dd className={styles.detailValue}>{transaction.description}</dd>
+                </div>
+              )}
+
+              <div className={styles.detailRow}>
+                <dt className={styles.detailLabel}>Balance after</dt>
+                <dd className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
+                  {formatCurrency(transaction.balanceAfter)}
+                </dd>
+              </div>
+            </dl>
+          </section>
         </div>
       )}
     </div>

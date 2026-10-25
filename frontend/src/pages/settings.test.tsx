@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
@@ -45,6 +45,25 @@ describe('settings page', () => {
     expect(screen.queryByText(/\+1 \(555\)/)).not.toBeInTheDocument();
     expect(screen.queryByText(/United States/)).not.toBeInTheDocument();
     expect(screen.queryByText(/March 15, 1990/)).not.toBeInTheDocument();
+  });
+
+  it("titles each card with a level-2 heading under the page's <h1>, and names the card so", async () => {
+    await renderSettings();
+    const cards = ['Profile', 'Security', 'Appearance', 'More settings', 'Danger zone'];
+
+    expect({
+      tree: screen
+        .getAllByRole('heading')
+        .map((heading) => `${heading.tagName}:${heading.textContent}`),
+      regions: cards.map(
+        (name) =>
+          within(screen.getByRole('region', { name })).getByRole('heading', { level: 2 })
+            .textContent,
+      ),
+    }).toStrictEqual({
+      tree: ['H1:Settings', ...cards.map((card) => `H2:${card}`)],
+      regions: cards,
+    });
   });
 
   it('says beside the PIN everything it confirms', async () => {

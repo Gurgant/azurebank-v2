@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -49,6 +49,7 @@ import {
   StatusPill,
 } from '../components/shared/TransactionRow';
 import { transactionLabel } from '../components/shared/transactionRowStyles';
+import { SectionTitle } from '../components/shared/SectionTitle';
 import { DepositDialog, WithdrawDialog } from '../components';
 
 /**
@@ -276,11 +277,9 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 
-  // Fluent's `Text` renders inline regardless of its `as` prop, and the class is merged LAST —
-  // which is the only reason this wins. Without it the heading and the link ran together as
-  // "Need help?Get in touch".
+  // The title on a line of its own above the link (`SectionTitle` is a block): inline, the two
+  // ran together as "Need help?Get in touch".
   supportTitle: {
-    display: 'block',
     width: '100%',
     marginBottom: '4px',
   },
@@ -392,6 +391,11 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
+  // Inline, as these two titles were before they were headings. The card's first line then holds
+  // the card's own 14 px text beside the 16 px title and is 21 px tall; a block title alone makes
+  // it 20 px (measured), and the card a pixel shorter.
+  inlineTitle: { display: 'inline' },
+
   thNum: { textAlign: 'right' },
 
   entryLink: {
@@ -467,6 +471,8 @@ export function DashboardPage() {
   const [hidden, setHidden] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  // One prefix for the titles of the sections below, which name their sections.
+  const titleId = useId();
 
   const accountsQuery = useGetAccountsQuery();
   const { data: accounts = [], refetch: refetchAccounts } = accountsQuery;
@@ -763,8 +769,13 @@ export function DashboardPage() {
             </section>
 
             {/* ===== Month summary — scoped like everything else on this page ===== */}
-            <section className={mergeClasses(styles.card, styles.areaSummary)}>
-              <Text className={styles.sectionTitle}>{monthLabel} so far</Text>
+            <section
+              className={mergeClasses(styles.card, styles.areaSummary)}
+              aria-labelledby={`${titleId}-summary`}
+            >
+              <SectionTitle id={`${titleId}-summary`} className={styles.inlineTitle}>
+                {monthLabel} so far
+              </SectionTitle>
               {/* A failure is said in the page's alert, above the grid: no figures here. */}
               {summaryFailed ? null : summaryWaiting ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
@@ -836,8 +847,13 @@ export function DashboardPage() {
             </section>
 
             {/* ===== Pending attention — a task, not a statistic. ===== */}
-            <section className={mergeClasses(styles.card, styles.areaAttention)}>
-              <Text className={styles.sectionTitle}>Needs attention</Text>
+            <section
+              className={mergeClasses(styles.card, styles.areaAttention)}
+              aria-labelledby={`${titleId}-attention`}
+            >
+              <SectionTitle id={`${titleId}-attention`} className={styles.inlineTitle}>
+                Needs attention
+              </SectionTitle>
               {/* What is pending is read from the recent rows: until they are here the card cannot
                   say that nothing is. A failure is said in the page's alert, as for the ledger.
                   The wait is a bar in a row as tall as the sentence's, so that the ledger below
@@ -879,11 +895,14 @@ export function DashboardPage() {
             </section>
 
             {/* ===== Zone 3 — the ledger ===== */}
-            <section className={mergeClasses(styles.card, styles.areaLedger)}>
+            <section
+              className={mergeClasses(styles.card, styles.areaLedger)}
+              aria-labelledby={`${titleId}-ledger`}
+            >
               <div className={styles.sectionHead}>
-                <Text className={styles.sectionTitle}>
+                <SectionTitle id={`${titleId}-ledger`}>
                   Recent activity{selected ? ` · ${selected.name}` : ''}
-                </Text>
+                </SectionTitle>
                 <Button appearance="transparent" onClick={() => navigate('/history')}>
                   See all
                 </Button>
@@ -935,15 +954,18 @@ export function DashboardPage() {
             </section>
 
             {/* ===== Support ===== */}
-            <section className={mergeClasses(styles.card, styles.areaSupport)}>
+            <section
+              className={mergeClasses(styles.card, styles.areaSupport)}
+              aria-labelledby={`${titleId}-support`}
+            >
               <div className={styles.supportRow}>
                 <span className={styles.supportIcon} aria-hidden>
                   <Headset24Regular />
                 </span>
                 <div>
-                  <Text className={mergeClasses(styles.sectionTitle, styles.supportTitle)}>
+                  <SectionTitle id={`${titleId}-support`} className={styles.supportTitle}>
                     Need help?
-                  </Text>
+                  </SectionTitle>
                   {/* NOT "our support team is available 24/7". There is no team: this is a portfolio
                   project, and a line promising staffed support is the same defect as a button that
                   cannot extend a session. The link goes somewhere real and says what it is. */}

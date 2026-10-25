@@ -12,5 +12,8 @@ export {
   type QuickActionVariant,
 } from './QuickActionButton';
 
+// Headings
+export { SectionTitle, type SectionTitleProps } from './SectionTitle';
+
 // Dialog Components
 export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
