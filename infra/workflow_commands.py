@@ -17,12 +17,15 @@ import sys
 
 
 def annotation(text, file=None, line=None):
-    """One line of an error annotation, on that line of that file when a file is given. Each %,
-    carriage return and line feed of the text is written the way the runner unescapes it."""
+    """One line of an error annotation: on that file when a file is given, and on that line of it
+    when a line is given too; a position that is not known is left out, never written as a
+    placeholder. Each %, carriage return and line feed of the text is written the way the runner
+    unescapes it."""
     text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     if file is None:
         return f'::error::{text}'
-    return f'::error file={file},line={line}::{text}'
+    position = f'file={file}' if line is None else f'file={file},line={line}'
+    return f'::error {position}::{text}'
 
 
 def utf8_stdout():

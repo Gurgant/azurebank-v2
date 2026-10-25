@@ -18,6 +18,10 @@ class AnnotationTests(unittest.TestCase):
         self.assertEqual(annotation('100% of a line\r\n::warning::second', file='docs/a.md', line=2),
                          '::error file=docs/a.md,line=2::100%25 of a line%0D%0A::warning::second')
 
+    def test_a_file_without_a_line_is_an_annotation_on_the_file(self):
+        self.assertEqual(annotation('no such page', file='docs/a.md'),
+                         '::error file=docs/a.md::no such page')
+
 
 if __name__ == '__main__':
     unittest.main()
