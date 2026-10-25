@@ -5,8 +5,17 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
-import { renderWithProviders } from '../test/renderWithProviders';
-import { emulateFocusFixup } from '../test/outage';
+import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
+import {
+  COPY,
+  advanceUntil,
+  emulateFocusFixup,
+  fakeClockUser,
+  hintRegion,
+  installFakeClock,
+  sleep,
+} from '../test/outage';
+import { apiSlice } from '../features/api/apiSlice';
 import { formatDateHeading } from '../utils/format';
 import { HistoryPage } from './HistoryPage';
 
@@ -278,6 +287,202 @@ describe('history feed (T1)', () => {
     expect(await screen.findByText('Extra #20')).toBeInTheDocument();
     expect(asked).toEqual(['3']);
   });
+
+  it('a FAILED refresh of the whole list keeps the rows, the filter and the totals, and says so under the list', async () => {
+    // Every deposit, withdrawal and transfer invalidates the list, and the feed then asks again for
+    // every page it holds. That refresh failing is not a first load that failed: the pages already
+    // read stay on screen, with the failure said in the alert under them.
+    const stopFixup = emulateFocusFixup();
+    try {
+      const store = makeTestStore();
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'], store });
+      await screen.findByText('Salary');
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      expect(await screen.findByText('Top-up #16')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument(),
+      );
+
+      const rowsNow = () => document.querySelectorAll('tbody tr').length;
+      const twoPages = rowsNow();
+      const table = screen.getByRole('table');
+      const [pageSlot, listSlot, ...others] = screen.getAllByRole('alert');
+      expect(others).toHaveLength(0);
+      expect(
+        table.compareDocumentPosition(pageSlot) & Node.DOCUMENT_POSITION_PRECEDING,
+      ).toBeTruthy();
+      expect(
+        table.compareDocumentPosition(listSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(listSlot).toBeEmptyDOMElement();
+
+      // A new row on page 1, which answers, and page 2 failing: the refresh fails as a whole, and
+      // the rows on screen stay the list that last loaded rather than half of a new one.
+      mockState.transactions.unshift({
+        ...mockState.transactions[0],
+        id: '019f7b3f-0000-7000-8000-0000000f0001',
+        description: 'Refund from the shop',
+      });
+      server.use(
+        http.get('*/api/transactions', ({ request }) =>
+          new URL(request.url).searchParams.get('Page') === '2'
+            ? problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'The list exploded.' })
+            : undefined,
+        ),
+      );
+      // What a money mutation does to this feed.
+      store.dispatch(apiSlice.util.invalidateTags([{ type: 'Transaction', id: 'LIST' }]));
+      await waitFor(() => expect(listSlot).toHaveTextContent('The list exploded.'));
+
+      expect(pageSlot).toBeEmptyDOMElement();
+      expect(rowsNow()).toBe(twoPages);
+      expect(screen.queryByText('Refund from the shop')).not.toBeInTheDocument();
+      expect(screen.getByRole('group', { name: /Filter transactions/i })).toBeInTheDocument();
+      expect(screen.getByText('+€1,525.50')).toBeInTheDocument();
+      expect(screen.getByText('-€250.00')).toBeInTheDocument();
+
+      // A Retry that fails again: its bar goes while it runs, and focus lands on the new one's Retry.
+      const firstRetry = within(listSlot).getByRole('button', { name: 'Retry' });
+      await userEvent.click(firstRetry);
+      await waitFor(() => {
+        const retry = within(listSlot).getByRole('button', { name: 'Retry' });
+        expect(retry).not.toBe(firstRetry);
+        expect(document.activeElement).toBe(retry);
+      });
+      expect(pageSlot).toBeEmptyDOMElement();
+      expect(rowsNow()).toBe(twoPages);
+
+      // With the server back, the Retry asks for the whole list again; the rows stay while it runs.
+      server.resetHandlers();
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const asked: string[] = [];
+      server.use(
+        http.get('*/api/transactions', async ({ request }) => {
+          asked.push(new URL(request.url).searchParams.get('Page') ?? '1');
+          await held;
+          return undefined;
+        }),
+      );
+      await userEvent.click(within(listSlot).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(listSlot).toBeEmptyDOMElement());
+      expect(screen.queryByLabelText('Loading transactions')).toBeNull();
+      expect(rowsNow()).toBe(twoPages);
+      expect(screen.getByRole('group', { name: /Filter transactions/i })).toBeInTheDocument();
+
+      release();
+      expect(await screen.findByText('Refund from the shop')).toBeInTheDocument();
+      expect(asked).toEqual(['1', '2']);
+      expect(listSlot).toBeEmptyDOMElement();
+      expect(pageSlot).toBeEmptyDOMElement();
+    } finally {
+      stopFixup();
+    }
+  });
+
+  it('a FAILED refresh of a list with no rows keeps the empty state and says so under it', async () => {
+    const emptyPage = () =>
+      HttpResponse.json({
+        data: [],
+        pagination: {
+          page: 1,
+          pageSize: 20,
+          totalItems: 0,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+      });
+    server.use(http.get('*/api/transactions', emptyPage));
+    const store = makeTestStore();
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'], store });
+    const title = await screen.findByText('No Transactions');
+
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(2);
+    const [pageSlot, listSlot] = alerts;
+    expect(title.compareDocumentPosition(listSlot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(listSlot).toBeEmptyDOMElement();
+
+    server.use(
+      http.get('*/api/transactions', () => problem({ status: 500, errorCode: 'INTERNAL_ERROR' })),
+    );
+    store.dispatch(apiSlice.util.invalidateTags([{ type: 'Transaction', id: 'LIST' }]));
+    await waitFor(() => expect(listSlot).toHaveTextContent('Could not load your transactions.'));
+
+    expect(pageSlot).toBeEmptyDOMElement();
+    expect(screen.getByText('No Transactions')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /Filter transactions/i })).toBeInTheDocument();
+
+    server.resetHandlers();
+    const asked: string[] = [];
+    server.use(
+      http.get('*/api/transactions', ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get('Page') ?? '1');
+        return emptyPage();
+      }),
+    );
+    await userEvent.click(within(listSlot).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(listSlot).toBeEmptyDOMElement());
+    expect(asked).toEqual(['1']);
+    expect(screen.getByText('No Transactions')).toBeInTheDocument();
+    expect(pageSlot).toBeEmptyDOMElement();
+  });
+
+  for (const failsAgain of [false, true]) {
+    it(`a slow Retry of the whole list says so under the rows, then ${
+      failsAgain ? 'nothing more when it fails again' : '"Loaded." when the list is there'
+    }`, async () => {
+      // The hint under the buttons is the only place the list's Retry says it is slow: the page's
+      // own hint stays silent, because the rows on screen are not its wait.
+      const broken = () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'The list exploded.' });
+      const store = makeTestStore();
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'], store });
+      await screen.findByText('Salary');
+      const [pageSlot, listSlot] = screen.getAllByRole('alert');
+
+      server.use(http.get('*/api/transactions', broken));
+      store.dispatch(apiSlice.util.invalidateTags([{ type: 'Transaction', id: 'LIST' }]));
+      await waitFor(() => expect(listSlot).toHaveTextContent('The list exploded.'));
+
+      server.resetHandlers();
+      const asked: number[] = [];
+      server.use(
+        http.get('*/api/transactions', async () => {
+          asked.push(Date.now());
+          await sleep(6_000);
+          return failsAgain ? broken() : undefined;
+        }),
+      );
+      installFakeClock();
+      const user = fakeClockUser();
+      await user.click(within(listSlot).getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(asked).toHaveLength(1));
+
+      await advanceUntil(asked[0], 5_000);
+      const region = hintRegion(COPY.slow);
+      expect(screen.getAllByText(COPY.slow)).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Loading transactions')).toBeNull();
+      expect(screen.getByText('Salary')).toBeInTheDocument();
+      expect(pageSlot).toBeEmptyDOMElement();
+
+      await advanceUntil(asked[0], 6_100);
+      if (failsAgain) {
+        await waitFor(() => expect(listSlot).toHaveTextContent('The list exploded.'));
+        // The alert speaks for the failure; a "Loaded." next to it would say the opposite.
+        expect(screen.queryByText(COPY.loaded)).not.toBeInTheDocument();
+        expect(region).not.toBeInTheDocument();
+      } else {
+        await waitFor(() => expect(region).toHaveTextContent(COPY.loaded));
+        expect(region.textContent).toBe(COPY.loaded);
+        expect(listSlot).toBeEmptyDOMElement();
+      }
+      expect(pageSlot).toBeEmptyDOMElement();
+      expect(screen.getByText('Salary')).toBeInTheDocument();
+    });
+  }
 
   it('a load failure shows the problem detail and Retry recovers (D22)', async () => {
     server.use(

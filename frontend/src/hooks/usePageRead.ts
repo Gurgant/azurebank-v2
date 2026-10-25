@@ -13,10 +13,10 @@ type PageRead = ReadState & { refetch(): unknown; requestId?: string };
  * Retry (`useWaitLanding`). The page puts `landingRef` on that Retry.
  *
  * `target` must name the cache entry the page's query hook reads, with the same argument, or Stop
- * finds nothing running and stops nothing. An infinite query passes its result with
- * `isFetching: isFetching && !isFetchingNextPage`, and with no `error` while a next page has failed
- * or is on its way (`isFetchNextPageError || isFetchingNextPage`), so that "Load more" is neither
- * the page's wait nor its failure.
+ * finds nothing running and stops nothing. An infinite query whose rows stay on screen once a page
+ * has loaded, as History's do, passes its result with no `isFetching` and no `error` from then on,
+ * so that neither "Load more" nor a refetch of the whole list is the page's wait or its failure:
+ * the page says those under its rows.
  *
  * A page whose reads share one landing and one Stop, as the Dashboard's three do, builds its wait
  * from the same parts itself.

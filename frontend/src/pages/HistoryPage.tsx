@@ -258,38 +258,55 @@ export function HistoryPage() {
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
 
   // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
-  // {Transaction,'LIST'} and refetches all loaded pages (accepted cost).
+  // {Transaction,'LIST'} and refetches all loaded pages (accepted cost). A refetch that fails
+  // leaves the pages it had in the cache, so the rows on screen are the last list that loaded.
   const historyQuery = useGetTransactionHistoryInfiniteQuery(HISTORY_ARG);
   const { data, error, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage, requestId } =
     historyQuery;
   const isFetchNextPageError = useAppSelector((state) => selectHistory(state).isFetchNextPageError);
+  const loadedPages = data?.pages?.length ?? 0;
   // The spinner and the bar follow the first page's wait, not `isLoading` and `error`: a Retry
   // keeps the old error while it runs, so the bar goes away for the new wait and comes back,
-  // announced, only if that wait fails too. A next page is not that wait, and its failure is not
-  // the page's: the query keeps that error while "Load more" or its own Retry asks again, and the
-  // rows already read stay on screen through both.
-  const nextPageOwnsError = isFetchNextPageError || isFetchingNextPage;
+  // announced, only if that wait fails too. Once a page has loaded, no later request is that wait
+  // and no failure is the page's: a next page, or a refetch of the whole list after a money
+  // mutation or its Retry, keeps the error in the query while it asks again, and the rows already
+  // read stay on screen through all of it. A next page always follows a loaded one.
+  const pagesLoaded = loadedPages > 0;
   const { waiting, failed, problem, landingRef, stopWaiting, retry } = usePageRead(
     {
       ...historyQuery,
-      isFetching: isFetching && !isFetchingNextPage,
-      error: nextPageOwnsError ? undefined : error,
+      isFetching: isFetching && !pagesLoaded,
+      error: pagesLoaded ? undefined : error,
     },
     { endpoint: 'getTransactionHistory', arg: HISTORY_ARG },
   );
-  // Said under the buttons, where the Retry that asks for the next page again is drawn.
+  // Both said under the rows, or under the empty state when the loaded pages hold none, each with
+  // its own Retry: the next page, or the whole list again.
   const nextPageFailed = isFetchNextPageError && !isFetching;
-  const nextPageProblem = nextPageFailed ? (error as ApiProblem) : undefined;
-  // The pressed "Load more" is disabled while the page is on its way, so focus falls to the page;
-  // a failure gives it back on the Retry under the buttons.
+  const listFailed = pagesLoaded && error !== undefined && !isFetchNextPageError && !isFetching;
+  const rowsProblem = nextPageFailed || listFailed ? (error as ApiProblem) : undefined;
+  // The whole list read again while an error is still in the query: the list's Retry, which keeps
+  // the old error as the first page's does, or a refetch after a money mutation while a failed
+  // "Load more" is held. Either way the list is on its way, so the hint under the rows speaks.
+  const listRetrying = pagesLoaded && isFetching && !isFetchingNextPage && error !== undefined;
+  // The pressed "Load more" is disabled while the page is on its way, and the pressed Retry leaves
+  // with its bar, so focus falls to the page; a failure gives it back on the new bar's Retry. Two
+  // landings, so that each failure lands on the Retry of the request the visitor asked for.
   const nextPageLanding = useWaitLanding<HTMLButtonElement>(isFetchingNextPage, requestId);
+  const listLanding = useWaitLanding<HTMLButtonElement>(
+    isFetching && !isFetchingNextPage,
+    requestId,
+  );
+  const retryList = () => {
+    listLanding.arm();
+    void historyQuery.refetch();
+  };
 
   /**
    * How many of the loaded pages are SHOWN. Pages are never dropped from the cache — hiding them
    * costs nothing and re-expanding repeats no request — so this is a view cap, not a data change.
    */
   const [visiblePages, setVisiblePages] = useState(1);
-  const loadedPages = data?.pages?.length ?? 0;
 
   /**
    * Fetch the next page. The Retry under the buttons calls this, not `showMore`: after "Show less"
@@ -347,6 +364,32 @@ export function HistoryPage() {
       .reduce((sum, t) => sum + t.amount, 0);
     return { income, expenses, net: income - expenses };
   }, [transactions]);
+
+  /*
+    Under the rows, or under the empty state when the loaded pages hold none: the words of a slow
+    next page or of the whole list read again, and the alert for a failure of either. In the page
+    from the first render of the rows, so that its bar is announced.
+  */
+  const rowsFeedback = (
+    <>
+      <WaitHint
+        active={isFetchingNextPage || listRetrying}
+        kind="read"
+        failed={nextPageFailed || listFailed}
+      />
+      <AlertSlot className={styles.loadMoreAlert}>
+        {rowsProblem && (
+          <ReadErrorBar
+            key={requestId}
+            problem={rowsProblem}
+            fallback={LOAD_FAILED}
+            onRetry={listFailed ? retryList : () => void askNextPage()}
+            retryRef={listFailed ? listLanding.landingRef : nextPageLanding.landingRef}
+          />
+        )}
+      </AlertSlot>
+    </>
+  );
 
   return (
     <div className={styles.container}>
@@ -453,19 +496,8 @@ export function HistoryPage() {
                     )}
                   </div>
                   {/* No "Stop waiting" here: the rows already loaded stay readable while the next
-                      page is on its way, and a failure of that page is said under these buttons. */}
-                  <WaitHint active={isFetchingNextPage} kind="read" failed={nextPageFailed} />
-                  <AlertSlot className={styles.loadMoreAlert}>
-                    {nextPageProblem && (
-                      <ReadErrorBar
-                        key={requestId}
-                        problem={nextPageProblem}
-                        fallback={LOAD_FAILED}
-                        onRetry={() => void askNextPage()}
-                        retryRef={nextPageLanding.landingRef}
-                      />
-                    )}
-                  </AlertSlot>
+                      page or the list is asked for again. */}
+                  {rowsFeedback}
                 </div>
               </div>
             ) : (
@@ -479,6 +511,7 @@ export function HistoryPage() {
                     ? 'Your transactions will appear here.'
                     : 'No transactions found for the selected filter.'}
                 </Text>
+                {rowsFeedback}
               </div>
             )}
           </>
