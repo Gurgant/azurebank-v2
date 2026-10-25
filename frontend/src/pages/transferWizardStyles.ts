@@ -1,6 +1,15 @@
 import { makeStyles, tokens } from '@fluentui/react-components';
 import { colors, surfaces, transitions } from '../theme/tokens';
 
+// The ring the app draws on a container that was given focus (`index.css`), for the paragraphs
+// below that take focus when their view appears. Without it the browser draws its own default.
+const landingRing = {
+  ':focus-visible': {
+    outline: `2px solid ${tokens.colorStrokeFocus2}`,
+    outlineOffset: '2px',
+  },
+};
+
 /**
  * The chrome both transfer wizards draw, in one place.
  *
@@ -209,8 +218,16 @@ export const useTransferWizardStyles = makeStyles({
   },
   // The green for words (`success.dark`), which the ledger's pill uses too. The icon's green
   // (`success.main`) measured 2.78 to 1 here on the canvas in the light theme, under the 3 that
-  // 24 px bold text needs. The same value as `moneyDialogStyles`.
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.dark },
+  // 24 px bold text needs. The same value as `moneyDialogStyles`. A `<p>` that takes focus when
+  // the receipt appears, as `outcomeSentence` does when its view appears: no margin, so the
+  // paragraph sits where the span did, and the same ring after a send by keys.
+  successTitle: {
+    fontSize: '24px',
+    fontWeight: 700,
+    color: colors.semantic.success.dark,
+    margin: 0,
+    ...landingRing,
+  },
   stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
   stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
   successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
@@ -236,9 +253,6 @@ export const useTransferWizardStyles = makeStyles({
     textAlign: 'center',
     lineHeight: '1.3',
     margin: 0,
-    ':focus-visible': {
-      outline: `2px solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: '2px',
-    },
+    ...landingRing,
   },
 });

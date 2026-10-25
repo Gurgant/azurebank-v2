@@ -2,7 +2,7 @@ import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
@@ -12,7 +12,7 @@ import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
-import { COPY } from '../test/outage';
+import { COPY, emulateFocusFixup } from '../test/outage';
 
 /**
  * PR-11 — the external transfer end to end, PIN collected in the page (ADR-0041/0042): pick an
@@ -968,5 +968,87 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     await act(() => router.navigate(-1));
     await userEvent.click(within(await question()).getByRole('button', { name: 'Leave anyway' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+});
+
+/*
+  The receipt replaces the PIN step, and the PIN boxes were disabled for the send: a browser hands
+  their focus to `body`, where a screen reader says nothing of the receipt. The title takes that
+  lost focus, as the went-through sentence and the check view's title do.
+*/
+describe('external transfer: the receipt takes the focus the send lost', () => {
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  /** The form filled in for the handle "friend", on the PIN step before its first digit. */
+  async function toPin() {
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+  }
+
+  it('the sixth digit of the PIN leaves focus on the receipt’s title, read once, and Tab goes on to View History', async () => {
+    await toPin();
+    await enterPin();
+
+    const title = await screen.findByText('Transfer Sent!');
+    await waitFor(() => expect(title).toHaveFocus());
+    // A paragraph that takes focus without joining the Tab order, in no live region and named by
+    // no button's description: focus is what reads it, and only once.
+    expect(title.tagName).toBe('P');
+    expect(title).toHaveAttribute('tabindex', '-1');
+    expect(title.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).not.toHaveAttribute('aria-describedby');
+    }
+
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'View History' })).toHaveFocus();
+  });
+
+  it('leaves focus where the visitor put it during the send', async () => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let sent = false;
+    server.use(
+      // Returns nothing, so the send goes on to the mock's own handler once answered.
+      http.post('*/api/transfers', async () => {
+        sent = true;
+        await held;
+      }),
+    );
+    await toPin();
+    await enterPin();
+    await waitFor(() => expect(sent).toBe(true));
+
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'Somewhere else';
+    document.body.append(elsewhere);
+    try {
+      elsewhere.focus();
+      expect(elsewhere).toHaveFocus();
+
+      answer();
+      const title = await screen.findByText('Transfer Sent!');
+      await settle();
+      expect(elsewhere).toHaveFocus();
+      expect(title).not.toHaveFocus();
+    } finally {
+      // The handler is parked on this promise: a failed assertion must not leave it hanging.
+      answer();
+      elsewhere.remove();
+    }
   });
 });

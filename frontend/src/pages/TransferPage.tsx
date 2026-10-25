@@ -30,6 +30,7 @@ import {
   type AccountResponse,
 } from '../features/api/apiSlice';
 import { useAppDispatch } from '../app/hooks';
+import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
 import { usePageRead } from '../hooks/usePageRead';
@@ -385,6 +386,12 @@ export function TransferPage() {
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  /*
+    The receipt's title takes the focus the send lost: the PIN boxes are disabled for the send, so
+    the receipt appears with focus on `body`, where a screen reader says nothing of it. Called up
+    here, not in the receipt's branch, because the page returns that branch early.
+  */
+  const receiptTitle = useFocusWhenLost<HTMLParagraphElement>(!!success);
 
   // ===== RHF step-1 form =====
   // The balance bound tracks the SELECTED account; defaults resolve once accounts load.
@@ -918,7 +925,10 @@ export function TransferPage() {
             <div className={styles.successIcon}>
               <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
             </div>
-            <Text className={styles.successTitle}>Transfer Sent!</Text>
+            {/* A paragraph that takes focus, in no alert or status: one landing, one reading. */}
+            <Text as="p" className={styles.successTitle} ref={receiptTitle} tabIndex={-1}>
+              Transfer Sent!
+            </Text>
             <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
             {success.replayed && (
               <MessageBar intent="info" role="status">
