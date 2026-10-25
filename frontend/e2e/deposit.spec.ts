@@ -68,6 +68,9 @@ test('a deposit moves the money and the dashboard figure follows', async ({ page
   const receipt = page.getByRole('dialog', { name: /deposit complete/i });
   await expect(receipt).toBeVisible({ timeout: 20_000 });
   await expect(receipt).toContainText(/Deposit Successful/i);
+  // The Deposit button was disabled for the send and its focus went to `body`: the receipt's
+  // title takes it, so that a screen reader reads the receipt and Escape reaches the dialog.
+  await expect(receipt.getByText('Deposit Successful!', { exact: true })).toBeFocused();
 
   // The receipt must agree with what the form promised before the money moved.
   await expect(receipt).toContainText(predicted);

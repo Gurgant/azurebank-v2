@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { resetMockState, seedMockSession } from '../../mocks/state';
-import { notKnown } from '../../test/outage';
+import { emulateFocusFixup, notKnown } from '../../test/outage';
 import { enterPin } from '../../test/pinFlow';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { AccountsPage } from '../../pages/AccountsPage';
@@ -209,4 +209,71 @@ describe('money dialogs and the keyboard', () => {
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
+
+  /*
+    A send that goes through brings up the receipt, and the button that sent goes with the form:
+    focus falls to `body` again, and the receipt's title takes it, so one Escape closes the dialog.
+    Sent with Enter, as a keyboard visitor sends.
+  */
+  it('a deposit sent with Enter leaves focus on the receipt’s title, and Escape closes the dialog', async () => {
+    const { dialog } = await openDeposit();
+    await userEvent.click(within(dialog).getByRole('button', { name: '€100' }));
+    within(dialog).getByRole('button', { name: 'Deposit €100.00' }).focus();
+    await userEvent.keyboard('{Enter}');
+
+    const title = await within(dialog).findByText('Deposit Successful!');
+    await waitFor(() => expect(title).toHaveFocus());
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('a withdrawal sent with Enter leaves focus on the receipt’s title, and Escape closes the dialog', async () => {
+    /*
+      The receipt's View Transaction is the same node as the Withdraw button. A browser hands the
+      focus of a disabled button to `body` and jsdom does not (`emulateFocusFixup`), and the
+      answer waits until the button is drawn disabled, as it is in a browser.
+    */
+    const { release, stopFocusFixup } = holdWithdrawal();
+    try {
+      renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+      await screen.findByText('Main Account');
+      await userEvent.click(screen.getByRole('button', { name: 'Withdraw from Main Account' }));
+      const dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('button', { name: '€100' }));
+      await userEvent.click(within(dialog).getByRole('button', { name: /^Continue/ }));
+      await within(dialog).findByText('Verify Withdrawal');
+      await enterPin();
+      within(dialog).getByRole('button', { name: 'Withdraw €100.00' }).focus();
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: 'Close' })).toBeDisabled(),
+      );
+      release();
+
+      const title = await within(dialog).findByText('Withdrawal Successful!');
+      await waitFor(() => expect(title).toHaveFocus());
+
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    } finally {
+      release();
+      stopFocusFixup();
+    }
+  });
 });
+
+/** Holds the withdrawal's answer until `release`, and hands a disabled button's focus to `body`. */
+function holdWithdrawal() {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    // Returns nothing, so the request goes on to the mock's own handler once released.
+    http.post('*/api/transactions/withdraw', async () => {
+      await held;
+    }),
+  );
+  return { release, stopFocusFixup: emulateFocusFixup() };
+}

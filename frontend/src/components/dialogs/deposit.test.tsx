@@ -410,6 +410,78 @@ describe('deposit (T3 — idempotent mutation)', () => {
   });
 });
 
+/*
+  The receipt replaces the form, and the Deposit button that sent was disabled for the send: a
+  browser hands its focus to `body`, where a screen reader says nothing of the receipt and Escape
+  reaches no dialog. The title takes that lost focus, as the went-through sentence and the check
+  view's title do.
+*/
+describe('deposit — the receipt takes the focus the send lost', () => {
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  it('Enter on Deposit leaves focus on the receipt’s title, read once, and Tab goes on to its first button', async () => {
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    screen.getByRole('button', { name: 'Deposit €100.00' }).focus();
+    await userEvent.keyboard('{Enter}');
+
+    const title = await screen.findByText('Deposit Successful!');
+    await waitFor(() => expect(title).toHaveFocus());
+    // A paragraph that takes focus without joining the Tab order, in no live region and named by
+    // no button's description: focus is what reads it, and only once.
+    expect(title.tagName).toBe('P');
+    expect(title).toHaveAttribute('tabindex', '-1');
+    expect(title.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    const viewTransaction = screen.getByRole('button', { name: 'View Transaction' });
+    expect(viewTransaction).not.toHaveAttribute('aria-describedby');
+    expect(screen.getByRole('button', { name: 'Done' })).not.toHaveAttribute('aria-describedby');
+
+    await userEvent.tab();
+    expect(viewTransaction).toHaveFocus();
+  });
+
+  it('leaves focus where the visitor put it during the send', async () => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/api/transactions/deposit', async () => {
+        await held;
+        return depositSuccessBody(1350.5);
+      }),
+    );
+    renderDeposit();
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'Somewhere else';
+    document.body.append(elsewhere);
+    try {
+      elsewhere.focus();
+      expect(elsewhere).toHaveFocus();
+
+      answer();
+      const title = await screen.findByText('Deposit Successful!');
+      await settle();
+      expect(elsewhere).toHaveFocus();
+      expect(title).not.toHaveFocus();
+    } finally {
+      // The handler is parked on this promise: a failed assertion must not leave it hanging.
+      answer();
+      elsewhere.remove();
+    }
+  });
+});
+
 /**
  * The dialog has drawn what it made of the answer: the one send reached the server, and Close,
  * barred while the key was live, is back. True of every outcome that drops the key, so a test can

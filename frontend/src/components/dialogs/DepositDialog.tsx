@@ -164,6 +164,9 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  // The receipt's title takes the focus the send lost, for the went-through sentence's reason:
+  // with focus on `body` the receipt is not read and Escape reaches no dialog.
+  const receiptTitle = useFocusWhenLost<HTMLParagraphElement>(!!success);
   /*
     The check view's title takes lost focus, as the went-through sentence does and for its
     reason: the control that sent, or the one an edit was made on, goes with the form, and a view
@@ -363,10 +366,13 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           <div className={styles.successIcon}>
             <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
           </div>
-          <Text className={styles.successTitle}>Deposit Successful!</Text>
+          {/* A paragraph that takes focus, in no alert or status: one landing, one reading. */}
+          <Text as="p" className={styles.successTitle} ref={receiptTitle} tabIndex={-1}>
+            Deposit Successful!
+          </Text>
           <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
           {success.replayed && (
-            <MessageBar intent="info" role="status">
+            <MessageBar intent="info" role="status" layout="multiline" className={styles.note}>
               <MessageBarBody>
                 This deposit was already processed — showing the existing result.
               </MessageBarBody>
