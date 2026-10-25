@@ -2,13 +2,13 @@ import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
-import { COPY } from '../test/outage';
+import { COPY, emulateFocusFixup } from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
@@ -817,5 +817,84 @@ describe('an account of the move is closed under the page', () => {
     expect(seen.sends).toEqual([
       expect.objectContaining({ fromAccountId: HOLIDAY_ID, toAccountId: MAIN_ACCOUNT_ID }),
     ]);
+  });
+});
+
+/*
+  The receipt replaces the PIN step, and the PIN boxes were disabled for the send: a browser hands
+  their focus to `body`, where a screen reader says nothing of the receipt. The title takes that
+  lost focus. TransferPage.test.tsx has the same two cases for the transfer to another person.
+*/
+describe('internal transfer: the receipt takes the focus the send lost', () => {
+  let stopFocusFixup: () => void;
+  beforeEach(() => {
+    stopFocusFixup = emulateFocusFixup();
+  });
+  afterEach(() => {
+    stopFocusFixup();
+  });
+
+  /** €50 from Main Account to Rainy Day, on the PIN step before its first digit. */
+  async function toPin() {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+  }
+
+  it('the sixth digit of the PIN leaves focus on the receipt’s title, read once, and Tab goes on to View History', async () => {
+    await toPin();
+    await enterPin();
+
+    const title = await screen.findByText('Transfer Complete!');
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(title.tagName).toBe('P');
+    expect(title).toHaveAttribute('tabindex', '-1');
+    expect(title.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).not.toHaveAttribute('aria-describedby');
+    }
+
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'View History' })).toHaveFocus();
+  });
+
+  it('leaves focus where the visitor put it during the send', async () => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let sent = false;
+    server.use(
+      // Returns nothing, so the send goes on to the mock's own handler once answered.
+      http.post('*/api/transfers/internal', async () => {
+        sent = true;
+        await held;
+      }),
+    );
+    await toPin();
+    await enterPin();
+    await waitFor(() => expect(sent).toBe(true));
+
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'Somewhere else';
+    document.body.append(elsewhere);
+    try {
+      elsewhere.focus();
+      expect(elsewhere).toHaveFocus();
+
+      answer();
+      const title = await screen.findByText('Transfer Complete!');
+      await settle();
+      expect(elsewhere).toHaveFocus();
+      expect(title).not.toHaveFocus();
+    } finally {
+      // The handler is parked on this promise: a failed assertion must not leave it hanging.
+      answer();
+      elsewhere.remove();
+    }
   });
 });

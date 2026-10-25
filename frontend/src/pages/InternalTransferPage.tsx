@@ -33,6 +33,7 @@ import {
   useTransferInternalMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
+import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
 import { usePageRead } from '../hooks/usePageRead';
@@ -245,6 +246,8 @@ export function InternalTransferPage() {
   const settledPress = useSettledPress(verifyRequired, '', { afterLeaving: true });
 
   const [success, setSuccess] = useState<SuccessData | null>(null);
+  // The receipt's title takes the focus the send lost. TransferPage has the note.
+  const receiptTitle = useFocusWhenLost<HTMLParagraphElement>(!!success);
 
   // ===== RHF form (source / destination / amount) =====
   const [balanceBound, setBalanceBound] = useState(0);
@@ -617,7 +620,9 @@ export function InternalTransferPage() {
             <div className={styles.successIcon}>
               <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
             </div>
-            <Text className={styles.successTitle}>Transfer Complete!</Text>
+            <Text as="p" className={styles.successTitle} ref={receiptTitle} tabIndex={-1}>
+              Transfer Complete!
+            </Text>
             <Text className={styles.successAmount}>{formatCurrency(success.amount)}</Text>
             {success.replayed && (
               <MessageBar intent="info" role="status">
