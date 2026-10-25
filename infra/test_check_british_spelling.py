@@ -456,6 +456,16 @@ class ScriptTests(unittest.TestCase):
         self.allowed.write_text('color | no reason\n', encoding='utf-8')
         self.assertEqual(run(self.write('a.md', 'Fine.\n'))[0], 2)
 
+    def test_a_reason_with_a_percent_sign_and_a_line_break_stays_one_annotation(self):
+        def fails():
+            raise OSError('fatal: one\nhint: 100% two')
+        self.addCleanup(setattr, check, 'tracked', check.tracked)
+        check.tracked = fails
+        code, said = run()
+        self.assertEqual(code, 2)
+        self.assertEqual(said.splitlines(),
+                         ['::error::The spelling was not checked: fatal: one%0Ahint: 100%25 two'])
+
 
 class RepositoryTests(unittest.TestCase):
     def test_it_reads_the_entry_page_and_more_than_a_handful_of_markdown_files(self):
