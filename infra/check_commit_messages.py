@@ -40,6 +40,8 @@ import re
 import subprocess
 import sys
 
+from workflow_commands import annotation, utf8_stdout
+
 CREDIT = 'a line that credits someone'
 MENTION = 'an at-sign before a name, outside backticks'
 
@@ -96,20 +98,13 @@ def commits(base, head):
     return hashes
 
 
-def annotation(text):
-    """One line of an error annotation: GitHub reads %, a carriage return and a line feed as its
-    own, so each is written the way its runner unescapes it."""
-    return '::error::' + text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-
-
 def main(arguments=None):
     parser = argparse.ArgumentParser(description='Fail on a line that credits someone or on an '
                                                  'at-sign before a name in a commit message.')
     parser.add_argument('base', help='the ref whose commits are not read, such as origin/main')
     parser.add_argument('head', help='the ref whose commits are read, such as HEAD')
     options = parser.parse_args(arguments)
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
+    utf8_stdout()
     read, left_out, found = 0, 0, []
     try:
         for commit in commits(options.base, options.head):

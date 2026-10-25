@@ -70,6 +70,8 @@ import re
 import subprocess
 import sys
 
+from workflow_commands import annotation, utf8_stdout
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 WORDS = HERE / 'british_spelling_words.txt'
@@ -317,17 +319,9 @@ def tracked():
     return paths
 
 
-def annotation(path, line, text):
-    """One line of an error annotation: GitHub reads %, a carriage return and a line feed as its
-    own, so each is written the way its runner unescapes it."""
-    text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-    return f'::error file={path},line={line}::{text}'
-
-
 def main(arguments=None):
     arguments = sys.argv[1:] if arguments is None else arguments
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
+    utf8_stdout()
     found, used = [], set()
     try:
         words, phrases = read_words(WORDS.read_text(encoding='utf-8'))
@@ -345,15 +339,16 @@ def main(arguments=None):
                 if not reasons:
                     found.append(finding)
     except (Unreadable, OSError, UnicodeError) as error:
-        print(f'::error::The spelling was not checked: {error}')
+        print(annotation(f'The spelling was not checked: {error}'))
         return 2
     for path, number, word, british, _ in found:
-        print(annotation(path, number, f'{path}:{number}: "{word}" is "{british}" in British spelling'))
+        print(annotation(f'{path}:{number}: "{word}" is "{british}" in British spelling',
+                         file=path, line=number))
     idle = [] if arguments else [entry for entry in allowed if entry[-1] not in used]
     for word, pattern, text, _, number in idle:
-        print(annotation(f'infra/{ALLOWED.name}', number,
-                         f'infra/{ALLOWED.name}:{number}: allows "{word}" in {pattern} on a line '
-                         f'with "{text}", and no such word is there any more: delete the line'))
+        print(annotation(f'infra/{ALLOWED.name}:{number}: allows "{word}" in {pattern} on a line '
+                         f'with "{text}", and no such word is there any more: delete the line',
+                         file=f'infra/{ALLOWED.name}', line=number))
     if found or idle:
         advice = (' If a word is a name, put it in backticks, or add its line to '
                   'infra/british_spelling_allowed.txt.') if found else ''
