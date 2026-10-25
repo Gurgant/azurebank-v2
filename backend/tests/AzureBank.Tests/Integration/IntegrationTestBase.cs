@@ -52,14 +52,40 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
     protected async Task<(string Token, Guid UserId, Guid AccountId)> RegisterTestUserAsync()
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
+        var registered = await RegisterAsync(
+            $"test_user_{uniqueId}", $"test{uniqueId}@example.com", "Test", "User");
 
+        return (registered.Token.AccessToken, registered.User.Id, registered.Account.Id);
+    }
+
+    /// <summary>
+    /// Registers a new user to receive a transfer, and returns the handle the transfer names. The
+    /// name is "Recipient User", which the API masks as "Recipient U." on the sender's receipt.
+    /// </summary>
+    protected async Task<(string AzureTag, Guid UserId, Guid AccountId, string Token)> RegisterRecipientAsync()
+    {
+        var uniqueId = Guid.NewGuid().ToString("N")[..8];
+        var azureTag = $"recipient_{uniqueId}";
+        var registered = await RegisterAsync(
+            azureTag, $"recipient{uniqueId}@example.com", "Recipient", "User");
+
+        return (azureTag, registered.User.Id, registered.Account.Id, registered.Token.AccessToken);
+    }
+
+    /// <summary>
+    /// Registers one user with <see cref="TestUserPassword"/>. A refused registration fails the
+    /// test here, before a later step could fail for a reason that hides it.
+    /// </summary>
+    private async Task<RegisterResponse> RegisterAsync(
+        string azureTag, string email, string firstName, string lastName)
+    {
         var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
-            AzureTag = $"test_user_{uniqueId}",
-            Email = $"test{uniqueId}@example.com",
+            AzureTag = azureTag,
+            Email = email,
             Password = TestUserPassword,
-            FirstName = "Test",
-            LastName = "User"
+            FirstName = firstName,
+            LastName = lastName
         }, JsonOptions);
 
         response.EnsureSuccessStatusCode();
@@ -67,11 +93,7 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
         var result = await response.Content
             .ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
 
-        return (
-            result!.Data!.Token.AccessToken,
-            result.Data.User.Id,
-            result.Data.Account.Id
-        );
+        return result!.Data!;
     }
 
     /// <summary>

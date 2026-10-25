@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
-using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Tests.Fixtures;
@@ -81,17 +80,7 @@ public class TransferPinVerificationTests : IntegrationTestBase
     {
         var (senderToken, _, senderAccount) = await RegisterTestUserAsync();
 
-        var uniqueId = Guid.NewGuid().ToString("N")[..8];
-        var recipientTag = $"recipient_{uniqueId}";
-        var registered = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-        {
-            AzureTag = recipientTag,
-            Email = $"recipient{uniqueId}@example.com",
-            Password = "TestPass123!",
-            FirstName = "Recipient",
-            LastName = "User"
-        }, JsonOptions);
-        registered.EnsureSuccessStatusCode();
+        var recipientTag = (await RegisterRecipientAsync()).AzureTag;
 
         await DepositAsync(senderToken, senderAccount, funding);
         if (enrolPin)
