@@ -4,6 +4,7 @@ import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { emulateFocusFixup } from '../../test/outage';
+import { FLUENT_STATES, paintedIn, type FluentState } from '../../test/fluentStates';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -799,6 +800,30 @@ describe('ConfirmDialog', () => {
       });
     } finally {
       stopFixup();
+    }
+  });
+});
+
+describe('ConfirmDialog — the danger variant', () => {
+  it('keeps its confirm button red with white text in every state Fluent restyles', () => {
+    // Fluent's own button paints a press under `:active:focus-visible` as well as `:hover:active`,
+    // in its grey with dark text: Space held on the focused button is a press with no pointer.
+    renderOpen({ variant: 'danger' });
+    const fill: Record<FluentState, string> = {
+      rest: tokens.colorStatusDangerBackground3,
+      hover: tokens.colorStatusDangerBackground3Hover,
+      'pointer press': tokens.colorStatusDangerBackground3Pressed,
+      'key press': tokens.colorStatusDangerBackground3Pressed,
+    };
+    for (const state of FLUENT_STATES) {
+      expect({ state, fill: paintedIn(confirmButton(), state, 'background-color') }).toEqual({
+        state,
+        fill: fill[state],
+      });
+      expect({ state, text: paintedIn(confirmButton(), state, 'color') }).toEqual({
+        state,
+        text: tokens.colorNeutralForegroundStaticInverted,
+      });
     }
   });
 });
