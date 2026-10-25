@@ -31,7 +31,7 @@ import {
   InternalTransferPage,
   SettingsPage,
   AboutPage,
-  NotFoundRoute,
+  NotFoundPage,
 } from './pages';
 
 // ============================================
@@ -147,7 +147,8 @@ const router = createBrowserRouter(
             `replace` so the back button does not bounce off the redirect. */}
         <Route path="/profile" element={<Navigate to="/settings" replace />} />
 
-        {/* Public on purpose, and shell-wrapped only when signed in — see ShellOrBare. */}
+        {/* Public on purpose, shell-wrapped only when signed in, and held while the session is
+            checked — see ShellOrBare. */}
         <Route
           path="/about"
           handle={{ title: 'About this project' }}
@@ -190,8 +191,16 @@ const router = createBrowserRouter(
         {/* Every address no route above names: "Page not found", with the address left in the bar
             and one way back, Home when signed in and sign-in otherwise. Shell-wrapped only when
             signed in, as /about is, and held while the session is checked, as a guarded page is:
-            see NotFoundRoute. */}
-        <Route path="*" handle={{ title: 'Page not found' }} element={<NotFoundRoute />} />
+            see ShellOrBare. */}
+        <Route
+          path="*"
+          handle={{ title: 'Page not found' }}
+          element={
+            <ShellOrBare>
+              <NotFoundPage />
+            </ShellOrBare>
+          }
+        />
       </>
     </Route>,
   ),

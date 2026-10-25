@@ -16,4 +16,4 @@ export { TransferPage } from './TransferPage';
 export { InternalTransferPage } from './InternalTransferPage';
 export { SettingsPage } from './SettingsPage';
 export { AboutPage } from './AboutPage';
-export { NotFoundRoute } from './NotFoundPage';
+export { NotFoundPage } from './NotFoundPage';
