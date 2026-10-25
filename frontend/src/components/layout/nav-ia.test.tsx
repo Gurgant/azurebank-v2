@@ -260,7 +260,8 @@ describe('Sidebar footer', () => {
 /*
   The row behind "More" on the phone, in use. What it shows is held above; what a press does was
   not: every control that leaves also closes the row, so that no menu hangs over the page just
-  arrived at, and Escape closes it and puts focus back on the button that opened it.
+  arrived at, and Escape closes it and puts focus back on the button that opened it. Sign out
+  leaves only once the server has answered, so it keeps the row open.
 */
 describe('BottomNav — the row behind More, in use', () => {
   function Where() {
@@ -331,7 +332,7 @@ describe('BottomNav — the row behind More, in use', () => {
     expectRowClosed();
   });
 
-  it('Sign out asks for the sign-out once, closes the row and goes nowhere by itself', () => {
+  it('Sign out asks for the sign-out once, keeps the row open and goes nowhere by itself', () => {
     let asked = 0;
     renderBar(() => {
       asked += 1;
@@ -341,7 +342,10 @@ describe('BottomNav — the row behind More, in use', () => {
     fireEvent.click(screen.getByRole('button', { name: /sign out/i }));
 
     expect(asked).toBe(1);
-    expectRowClosed();
+    // The one control of the row that stays: the sign-out is still to be answered, and the row
+    // keeps the busy Sign out and the wait's words in view until it is.
+    expect(more()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
     // Where the visitor lands is the caller's to decide, once the server has signed them out.
     expect(where()).toBe('/dashboard');
   });
