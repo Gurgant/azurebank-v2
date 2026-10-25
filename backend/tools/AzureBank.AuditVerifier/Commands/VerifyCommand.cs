@@ -841,6 +841,29 @@ public static class VerifyCommand
     public static int CombineExitCodes(int fromParser, int fromHandler) =>
         fromParser != 0 ? UsageError : fromHandler;
 
+    internal static void Answer(int exitCode, IEnumerable<string> lines)
+    {
+        /*
+          THE VERDICT IS RECORDED BEFORE IT IS PRINTED. Writing to a closed stdout -- piping this
+          into `head -1`, say -- throws, and an exception escaping the handler is turned into
+          exit 1 by the framework, which in this tool means CHAIN BROKEN. Assigning first means a
+          broken pipe costs the operator the text and not the answer.
+        */
+        Environment.ExitCode = exitCode;
+
+        try
+        {
+            foreach (var line in lines)
+            {
+                Console.WriteLine(line);
+            }
+        }
+        catch (IOException)
+        {
+            // Nothing is reading. The exit code already carries the verdict.
+        }
+    }
+
     public static Command Create(IServiceProvider services)
     {
         var command = new Command(
@@ -857,25 +880,7 @@ public static class VerifyCommand
             */
             var (exitCode, lines) = await RunAsync(services, invocation.GetCancellationToken());
 
-            /*
-              THE VERDICT IS RECORDED BEFORE IT IS PRINTED. Writing to a closed stdout -- piping this
-              into `head -1`, say -- throws, and an exception escaping the handler is turned into
-              exit 1 by the framework, which in this tool means CHAIN BROKEN. Assigning first means a
-              broken pipe costs the operator the text and not the answer.
-            */
-            Environment.ExitCode = exitCode;
-
-            try
-            {
-                foreach (var line in lines)
-                {
-                    Console.WriteLine(line);
-                }
-            }
-            catch (IOException)
-            {
-                // Nothing is reading. The exit code already carries the verdict.
-            }
+            Answer(exitCode, lines);
         });
 
         return command;

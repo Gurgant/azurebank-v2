@@ -102,21 +102,7 @@ public static class NotifyCommand
             var contact = invocation.ParseResult.GetValueForOption(contactOption) ?? string.Empty;
             var (exitCode, lines) = await RunAsync(services, directory, contact, invocation.GetCancellationToken());
 
-            // Recorded before printed, for the reason every sibling records: writing to a closed
-            // stdout throws, an escaping exception becomes exit 1, and 1 means CHAIN BROKEN.
-            Environment.ExitCode = exitCode;
-
-            try
-            {
-                foreach (var line in lines)
-                {
-                    Console.WriteLine(line);
-                }
-            }
-            catch (IOException)
-            {
-                // A broken pipe costs the operator the text, never the answer.
-            }
+            VerifyCommand.Answer(exitCode, lines);
         });
 
         return command;

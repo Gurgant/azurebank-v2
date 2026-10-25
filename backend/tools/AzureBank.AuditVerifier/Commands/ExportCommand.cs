@@ -125,21 +125,7 @@ public static class ExportCommand
             var path = invocation.ParseResult.GetValueForArgument(pathArgument);
             var (exitCode, lines) = await RunAsync(services, path, invocation.GetCancellationToken());
 
-            // Recorded before printed. Writing to a closed stdout throws, an escaping exception
-            // becomes exit 1, and 1 in this tool means CHAIN BROKEN.
-            Environment.ExitCode = exitCode;
-
-            try
-            {
-                foreach (var line in lines)
-                {
-                    Console.WriteLine(line);
-                }
-            }
-            catch (IOException)
-            {
-                // A broken pipe costs the operator the text, never the answer.
-            }
+            VerifyCommand.Answer(exitCode, lines);
         });
 
         return command;

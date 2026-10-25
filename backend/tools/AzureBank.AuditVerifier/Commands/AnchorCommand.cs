@@ -54,21 +54,7 @@ public static class AnchorCommand
         {
             var (exitCode, lines) = await RunAsync(services, invocation.GetCancellationToken());
 
-            // Recorded before printed, for the reason verify records: writing to a closed stdout
-            // throws, and an escaping exception becomes exit 1 -- which in this tool means BROKEN.
-            Environment.ExitCode = exitCode;
-
-            try
-            {
-                foreach (var line in lines)
-                {
-                    Console.WriteLine(line);
-                }
-            }
-            catch (IOException)
-            {
-                // A broken pipe costs the operator the text, never the answer.
-            }
+            VerifyCommand.Answer(exitCode, lines);
         });
 
         return command;
