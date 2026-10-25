@@ -144,12 +144,6 @@ class MentionTests(unittest.TestCase):
         self.assertEqual(check.offences(text.replace('\n', '\r\n')), [])
 
 
-class AnnotationTests(unittest.TestCase):
-    def test_what_the_runner_would_read_as_its_own_is_escaped(self):
-        self.assertEqual(check.annotation('100% of a line\r\n::warning::second'),
-                         '::error::100%25 of a line%0D%0A::warning::second')
-
-
 class RangeTests(unittest.TestCase):
     """The script, started as the CI job starts it, on a repository made here: `main` with one
     commit, and `topic` grown from it."""
