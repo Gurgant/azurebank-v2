@@ -111,7 +111,9 @@ export const useTransferWizardStyles = makeStyles({
     background: 'transparent',
     textAlign: 'center',
     width: '170px',
-    '::placeholder': { color: colors.neutral[300] },
+    // The hint "0" is read, so it takes the token of a Fluent field's hint, as `moneyDialogStyles`
+    // does: 4.95 to 1 on the card in the light theme and 5.11 to 1 in the dark one.
+    '::placeholder': { color: tokens.colorNeutralForeground4 },
   },
   // Words to read, so the red that is for text on a pale ground (`error.dark`) and not the red
   // of an icon (`error.main`): at 13 px that one measured 3.56 to 1 on the canvas and 3.92 on a

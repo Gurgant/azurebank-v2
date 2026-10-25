@@ -502,7 +502,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           </div>
 
           <div className={styles.amountSection}>
-            <Text className={styles.amountLabel}>Enter amount</Text>
+            <Text className={styles.amountLabel}>Amount</Text>
             <AmountField
               control={control}
               name="amount"
