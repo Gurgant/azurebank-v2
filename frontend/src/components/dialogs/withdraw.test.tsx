@@ -707,12 +707,15 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
   });
 
   it('gates a PIN-less user to /pin-setup instead of the withdraw form (hasPin=false)', async () => {
-    renderWithdraw(storeWithUser(false));
+    const { router } = renderWithdraw(storeWithUser(false));
 
     expect(screen.getByText('Set up a PIN to withdraw')).toBeInTheDocument();
     expect(screen.queryByText('Select Account')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Set up PIN' }));
     expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/accounts',
+    );
   });
 
   it('disables Continue and hints when the amount exceeds the balance', async () => {
@@ -1435,7 +1438,9 @@ describe('withdraw — choosing the account, and what the dialog does with the r
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
     expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
-    expect(router.state.location.search).toBe('?returnTo=/accounts');
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/accounts',
+    );
     expect(withdrawals).toBe(0);
   });
 

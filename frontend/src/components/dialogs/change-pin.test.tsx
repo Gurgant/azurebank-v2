@@ -2,7 +2,7 @@ import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
@@ -27,15 +27,6 @@ afterEach(() => {
  * is quoted beside each assertion that depends on it.
  */
 
-function PinSetupProbe() {
-  return (
-    <>
-      <div>PIN SETUP PAGE</div>
-      <div data-testid="pin-setup-search">{useLocation().search}</div>
-    </>
-  );
-}
-
 /** Settings, signed in as `user`, with no live getMe subscription (settings.test.tsx's reason). */
 async function renderSettings(user: MockSessionUser = MOCK_USER) {
   seedMockSession(user);
@@ -45,15 +36,15 @@ async function renderSettings(user: MockSessionUser = MOCK_USER) {
     meta: { arg: { endpointName: 'getMe' } },
     payload: { user: { ...user } },
   });
-  renderWithProviders(
+  const { router } = renderWithProviders(
     <Routes>
       <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/pin-setup" element={<PinSetupProbe />} />
+      <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
     </Routes>,
     { store, routerEntries: ['/settings'] },
   );
   await screen.findByText(`${user.firstName} ${user.lastName}`);
-  return store;
+  return { store, router };
 }
 
 async function openDialog() {
@@ -124,14 +115,16 @@ describe('Settings — the PIN row', () => {
       measured on 2026-09-11: {pin, password} -> 200. So the row goes to the page that asks for
       the password, and the query string carries a PATH and nothing else.
     */
-    await renderSettings({ ...MOCK_USER, hasPin: false });
+    const { router } = await renderSettings({ ...MOCK_USER, hasPin: false });
 
     expect(screen.getByText('Not set up yet.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Change PIN' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Set up PIN' }));
 
     expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
-    expect(screen.getByTestId('pin-setup-search')).toHaveTextContent('?returnTo=/settings');
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/settings',
+    );
   });
 });
 
@@ -195,7 +188,7 @@ describe('ChangePinDialog', () => {
       and GET /bff/auth/me straight after -> 200. The session survived, so the app must too:
       sessionMiddleware routes a 401 on its errorCode, and INVALID_PIN is one of the in-flow codes.
     */
-    const store = await renderSettings();
+    const { store } = await renderSettings();
     const dialog = await openDialog();
 
     await fillAll('000000', '246802');

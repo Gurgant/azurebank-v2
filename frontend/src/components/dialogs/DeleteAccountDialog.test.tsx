@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
@@ -54,26 +54,12 @@ function seedTempFund() {
   });
 }
 
-/**
- * The PIN-setup destination, probed (register-handoff.test.tsx's idiom) so a test can assert the
- * WHOLE query string the handoff carries — a path route matches any search, so the route element
- * rendering alone would pass with returnTo absent, wrong, or with the PIN riding along.
- */
-function PinSetupProbe() {
-  return (
-    <>
-      <div>PIN SETUP PAGE</div>
-      <div data-testid="pin-setup-search">{useLocation().search}</div>
-    </>
-  );
-}
-
 function renderDialog(account = TEMP_FUND, store: TestStore = makeTestStore()) {
   const onClose = vi.fn();
   const { router } = renderWithProviders(
     <Routes>
       <Route path="/" element={<DeleteAccountDialog account={account} onClose={onClose} />} />
-      <Route path="/pin-setup" element={<PinSetupProbe />} />
+      <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'], store },
   );
@@ -366,9 +352,10 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
   it('PIN_REQUIRED navigates to /pin-setup?returnTo=/accounts', async () => {
     /*
       Measured: 422 PIN_REQUIRED before anything is spent. The returnTo carries a PATH and the
-      query string carries NOTHING else — asserted on the router's location and on the probe's raw
-      `search` with an exact match (`toBe`, not jest-dom's substring `toHaveTextContent`), so a
-      dropped returnTo, a wrong one, or PIN digits riding along all fail.
+      query string carries NOTHING else — asserted on the router's whole location with an exact
+      match (`toBe`, not jest-dom's substring `toHaveTextContent`): a path route matches any search,
+      so the stub rendering alone would pass with returnTo absent, wrong, or with the PIN riding
+      along.
     */
     seedTempFund();
     server.use(
@@ -388,7 +375,6 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(router.state.location.pathname + router.state.location.search).toBe(
       '/pin-setup?returnTo=/accounts',
     );
-    expect(screen.getByTestId('pin-setup-search').textContent).toBe('?returnTo=/accounts');
     expect(router.state.location.search).not.toContain(TEST_PIN);
   });
 
@@ -405,7 +391,6 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(router.state.location.pathname + router.state.location.search).toBe(
       '/pin-setup?returnTo=/accounts',
     );
-    expect(screen.getByTestId('pin-setup-search').textContent).toBe('?returnTo=/accounts');
     expect(mockState.stepUpAuthorizations.size).toBe(0);
   });
 

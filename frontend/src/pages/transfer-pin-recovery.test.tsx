@@ -166,10 +166,13 @@ describe('the PIN step recovers from what the server refuses', () => {
         problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'PIN must be set.' }),
       ),
     );
-    renderTransfer();
+    const { router } = renderTransfer();
     await reachPinStep();
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/transfer',
+    );
   });
 });
 
@@ -223,10 +226,13 @@ describe('the internal transfer recovers the same way', () => {
         problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'PIN must be set.' }),
       ),
     );
-    renderInternal();
+    const { router } = renderInternal();
     await reachInternalPinStep();
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/transfer/internal',
+    );
   });
 
   it('PIN_LOCKED shows the server horizon here too', async () => {

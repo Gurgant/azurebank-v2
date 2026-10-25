@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
@@ -9,23 +9,11 @@ import { advance, fakeClockUser, installFakeClock } from '../test/outage';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { RegisterPage } from './RegisterPage';
 
-// Probe the PIN-setup destination so the test can assert the returnTo the handoff carries, not just
-// that the route rendered.
-function PinSetupProbe() {
-  const returnTo = new URLSearchParams(useLocation().search).get('returnTo') ?? '';
-  return (
-    <>
-      <div>PIN SETUP PAGE</div>
-      <div data-testid="returnTo">{returnTo}</div>
-    </>
-  );
-}
-
 function RegisterHarness() {
   return (
     <Routes>
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/pin-setup" element={<PinSetupProbe />} />
+      <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
       <Route path="/dashboard" element={<div>DASHBOARD PAGE</div>} />
     </Routes>
   );
@@ -44,13 +32,15 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, email: st
 describe('register → PIN setup handoff', () => {
   it('sends a brand-new (PIN-less) user to /pin-setup with returnTo=/dashboard', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<RegisterHarness />, { routerEntries: ['/register'] });
+    const { router } = renderWithProviders(<RegisterHarness />, { routerEntries: ['/register'] });
 
     // The default MSW register handler returns a fresh user with hasPin:false.
     await fillAndSubmit(user, 'fresh@azurebank.dev');
 
     expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
-    expect(screen.getByTestId('returnTo')).toHaveTextContent('/dashboard');
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/dashboard',
+    );
     expect(screen.queryByText('DASHBOARD PAGE')).not.toBeInTheDocument();
   });
 
