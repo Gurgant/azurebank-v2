@@ -431,9 +431,11 @@ export function AccountsPage() {
     setIsWithdrawOpen(true);
   };
 
-  const handleTransfer = (e: React.MouseEvent) => {
+  // The account goes in the history entry's state, not the address: an account id in a URL
+  // would reach the browser's history, the server's logs and wherever the link is pasted.
+  const handleTransfer = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate('/transfer');
+    navigate('/transfer', { state: { fromAccountId: account.id } });
   };
 
   const handleAddAccount = () => {
@@ -598,7 +600,7 @@ export function AccountsPage() {
                   <button
                     className={styles.accountActionBtn}
                     aria-label={`Transfer from ${account.name}`}
-                    onClick={handleTransfer}
+                    onClick={(e) => handleTransfer(account, e)}
                   >
                     <ArrowSwap24Regular className={styles.actionBtnIcon} />
                     <Text className={styles.actionBtnText}>Transfer</Text>

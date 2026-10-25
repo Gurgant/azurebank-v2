@@ -21,8 +21,13 @@ import { COPY } from '../test/outage';
  * StepUpModal collected the PIN; it stays mounted below to prove it no longer appears.
  */
 
-/** The entries end on the page: one before it is where the browser's Back leads. */
-function renderTransfer(routerEntries: string[] = ['/']) {
+type RouterEntries = NonNullable<Parameters<typeof renderWithProviders>[1]>['routerEntries'];
+
+/**
+ * The entries end on the page: one before it is where the browser's Back leads. An entry may be
+ * `{ pathname: '/', state }`, the state a navigation to the page carries.
+ */
+function renderTransfer(routerEntries: RouterEntries = ['/']) {
   return renderWithProviders(
     <Routes>
       <Route
@@ -659,6 +664,113 @@ describe('external transfer (PR-11)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
     expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+  });
+});
+
+/*
+  The Transfer button on an account's card navigates here with `{ fromAccountId }` in the
+  history entry's state. That account comes before the primary while the form has never named
+  a source; it is only ever one of the accounts the page received.
+*/
+describe('a transfer started from an account card', () => {
+  function from(fromAccountId: unknown) {
+    return [{ pathname: '/', state: { fromAccountId } }];
+  }
+
+  function expectChosen(name: 'Main Account' | 'Rainy Day') {
+    const other = name === 'Main Account' ? 'Rainy Day' : 'Main Account';
+    expect(screen.getByRole('button', { name: `From ${name}` })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: `From ${other}` })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  }
+
+  it('chooses the account the state names, reviews it and sends from it', async () => {
+    const sends: { fromAccountId: string }[] = [];
+    server.use(
+      http.post('*/api/transfers', async ({ request }) => {
+        sends.push((await request.clone().json()) as { fromAccountId: string });
+      }),
+    );
+    renderTransfer(from(SAVINGS_ACCOUNT_ID));
+    await screen.findByText('Main Account');
+    expectChosen('Rainy Day');
+
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    expect(screen.getByText('From').parentElement).toHaveTextContent('FromRainy Day');
+
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(sends).toEqual([expect.objectContaining({ fromAccountId: SAVINGS_ACCOUNT_ID })]);
+  });
+
+  it('chooses the primary when the state names no account the page received', async () => {
+    renderTransfer(from('019f7b3f-0000-7000-8000-0000000000ff'));
+    await screen.findByText('Main Account');
+    expectChosen('Main Account');
+  });
+
+  it('chooses the primary when the id in the state is not a string', async () => {
+    renderTransfer(from(Number.NaN));
+    await screen.findByText('Main Account');
+    expectChosen('Main Account');
+  });
+
+  it('chooses the primary when the navigation carries no state', async () => {
+    renderTransfer(['/']);
+    await screen.findByText('Main Account');
+    expectChosen('Main Account');
+  });
+
+  it("gives way to the visitor's own choice of another card", async () => {
+    renderTransfer(from(SAVINGS_ACCOUNT_ID));
+    await screen.findByText('Main Account');
+    await userEvent.click(screen.getByRole('button', { name: 'From Main Account' }));
+    expectChosen('Main Account');
+  });
+
+  it('does not stand in once the closed-account rule has cleared the choice', async () => {
+    /*
+      The mint answers ACCOUNT_NOT_FOUND and the list cannot be read again, so Rainy Day is
+      still listed. The choice is cleared, and the account the state named does not come back.
+    */
+    renderTransfer(from(SAVINGS_ACCOUNT_ID));
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText('Digit 1 of 6');
+    server.use(
+      http.get('*/api/accounts', () => HttpResponse.error()),
+      http.post('*/api/transfers/authorizations', () =>
+        problem({
+          status: 404,
+          errorCode: 'ACCOUNT_NOT_FOUND',
+          detail: `Account with identifier '${SAVINGS_ACCOUNT_ID}' was not found.`,
+        }),
+      ),
+    );
+    await enterPin();
+
+    expect(await screen.findByText(ACCOUNT_CLOSED)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'From Rainy Day' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'From Main Account' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 });
