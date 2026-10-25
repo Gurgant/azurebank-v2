@@ -261,17 +261,26 @@ describe('the confirm wait', () => {
 
   /**
    * Patches the cached accounts while the PIN step is open, as a change elsewhere in the tab would,
-   * then waits for the page to see it: RTK hands a cache patch to its subscribers on the next
-   * animation frame, long before a person has typed six digits.
+   * then waits for the page to see it, long before a person has typed six digits. RTK hands a
+   * cache patch to its subscribers later than the dispatch, on the next animation frame by
+   * default, and the PIN step draws nothing from the balance to wait for. So the helper waits for
+   * the store's own notice to its subscribers, the page's among them, and lets the page render
+   * inside `act`.
    */
   async function patchAccountsUnderThePinStep(
     store: ReturnType<typeof renderTransfer>['store'],
     patch: (accounts: AccountResponse[]) => AccountResponse[] | void,
   ) {
-    act(() => {
+    await act(async () => {
+      const told = new Promise<void>((resolve) => {
+        const unsubscribe = store.subscribe(() => {
+          unsubscribe();
+          resolve();
+        });
+      });
       store.dispatch(apiSlice.util.updateQueryData('getAccounts', undefined, patch));
+      await told;
     });
-    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   }
 
   /** Nothing is pending, so nothing may say it is waiting — 25 s on, past both thresholds. */
@@ -626,6 +635,11 @@ describe.each([
         expect(within(bar).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
         return bar;
       });
+      // The bar is on screen before the page's effects for that render have run, and they are
+      // what sees the first wait end: a Retry pressed before them is spent on that wait, and
+      // nothing lands on the next bar. No person presses inside that gap, so the test lets the
+      // render finish first.
+      await act(async () => {});
 
       holdNext = true;
       const retriedAt = Date.now();
@@ -773,11 +787,16 @@ describe.each([
   });
 
   it('while the accounts first load, the form waits for them: nothing else can start beside it', async () => {
-    let release: () => void = () => {};
+    // The hint is drawn on the first render, before the request has reached the handler, so the
+    // handler hands out its release through a promise that is awaited before releasing.
+    let handOver: (release: () => void) => void = () => {};
+    const held = new Promise<() => void>((resolve) => {
+      handOver = resolve;
+    });
     server.use(
       // Held, then handed on to the mock's own handler, which answers with the seeded accounts.
       http.get('*/api/accounts', async () => {
-        await new Promise<void>((resolve) => (release = resolve));
+        await new Promise<void>((resolve) => handOver(resolve));
       }),
     );
     try {
@@ -788,11 +807,12 @@ describe.each([
       expect(screen.queryByLabelText('Recipient handle')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Review Transfer' })).not.toBeInTheDocument();
 
+      const release = await held;
       release();
       expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
       expect(document.querySelector('[data-wait-hint]')).toBeNull();
     } finally {
-      release();
+      void held.then((release) => release());
     }
   });
 });
