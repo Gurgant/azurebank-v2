@@ -1,14 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components';
 import { colors, transitions } from '../../theme/tokens';
-
-// The ring the app draws on a container that was given focus (`index.css`), for the paragraphs
-// below that take focus when their view appears. Without it the browser draws its own default.
-const landingRing = {
-  ':focus-visible': {
-    outline: `2px solid ${tokens.colorStrokeFocus2}`,
-    outlineOffset: '2px',
-  },
-};
+import { landingRing } from '../../theme/landingRing';
 
 /**
  * The chrome and interior both money dialogs draw, in one place.
