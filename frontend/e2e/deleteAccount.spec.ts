@@ -71,7 +71,7 @@ async function openDeleteDialog(page: Page, name: string) {
 
   const dialog = page.getByRole('dialog', { name: 'Delete account?' });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Delete' }).click();
+  await dialog.getByRole('button', { name: 'Delete account' }).click();
   return dialog;
 }
 

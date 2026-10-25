@@ -4098,13 +4098,16 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     before anything looks at credentials. `/bff/auth/login` binds the shared `LoginRequest`, so
     `[ApiController]` rejects a malformed one inside the BFF and never calls the API at all.
 
-    Measured on :5000, 2026-08-07 — the mock answered 401 for the first of these:
+    For the password that is only a missing or over-long one: a password is verified here, not
+    chosen, so one that breaks the rule a chosen password keeps passes this line, reaches the
+    counter and the comparison below, and is answered as any wrong one. Measured on the
+    in-process host of the real BFF in front of the real API on 2026-10-25:
 
-      {"email":"a@b.dev","password":"Ab1!"}         -> 400, Password format only
-      {"email":"nobody@…","password":"ValidPass1!"} -> 401 INVALID_CREDENTIALS
+      {"email":"a@b.dev","password":"Ab1!"}            -> 401 INVALID_CREDENTIALS
+      {"email":"a@b.dev","password":<129 characters>}  -> 400, Password length only
 
-    Placement is also what keeps a malformed password away from the lockout counter, exactly as on
-    the real thing: the counter lives past this line.
+    Placement is also what keeps a body this line refuses away from the lockout counter, exactly
+    as on the real thing: the counter lives past this line.
   */
   const loginInvalid = modelStateFor(authBody.body, LOGIN_REQUEST);
   if (loginInvalid) return loginInvalid;

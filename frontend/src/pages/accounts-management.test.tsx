@@ -1,4 +1,5 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
+import { menuDividerClassNames, tokens } from '@fluentui/react-components';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -6,6 +7,7 @@ import { server } from '../mocks/server';
 import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { enterPin } from '../test/pinFlow';
+import { paintedIn } from '../test/fluentStates';
 import { AccountsPage } from './AccountsPage';
 
 /**
@@ -99,8 +101,7 @@ describe('delete account (A7)', () => {
     digit and DELETEs with it in the header. These run against the REAL mock handlers, so they are
     also the page-level pin of the mock's mint + gated DELETE. The surface is MoneyDialogShell's
     Fluent dialog — role 'dialog' named by its title, not the hand-rolled ConfirmDialog's
-    'alertdialog' — and the 'Delete' BUTTON shares its name with the menuitem, so the role is what
-    disambiguates.
+    'alertdialog'. The menu item is 'Delete' and the dialog's final button 'Delete account'.
   */
   it('deletes a zero-balance account after confirmation and the PIN', async () => {
     // Seed a deletable account directly (zero balance, not primary) — the create
@@ -120,7 +121,7 @@ describe('delete account (A7)', () => {
     await openMenu('Temp Fund');
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     expect(await screen.findByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
     // The sixth digit is the submit: mint, then DELETE with the minted id.
     await enterPin();
 
@@ -142,7 +143,7 @@ describe('delete account (A7)', () => {
     await openMenu('Rainy Day'); // balance 830 — the real business rule refuses it
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     await screen.findByRole('dialog', { name: 'Delete account?' });
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
     // A WRONG pin on purpose, as in ADR-0049's Row 2 (2026-09-06, main 19742ff: 422
     // NON_ZERO_BALANCE, PinAccessFailedCount unchanged). With the correct pin the counter reads 0
     // in either order (checkPinInBand resets it on a match); with this one a mock that consulted
@@ -172,7 +173,7 @@ describe('delete account (A7)', () => {
     await openMenu('Main Account');
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     await screen.findByRole('dialog', { name: 'Delete account?' });
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
     // This was measured with the CORRECT pin; the WRONG one here makes the counter assertion able
     // to fail — it pins the mock's shared guards-before-checkPinInBand order (the order
     // measured on the balance guard), not a measured wrong-pin-on-primary row.
@@ -188,5 +189,58 @@ describe('delete account (A7)', () => {
     expect(mockState.pinAttempts).toBe(0);
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  });
+});
+
+describe('what the card says about what each action does', () => {
+  it('sets Delete apart from the other items, with a separator directly before it', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    // Both shapes of the menu: with Set as primary (Rainy Day) and without (the primary itself).
+    for (const name of ['Rainy Day', 'Main Account']) {
+      await openMenu(name);
+      const deleteItem = await screen.findByRole('menuitem', { name: 'Delete' });
+      const before = deleteItem.previousElementSibling;
+      expect(before?.classList.contains(menuDividerClassNames.root)).toBe(true);
+      expect(
+        deleteItem.parentElement?.querySelectorAll(`.${menuDividerClassNames.root}`),
+      ).toHaveLength(1);
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull());
+    }
+  });
+
+  it('keeps Delete red in every state, and on the hover fill while it is pressed', async () => {
+    // Fluent's pressed fill, colorNeutralBackground1Pressed, leaves the red at 4.39:1 in light;
+    // on the hover fill it reads at 5.32:1.
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    await openMenu('Rainy Day');
+    const deleteItem = await screen.findByRole('menuitem', { name: 'Delete' });
+
+    const red = paintedIn(deleteItem, 'rest', 'color');
+    expect(red).not.toBe(tokens.colorNeutralForeground2);
+    for (const state of ['hover', 'pointer press'] as const) {
+      expect({ state, text: paintedIn(deleteItem, state, 'color') }).toEqual({ state, text: red });
+    }
+    expect(paintedIn(deleteItem, 'pointer press', 'background-color')).toBe(
+      tokens.colorNeutralBackground1Hover,
+    );
+  });
+
+  it('frames Deposit as money arriving and Withdraw as money leaving, as before', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Rainy Day' }));
+    const deposit = await screen.findByRole('dialog', { name: 'Deposit Money' });
+    expect(deposit.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('credit');
+    await userEvent.click(within(deposit).getByRole('button', { name: 'Close' }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Withdraw from Rainy Day' }));
+    const withdraw = await screen.findByRole('dialog', { name: 'Withdraw Money' });
+    expect(withdraw.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('debit');
+    await userEvent.click(within(withdraw).getByRole('button', { name: 'Close' }));
   });
 });

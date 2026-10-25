@@ -148,7 +148,11 @@ public sealed class DataAnnotationSchemaTransformer : IOpenApiSchemaTransformer
                     schema.MinLength = ValidationRules.PasswordMinLength;
                     schema.MaxLength = ValidationRules.PasswordMaxLength;
                     schema.Pattern = ValidationRules.PasswordPattern;
-                    schema.Description = "Password must contain at least one uppercase, one lowercase, and one digit.";
+                    // Every rule the pattern holds: a reader of the contract reads this, not the expression.
+                    schema.Description =
+                        $"{ValidationRules.PasswordMinLength} to {ValidationRules.PasswordMaxLength} printable ASCII "
+                        + "characters, with at least one upper-case letter, one lower-case letter, one digit and one "
+                        + "character that is none of these.";
                     break;
 
                 // AzureTag - minLength: 3, maxLength: 20, pattern for format

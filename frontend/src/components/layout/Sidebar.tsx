@@ -5,6 +5,7 @@ import { WaitHint } from '../feedback';
 import { Avatar } from '../shared/Avatar';
 import { Logo } from '../shared/Logo';
 import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
+import { SIGN_OUT_ACTION } from './signOutAction';
 import { SignOutIcon } from './SignOutIcon';
 
 // ============================================
@@ -314,13 +315,6 @@ const useStyles = makeStyles({
     },
   },
 
-  logoutButton: {
-    ':hover': {
-      backgroundColor: colors.semantic.error.light,
-      color: colors.semantic.error.main,
-    },
-  },
-
   // While the sign-out is under way the row takes no press, so it shows none on hover either.
   logoutBusy: {
     cursor: 'progress',
@@ -424,18 +418,14 @@ export function Sidebar({
             {/* While the sign-out is under way the button keeps its words and its focus and drops
                 the press: `disabled` would drop focus to the body. */}
             <button
-              className={mergeClasses(
-                styles.footerButton,
-                styles.logoutButton,
-                signingOut && styles.logoutBusy,
-              )}
+              className={mergeClasses(styles.footerButton, signingOut && styles.logoutBusy)}
               onClick={signingOut ? undefined : onLogout}
               aria-disabled={signingOut || undefined}
               aria-busy={signingOut || undefined}
               type="button"
             >
               <SignOutIcon busy={signingOut} className={styles.navIcon} />
-              <Text className={styles.navLabel}>Sign out</Text>
+              <Text className={styles.navLabel}>{SIGN_OUT_ACTION.label}</Text>
             </button>
             {/* A write: the server may already be ending the session, so there is no Stop. */}
             <WaitHint active={signingOut} kind="write" className={styles.signOutWait} />

@@ -22,10 +22,11 @@ import { createKeyborg } from 'keyborg';
  * Tabster reads that as a user moving focus into a modalizer that is not the active one, so instead
  * of activating the dialog's modalizer it schedules `_restoreModalizerFocus` 100ms later (tabster
  * 8.7.0, dist/index.js:5283). That pass finds no active modalizer to pull focus into and focuses
- * the last focusable element before the dialog's portal — on the settings page, "Log out" — and the
- * dialog, never active, is aria-hidden by the 250ms `hiddenUpdate` that `test/layout.ts` describes.
+ * the last focusable element before the dialog's portal — on the settings page, "Sign out" — and
+ * the dialog, never active, is aria-hidden by the 250ms `hiddenUpdate` that `test/layout.ts`
+ * describes.
  * A role query that lands before that passes; one that lands after cannot. Measured with a stack on
- * every focusin: the move to "Log out" came from `ModalizerAPI._restoreModalizerFocus` on a timer,
+ * every focusin: the move to "Sign out" came from `ModalizerAPI._restoreModalizerFocus` on a timer,
  * in a PASSING run as well, so the only thing that varied was how late the query arrived.
  * Whether a real browser can reach that timer was not measured: user-event exists only in tests.
  *
@@ -52,7 +53,7 @@ import { createKeyborg } from 'keyborg';
  * `keyborg.test.tsx` is the guard. With the call in `setup.ts` commented out, both of its tests
  * failed in 4 of 4 runs: a keyborg started after `userEvent.setup()` reported a `focus()` call as
  * `[undefined]`, and in the 3 runs that printed it, 500ms after the settings dialog opened, focus
- * was on "Log out", outside the dialog, with `aria-hidden="true"` on the surface. With the call,
+ * was on "Sign out", outside the dialog, with `aria-hidden="true"` on the surface. With the call,
  * both passed 4 of 4.
  *
  * Under eight busy cores, the whole of `settings.test.tsx` failed 2 of 10 runs without this install

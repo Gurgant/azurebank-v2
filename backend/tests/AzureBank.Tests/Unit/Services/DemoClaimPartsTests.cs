@@ -21,11 +21,11 @@ namespace AzureBank.Tests.Unit.Services;
 /// <para>
 /// THE PASSWORD HAS TWO READERS. A visitor reads it off a page and may type it on another device,
 /// so it is four groups of four from an alphabet without the characters that pass for one another.
-/// The API reads it at every sign-in: <c>LoginRequest.Password</c> carries
-/// <see cref="PasswordAttribute"/>, which holds it to <see cref="ValidationRules.PasswordPattern"/>
-/// before the credentials are looked at, so a password outside the pattern would be handed out and
-/// then refused as malformed. Identity's validators are the rules every other user's password is
-/// held to.
+/// The application holds it to the rule a chosen password keeps: <c>RegisterRequest.Password</c>
+/// carries <see cref="PasswordAttribute"/>, which holds it to
+/// <see cref="ValidationRules.PasswordPattern"/>, and Identity's validators are the rules every
+/// other user's password is held to. Sign-in reads no shape, so nothing else would refuse a copy's
+/// password that nobody could have chosen.
 /// </para>
 /// <para>
 /// A THOUSAND AT A TIME where the claim is about every password. A draw of sixteen characters has
@@ -88,10 +88,10 @@ public class DemoClaimPartsTests
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var owner = new ApplicationUser { AzureTag = "john_k7m2", FirstName = "John", LastName = "Smith" };
         users.PasswordValidators.Should().NotBeEmpty("ARRANGE: a host with no validator would pass anything");
-        var signInCheck = new PasswordAttribute();
+        var registrationCheck = new PasswordAttribute();
 
         var outsideThePattern = new List<string>();
-        var refusedAtSignIn = new List<string>();
+        var refusedAtRegistration = new List<string>();
         var refusedByIdentity = new List<string>();
         foreach (var password in AThousand())
         {
@@ -100,9 +100,9 @@ public class DemoClaimPartsTests
                 outsideThePattern.Add(password);
             }
 
-            if (!signInCheck.IsValid(password))
+            if (!registrationCheck.IsValid(password))
             {
-                refusedAtSignIn.Add(password);
+                refusedAtRegistration.Add(password);
             }
 
             foreach (var validator in users.PasswordValidators)
@@ -119,7 +119,7 @@ public class DemoClaimPartsTests
         using (new AssertionScope())
         {
             outsideThePattern.Should().BeEmpty("every password matches ValidationRules.PasswordPattern");
-            refusedAtSignIn.Should().BeEmpty("the sign-in request's own check reads every password as well formed");
+            refusedAtRegistration.Should().BeEmpty("the registration request's own check reads every password as well formed");
             refusedByIdentity.Should().BeEmpty("the API host's validators accept a copy's password as any user's");
         }
     }
@@ -169,7 +169,7 @@ public class DemoClaimPartsTests
         using (new AssertionScope())
         {
             password.Should().Be(
-                "Kp7m-Xw2R-hd9G-tQ4n", $"a password with {what} is refused at sign-in as malformed, so that draw is never answered");
+                "Kp7m-Xw2R-hd9G-tQ4n", $"a password with {what} breaks the rule a chosen password keeps, so that draw is never answered");
             places.Should().BeEmpty("two draws of sixteen were made, and no more");
         }
     }

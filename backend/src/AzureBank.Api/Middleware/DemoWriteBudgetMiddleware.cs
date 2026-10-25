@@ -1,7 +1,6 @@
-using System.Security.Claims;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Security;
 using AzureBank.Infrastructure.Data;
-using AzureBank.Shared.Constants;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
@@ -78,7 +77,7 @@ public sealed class DemoWriteBudgetMiddleware
     // injection.
     public async Task InvokeAsync(HttpContext context, AzureBankDbContext db)
     {
-        if (IsCounted(context) && !await CountOneAsync(db, ReadUserId(context), context.RequestAborted))
+        if (IsCounted(context) && !await CountOneAsync(db, context.User.RequireUserId(), context.RequestAborted))
         {
             throw DemoRefusalException.CopyLimit();
         }
@@ -134,23 +133,6 @@ public sealed class DemoWriteBudgetMiddleware
         copy.Writes += 1;
         await db.SaveChangesAsync(cancellationToken);
         return true;
-    }
-
-    private static Guid ReadUserId(HttpContext context)
-    {
-        // The same claim resolution as the controllers (GetCurrentUserId) and as
-        // IdempotencyMiddleware, with the same refusal.
-        var claim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? context.User.FindFirst("sub")?.Value;
-
-        if (claim is null || !Guid.TryParse(claim, out var userId))
-        {
-            // Unreachable behind [Authorize]; defensive for misconfiguration.
-            throw new AuthenticationException(
-                "A valid user identity is required.", ErrorCodes.TokenInvalid);
-        }
-
-        return userId;
     }
 }
 

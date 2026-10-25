@@ -4,21 +4,22 @@ import type { LightPalette } from './tokens';
  * The dark palette — derived by rule, not picked by eye.
  *
  * Every value here answers one question: **what plays this role when the ground is dark?** Roles, not
- * numbers: `neutral[700]` is "primary text", and its dark counterpart is whatever reads as primary
- * text on a dark card, not `neutral[200]` because 700 mirrors to 200 on a ten-step scale.
+ * numbers: `neutral[800]` is `text.primary`, and its dark counterpart is whatever reads as primary
+ * text on a dark card, not `neutral[100]` because 800 mirrors to 100 on a ten-step scale.
  *
  * The anchors are **Fluent's own dark theme**, measured from `azureBankDarkTheme` rather than
  * guessed, so the palette and the component library agree instead of fighting each other one control
- * at a time. The ones that mattered:
+ * at a time. The values are Fluent's own, before `fluentTheme.ts` gives its foregrounds the text
+ * roles below:
  *
  * | Fluent dark token              | value     | what it anchors here          |
  * | ------------------------------ | --------- | ----------------------------- |
  * | `colorNeutralBackground3`      | `#141414` | the canvas, BELOW the card    |
  * | `colorNeutralBackground1`      | `#292929` | the card itself               |
  * | `colorNeutralStroke3`          | `#3D3D3D` | the hairline between surfaces |
- * | `colorNeutralForeground2`      | `#D6D6D6` | primary text                  |
- * | `colorNeutralForeground3`      | `#ADADAD` | secondary text                |
- * | `colorNeutralForeground4`      | `#999999` | placeholder                   |
+ * | `colorNeutralForeground2`      | `#D6D6D6` | `neutral[700]`                |
+ * | `colorNeutralForeground3`      | `#ADADAD` | `neutral[500]`, text.tertiary |
+ * | `colorNeutralForeground4`      | `#999999` | `neutral[400]`                |
  * | `colorBrandForeground1`        | `#4C95D1` | the brand where it must READ  |
  * | `colorBrandBackground`         | `#0068A1` | the brand where it must FILL  |
  *
@@ -79,8 +80,9 @@ export const darkPalette: LightPalette = {
     // that contract is what makes a missing dark value a compile error rather than a dark screen.
     onBrandPlate: 'rgba(255, 255, 255, 0.15)',
     /**
-     * Neutrals are anchored to Fluent's dark foregrounds and strokes, so a heading in our palette and
-     * a Fluent control's label are the same grey rather than two greys that nearly match.
+     * Neutrals are anchored to Fluent's dark foregrounds and strokes. The three text roles are
+     * `neutral[800]`, `[600]` and `[500]`, as in light, and `fluentTheme.ts` gives Fluent's
+     * foregrounds the same three, so a heading here and a Fluent control's label are one grey.
      */
     neutral: {
       // A well is INSET, so it belongs between the ground and the card — in light that is #F9FAFB
@@ -92,11 +94,11 @@ export const darkPalette: LightPalette = {
       100: '#141414', // the canvas itself, mirroring light's neutral[100] === surfaces.canvas
       200: '#3D3D3D', // border light — colorNeutralStroke3
       300: '#525252', // border default — colorNeutralStroke2
-      400: '#999999', // placeholder — colorNeutralForeground4
-      500: '#ADADAD', // secondary text — colorNeutralForeground3
-      600: '#C2C2C2',
-      700: '#D6D6D6', // primary text — colorNeutralForeground2
-      800: '#EBEBEB', // heading
+      400: '#999999', // icons and inactive text — colorNeutralForeground4
+      500: '#ADADAD', // `text.tertiary` — colorNeutralForeground3
+      600: '#C2C2C2', // `text.secondary`
+      700: '#D6D6D6', // no role takes it — Fluent's own colorNeutralForeground2
+      800: '#EBEBEB', // `text.primary`
       900: '#FFFFFF', // the lightest, where light had the darkest
     },
     /**
@@ -127,6 +129,18 @@ export const darkPalette: LightPalette = {
   surfaces: {
     canvas: '#141414', // colorNeutralBackground3 — BELOW the card, as in light
     border: '#3D3D3D', // colorNeutralStroke3
+  },
+  /** The text roles of `tokens.ts` on the dark card; `disabled` and `danger` are Fluent's own. */
+  text: {
+    primary: '#EBEBEB',
+    secondary: '#C2C2C2',
+    tertiary: '#ADADAD',
+    disabled: '#5C5C5C',
+    link: '#4C95D1', // colors.brand[60] here, and Fluent's colorBrandForeground1
+    danger: '#E37D80',
+  },
+  stroke: {
+    subtle: '#3D3D3D', // surfaces.border
   },
   /**
    * Shadows carry more alpha and stay black.

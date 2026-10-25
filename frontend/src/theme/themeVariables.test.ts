@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colors, gradients, lightPalette, shadows, surfaces } from './tokens';
+import { colors, gradients, lightPalette, shadows, stroke, surfaces, text } from './tokens';
 import { darkPalette } from './darkPalette';
 import { toCssBlock, toDeclarations } from './cssVariables';
 import { readFileSync } from 'node:fs';
@@ -41,7 +41,7 @@ describe('theme variables', () => {
     // The end-to-end property, and the only one that catches a typo in `toVarRefs`'s prefix: walk
     // what the app actually uses, not what the palette happens to contain.
     const declared = new Set(toDeclarations(lightPalette).map(([name]) => name));
-    const referenced = JSON.stringify([colors, surfaces, shadows, gradients])
+    const referenced = JSON.stringify([colors, surfaces, text, stroke, shadows, gradients])
       .match(/--ab-[a-zA-Z0-9-]+/g)!
       .map((name) => name);
 
@@ -57,6 +57,10 @@ describe('theme variables', () => {
     expect(surfaces.canvas).toBe('var(--ab-surfaces-canvas)');
     expect(shadows.md).toBe('var(--ab-shadows-md)');
     expect(gradients.brand).toBe('var(--ab-gradients-brand)');
-    expect(JSON.stringify([colors, surfaces, shadows, gradients])).not.toMatch(/#[0-9A-Fa-f]{6}/);
+    expect(text.primary).toBe('var(--ab-text-primary)');
+    expect(stroke.subtle).toBe('var(--ab-stroke-subtle)');
+    expect(JSON.stringify([colors, surfaces, text, stroke, shadows, gradients])).not.toMatch(
+      /#[0-9A-Fa-f]{6}/,
+    );
   });
 });

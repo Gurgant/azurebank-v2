@@ -21,6 +21,7 @@ import {
   utilityPlaces,
 } from './navItems';
 import { BOTTOM_NAV_ROOM, bottomNavRoom } from './bottomNavRoom';
+import { SIGN_OUT_ACTION } from './signOutAction';
 import { SignOutIcon } from './SignOutIcon';
 
 // ============================================
@@ -483,7 +484,7 @@ export function BottomNav({ className, onLogout, signingOut = false }: BottomNav
               onClick={signingOut ? undefined : onLogout}
             >
               <SignOutIcon busy={signingOut} className={styles.icon} />
-              <Text className={styles.label}>Sign out</Text>
+              <Text className={styles.label}>{SIGN_OUT_ACTION.label}</Text>
             </button>
           )}
         </div>

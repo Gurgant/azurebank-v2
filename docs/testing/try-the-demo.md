@@ -245,7 +245,7 @@ Open **Settings**. Three things can be changed:
 
 Your name and the copy's email are shown and cannot be changed. Four more rows are there for
 show, each marked "Coming soon": password and two-factor, notifications, language, linked
-accounts. At the bottom is **Log out**.
+accounts. At the bottom, under Session, is **Sign out**.
 
 "Change your PIN" asks for the current PIN, a new one, and the new one again. If you change it,
 remember it: the page goes on printing "Demo PIN: 123456, unless you changed it."
@@ -322,8 +322,8 @@ Press **Sign out** at the bottom of the menu: on a long page, scroll down to it 
 step 6). You should see the sign-in page, offering the copy your browser remembers. Signing
 out does not forget the copy.
 
-On a phone the same button is under **More**, and Settings has **Log out**. The walk pressed
-the first of the three.
+On a phone the same button is under **More**, and Settings has **Sign out** too. The walk
+pressed the first of the three.
 
 You are also signed out by time: after 15 minutes with nothing done, and one hour after you
 signed in.

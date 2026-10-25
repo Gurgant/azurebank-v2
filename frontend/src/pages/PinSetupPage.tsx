@@ -22,7 +22,7 @@ import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { PinInput } from '../components/PinInput';
-import { WaitHint } from '../components/feedback';
+import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../api/problemMessages';
 
 // ============================================
@@ -116,6 +116,14 @@ interface SetupError {
   field: 'pin' | 'password';
 }
 
+/** What the page says while the login's lock holds the save, on the password field. */
+const LOCKED: SetupError = { message: 'Your account is locked.', field: 'password' };
+
+/** A lock the answer said the length of: the instant, on this browser's clock, that it ends. */
+interface Lock {
+  deadline: number;
+}
+
 /**
  * Only same-origin absolute paths are honored — never an open redirect (CWE-601). Rejects
  * protocol-relative `//host` AND the backslash variant `/\host` (and `/\/host`), which the
@@ -159,9 +167,18 @@ export function PinSetupPage() {
   */
   const [password, setPassword] = useState('');
   const [error, setError] = useState<SetupError | null>(null);
+  /*
+    The lock's countdown, kept apart from `error`: every edit of the boxes or of the password
+    clears `error`, and a lock that went with it would give the save back at the first keystroke.
+    A refusal of the lock sets a new one, so a lock answered again with the same seconds counts
+    from its own answer; only the countdown reaching zero clears it. Until then the page says the
+    account is locked and sends nothing.
+  */
+  const [lock, setLock] = useState<Lock | null>(null);
+  const shownError = lock ? LOCKED : error;
   const passwordRef = useRef<HTMLInputElement>(null);
-  const pinOwnsError = error?.field === 'pin';
-  const passwordOwnsError = error?.field === 'password';
+  const pinOwnsError = shownError?.field === 'pin';
+  const passwordOwnsError = shownError?.field === 'password';
   /*
     The boxes and the password are disabled while the save is out, so a refusal mostly arrives with
     focus on `body`; the PIN's Show button stays enabled and may still hold it. A refusal of the
@@ -189,6 +206,9 @@ export function PinSetupPage() {
   }, [user?.hasPin, navigate, target]);
 
   const handleConfirmComplete = async (confirmed: string) => {
+    // The lock is held here as well as at the two controls that call this, so that a way of
+    // sending added later is held without having to know about the lock.
+    if (lock) return;
     if (confirmed !== firstPin) {
       setError({ message: 'PINs do not match. Please try again.', field: 'pin' });
       setConfirmPin('');
@@ -215,10 +235,18 @@ export function PinSetupPage() {
         refusal = passwordError('That password is not correct.');
       } else if (problem.errorCode === 'ACCOUNT_LOCKED') {
         // Wrong passwords here count toward the SAME login lockout — say so, rather than leaving
-        // the user to discover it at the login screen.
-        refusal = passwordError(
-          'Too many incorrect passwords. Your account is locked; try again later.',
-        );
+        // the user to discover it at the login screen. The wait is counted down from the answer's
+        // seconds, never from its `lockedUntil` (a skewed clock); an answer that names no wait, or
+        // none left, is said without a countdown and holds nothing.
+        const seconds = problem.retryAfterSeconds;
+        if (seconds !== undefined && seconds > 0) {
+          setLock({ deadline: retryDeadline(seconds) });
+          refusal = LOCKED;
+        } else {
+          refusal = passwordError(
+            'Too many incorrect passwords. Your account is locked; try again later.',
+          );
+        }
       } else if (isServiceOutage(problem)) {
         // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'`
         // too, and the connection was not the problem. The PIN may have been saved, and the
@@ -320,10 +348,10 @@ export function PinSetupPage() {
               Guarded: PinInput fires this the instant the sixth digit lands, which on this step
               would submit before the password has been typed and spend a refusal to say so. The
               button below is the deliberate commit; auto-submit only survives for the case where
-              the password is already in hand.
+              the password is already in hand. A lock holds it as it holds the button.
             */
             onComplete={(value) => {
-              if (password.length > 0) void handleConfirmComplete(value);
+              if (password.length > 0 && !lock) void handleConfirmComplete(value);
             }}
             error={pinOwnsError}
             disabled={isLoading}
@@ -361,12 +389,23 @@ export function PinSetupPage() {
           </Field>
         )}
 
-        {error && (
+        {shownError && (
           <div role="alert" id={errorId} className={styles.fullError}>
             <MessageBar intent="error">
-              <MessageBarBody>{error.message}</MessageBarBody>
+              <MessageBarBody>{shownError.message}</MessageBarBody>
             </MessageBar>
           </div>
+        )}
+        {/* A sibling of the alert, not inside it: an alert is read whole, and the timer would have
+            it read again every second. It carries its own polite region. */}
+        {lock && (
+          <RetryCountdown
+            deadline={lock.deadline}
+            onElapsed={() => {
+              setLock(null);
+              setError(null);
+            }}
+          />
         )}
 
         <div className={styles.actions}>
@@ -386,7 +425,7 @@ export function PinSetupPage() {
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => void handleConfirmComplete(confirmPin)}
-              disabled={confirmPin.length !== 6 || password.length === 0 || isLoading}
+              disabled={confirmPin.length !== 6 || password.length === 0 || isLoading || !!lock}
             >
               {isLoading ? <Spinner size="tiny" /> : 'Set PIN'}
             </Button>

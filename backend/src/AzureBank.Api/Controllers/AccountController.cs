@@ -1,4 +1,5 @@
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
@@ -8,7 +9,6 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel;
-using System.Security.Claims;
 
 namespace AzureBank.Api.Controllers;
 
@@ -50,7 +50,7 @@ public class AccountController(
     [ProducesResponseType(typeof(ApiResponse<List<AccountResponse>>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts(CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var accounts = await _accountService.GetUserAccountsAsync(userId, cancellationToken);
         return Ok(ApiResponse<List<AccountResponse>>.Success(accounts));
     }
@@ -70,7 +70,7 @@ public class AccountController(
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ApiResponse<AccountResponse>>> GetAccount(Guid id, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var account = await _accountService.GetAccountByIdAsync(id, userId, cancellationToken);
         return Ok(ApiResponse<AccountResponse>.Success(account));
     }
@@ -92,7 +92,7 @@ public class AccountController(
     public async Task<ActionResult<ApiResponse<BalanceResponse>>> GetBalance(
         Guid id, [FromQuery] DateTime? at = null, CancellationToken cancellationToken = default)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var balance = await _accountService.GetBalanceAsync(id, userId, at, cancellationToken);
         return Ok(ApiResponse<BalanceResponse>.Success(balance));
     }
@@ -116,7 +116,7 @@ public class AccountController(
     public async Task<ActionResult<ApiResponse<AccountNumberResponse>>> GetFullAccountNumber(
         Guid id, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _accountService.GetFullAccountNumberAsync(id, userId, cancellationToken);
 
         // ASVS 14.3.2: the one response carrying the unmasked number must never land in
@@ -144,7 +144,7 @@ public class AccountController(
     {
         await _createValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var account = await _accountService.CreateAccountAsync(userId, request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
@@ -172,7 +172,7 @@ public class AccountController(
     {
         await _updateValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var account = await _accountService.UpdateAccountAsync(id, userId, request, cancellationToken);
         return Ok(ApiResponse<AccountResponse>.Success(account, "Account updated successfully"));
     }
@@ -193,7 +193,7 @@ public class AccountController(
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ApiResponse>> SetPrimaryAccount(Guid id, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         await _accountService.SetPrimaryAccountAsync(userId, id, cancellationToken);
         return Ok(ApiResponse.Success("Account set as primary"));
     }
@@ -240,7 +240,7 @@ public class AccountController(
         await _deletionAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var result = await _accountService.AuthoriseDeletionAsync(
-            GetCurrentUserId(), id, request.Pin, cancellationToken);
+            User.RequireUserId(), id, request.Pin, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Account closure authorised"));
@@ -286,18 +286,8 @@ public class AccountController(
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null,
         CancellationToken cancellationToken = default)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         await _accountService.DeleteAccountAsync(id, userId, stepUpAuthorizationId, cancellationToken);
         return Ok(ApiResponse.Success("Account deleted successfully"));
-    }
-
-    /// <summary>
-    /// Extracts the current user ID from JWT claims.
-    /// </summary>
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
-        return Guid.Parse(userIdClaim!);
     }
 }

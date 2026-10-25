@@ -4,6 +4,7 @@ import {
   Button,
   makeStyles,
   Menu,
+  MenuDivider,
   MenuItem,
   MenuList,
   MenuPopover,
@@ -351,6 +352,19 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
     transition: `all ${transitions.fast}`,
   },
+
+  // Fluent recolours a menu item's text on hover and on a press (and on nothing else: keyboard
+  // focus keeps the rest colour), so the red is set for both. `error.dark` is the red for words:
+  // 5.80:1 on the menu in light, 7.93:1 in dark. A press keeps the hover fill, where the red reads
+  // at 5.32:1 in light; on Fluent's pressed grey it would be 4.39:1.
+  deleteMenuItem: {
+    color: colors.semantic.error.dark,
+    ':hover': { color: colors.semantic.error.dark },
+    ':hover:active': {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+      color: colors.semantic.error.dark,
+    },
+  },
 });
 
 // ============================================
@@ -553,7 +567,13 @@ export function AccountsPage() {
                             Set as primary
                           </MenuItem>
                         )}
-                        <MenuItem onClick={() => setDeleteTarget(account)}>Delete</MenuItem>
+                        <MenuDivider />
+                        <MenuItem
+                          className={styles.deleteMenuItem}
+                          onClick={() => setDeleteTarget(account)}
+                        >
+                          Delete
+                        </MenuItem>
                       </MenuList>
                     </MenuPopover>
                   </Menu>

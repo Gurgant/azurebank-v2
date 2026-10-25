@@ -869,21 +869,20 @@ describe('contract: validation envelopes', () => {
 /**
  * The auth routes' own model-state gate.
  *
- * Three cases, and each is a POST to `/bff/auth/*` that spends an auth permit — the limiter runs
+ * Four cases, and each is a POST to `/bff/auth/*` that spends an auth permit — the limiter runs
  * before the body is read, so a request the gate rejects costs exactly what a successful sign-in
- * costs. This block takes the suite from six permits to nine.
+ * costs. With this file's own sign-in and its AzureTag rename, the file spends six.
  *
  * That ceiling is a LOCAL constraint, not a CI one: `ci.yml` starts the BFF with
  * `--RateLimiting:AuthPermitLimit=1000` precisely so the three real-stack suites cannot rate-limit
  * each other, and says so in its own comment. What it does mean is that running
- * `test:contract:real` twice inside a minute on a dev machine will 429 — which it already did at
- * six, since two runs are twelve, and at nine a single run leaves only one permit spare. Wait out
- * the window rather than debugging the failure.
+ * `test:contract:real` twice inside a minute on a dev machine will 429. Wait out the window rather
+ * than debugging the failure.
  *
  * The exhaustive matrix — absent vs null, whitespace, attribute ordering, wrong JSON types, the
  * register/login wording difference — lives in `mocks/fidelity.test.ts`, where it costs nothing.
  *
- * What these two buy that the mock-only ones cannot: they run against the REAL stack too, so they
+ * What these buy that the mock-only ones cannot: they run against the REAL stack too, so they
  * fail if the mock and the BFF ever disagree about this envelope again. They were added because
  * the mock answered 401 here, having never modelled the gate at all.
  *
@@ -891,26 +890,23 @@ describe('contract: validation envelopes', () => {
  * credential check and answers 200, so a mock that simply 400s every auth POST cannot pass.
  */
 describe('contract: the auth model-state gate', () => {
-  it('rejects a malformed password before it ever looks at credentials', async () => {
+  it('rejects an over-long password before it ever looks at credentials', async () => {
     /*
       `/bff/auth/login` binds the shared `LoginRequest`, so `[ApiController]` short-circuits inside
       the BFF and the API is never called. That makes this the FRAMEWORK envelope — no `detail`, no
-      `instance`, no `errorCode` — even though the DTO belongs to the API.
+      `instance`, no `errorCode` — even though the DTO belongs to the API. A password longer than
+      any account can hold is the one shape of password the gate refuses.
 
-      Observed 2026-08-07 on :5000:
-        {"email":"a@b.dev","password":"Ab1!"}
+      Observed 2026-10-25 on the in-process host of the real BFF in front of the real API:
+        {"email":"a@b.dev","password":<129 characters>}
         -> 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
                 "title":"One or more validation errors occurred.","status":400,
-                "errors":{"Password":["Password must be 8-128 characters and Password must contain
-                          at least one uppercase, one lowercase, one digit, and one special
-                          character."]},"traceId":"00-…"}
-
-      A wrong-but-well-formed password answers 401 INVALID_CREDENTIALS instead; that half is pinned
-      mock-side, because tripping it here would spend another auth permit for no extra coverage.
+                "errors":{"Password":["The field Password must be a string or array type with a
+                          maximum length of '128'."]},"traceId":"00-…"}
     */
     const { status, body } = await call('/bff/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email: 'a@b.dev', password: 'Ab1!' }),
+      body: JSON.stringify({ email: 'a@b.dev', password: 'a'.repeat(129) }),
     });
     const problem = asProblem(body);
 
@@ -922,9 +918,32 @@ describe('contract: the auth model-state gate', () => {
     expect(problem.errorCode).toBeUndefined();
     expect(problem.detail).toBeUndefined();
     expect((problem.errors as Record<string, string[]>).Password).toEqual([
-      'Password must be 8-128 characters and Password must contain at least one uppercase, ' +
-        'one lowercase, one digit, and one special character.',
+      "The field Password must be a string or array type with a maximum length of '128'.",
     ]);
+  });
+
+  it('answers a password that breaks the rule a chosen one keeps as any wrong password', async () => {
+    /*
+      A password is verified at sign-in, not chosen, so the gate lets this one through to the
+      API's credential check. An address nobody registered, so no fixture's lock is touched.
+
+      Observed 2026-10-25 on the in-process host of the real BFF in front of the real API:
+        {"email":"a@b.dev","password":"Ab1!"}
+        -> 401 {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+                "detail":"Invalid email or password. After 5 failed attempts, sign-in is paused
+                          for 15 minutes.","instance":"/api/auth/login",
+                "errorCode":"INVALID_CREDENTIALS","traceId":"…"}
+    */
+    const { status, body } = await call('/bff/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'a@b.dev', password: 'Ab1!' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(401);
+    expect(problem.errorCode).toBe('INVALID_CREDENTIALS');
+    expect(problem.instance).toBe('/api/auth/login');
+    expect(problem.errors).toBeUndefined();
   });
 
   it('validates a registration against the TRIMMED name, not the submitted one', async () => {

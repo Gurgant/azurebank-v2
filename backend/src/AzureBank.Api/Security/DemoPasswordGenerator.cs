@@ -10,12 +10,15 @@ namespace AzureBank.Api.Security;
 /// alphabet leaves out the six characters that pass for one another: I, O, l, o, 0 and 1.
 /// </para>
 /// <para>
-/// THE API READS IT AT EVERY SIGN-IN. <c>LoginRequest.Password</c> is held to
-/// <c>ValidationRules.PasswordPattern</c> before the credentials are looked at: an upper-case
-/// letter, a lower-case letter, a digit and a character that is none of the three. The hyphens are
-/// the last. The others are a matter of the draw, so a draw that lacks one is thrown away and made
-/// again: about one in twelve, nearly all of them for want of a digit, of which the alphabet has
-/// eight in fifty-six (<c>python -c "print((48/56)**16)"</c> prints 0.0848...).
+/// IT KEEPS THE RULE A CHOSEN PASSWORD KEEPS. Registration holds every password to
+/// <c>ValidationRules.PasswordPattern</c> (<c>[Password]</c> on <c>RegisterRequest</c>), and the
+/// API host's Identity validators ask for the same classes: an upper-case letter, a lower-case
+/// letter, a digit and a character that is none of the three. Sign-in reads no shape, so a copy's
+/// password is held to the rule here, where it is drawn, and is never one that nobody could have
+/// chosen. The hyphens are the last class. The others are a matter of the draw, so a draw that
+/// lacks one is thrown away and made again: about one in twelve, nearly all of them for want of a
+/// digit, of which the alphabet has eight in fifty-six (<c>python -c "print((48/56)**16)"</c>
+/// prints 0.0848...).
 /// </para>
 /// <para>
 /// EVERY CHARACTER comes from the cryptographic generator, one <c>GetInt32</c> each: a generator

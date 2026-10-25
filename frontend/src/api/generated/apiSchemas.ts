@@ -331,11 +331,7 @@ export const InternalTransferRequest = z.object({
 export type LoginRequest = z.infer<typeof LoginRequest>;
 export const LoginRequest = z.object({
   email: z.email().min(1).max(255),
-  password: z
-    .string()
-    .min(8)
-    .max(128)
-    .regex(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^a-zA-Z0-9])[\\x20-\\x7E]{8,128}$')),
+  password: z.string().min(1).max(128),
 });
 
 export type ProblemDetails = z.infer<typeof ProblemDetails>;

@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { FluentProvider, makeStyles, webLightTheme } from '@fluentui/react-components';
 import { describe, expect, it } from 'vitest';
-import { AboutPage } from '../../pages/AboutPage';
+import { ContactPage } from '../../pages/ContactPage';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { SectionTitle } from './SectionTitle';
 
@@ -71,27 +71,32 @@ describe('SectionTitle', () => {
   });
 });
 
-describe("About's two cards", () => {
+describe("Contact's two cards", () => {
   it("are level-2 headings under the page's <h1>, each naming its card", () => {
-    renderWithProviders(<AboutPage />, { routerEntries: ['/about'] });
+    renderWithProviders(<ContactPage />, { routerEntries: ['/contact'] });
 
     const tree = screen
       .getAllByRole('heading')
       .map((heading) => `${heading.tagName}:${heading.textContent}`);
-    const cards = ['What it is made of', 'Who wrote it'].map((name) => {
+    // A card is a column with the small vertical gap between its children, the title included,
+    // so the title keeps no margin of its own: one under it would add to the gap, and the title
+    // would sit twice as far from its first paragraph as on every other card (16 px, measured).
+    const cards = ['Vladislav Aleshaev', 'About this project'].map((name) => {
       const region = screen.getByRole('region', { name });
       return {
         name,
         heading: within(region).getByRole('heading', { level: 2 }).textContent,
         marginBottom: getComputedStyle(within(region).getByRole('heading')).marginBottom,
+        gap: getComputedStyle(region).getPropertyValue('gap'),
       };
     });
 
+    const gap = 'var(--spacingVerticalS)';
     expect({ tree, cards }).toStrictEqual({
-      tree: ['H1:About this project', 'H2:What it is made of', 'H2:Who wrote it'],
+      tree: ['H1:Contact', 'H2:Vladislav Aleshaev', 'H2:About this project'],
       cards: [
-        { name: 'What it is made of', heading: 'What it is made of', marginBottom: '8px' },
-        { name: 'Who wrote it', heading: 'Who wrote it', marginBottom: '8px' },
+        { name: 'Vladislav Aleshaev', heading: 'Vladislav Aleshaev', marginBottom: '0px', gap },
+        { name: 'About this project', heading: 'About this project', marginBottom: '0px', gap },
       ],
     });
   });

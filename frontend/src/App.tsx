@@ -30,7 +30,7 @@ import {
   TransferPage,
   InternalTransferPage,
   SettingsPage,
-  AboutPage,
+  ContactPage,
   NotFoundPage,
 } from './pages';
 
@@ -146,15 +146,19 @@ const router = createBrowserRouter(
             time they did, mobile lit "Profile" on /settings while desktop lit nothing at all.
             `replace` so the back button does not bounce off the redirect. */}
         <Route path="/profile" element={<Navigate to="/settings" replace />} />
+        {/* /about is the old address of the Contact page, and it stays a link that works for
+            whoever kept it: the nav label, the page heading and the address bar now all say
+            Contact. `replace`, as above. */}
+        <Route path="/about" element={<Navigate to="/contact" replace />} />
 
         {/* Public on purpose, shell-wrapped only when signed in, and held while the session is
             checked — see ShellOrBare. */}
         <Route
-          path="/about"
-          handle={{ title: 'About this project' }}
+          path="/contact"
+          handle={{ title: 'Contact' }}
           element={
             <ShellOrBare>
-              <AboutPage />
+              <ContactPage />
             </ShellOrBare>
           }
         />
@@ -190,7 +194,7 @@ const router = createBrowserRouter(
 
         {/* Every address no route above names: "Page not found", with the address left in the bar
             and one way back, Home when signed in and sign-in otherwise. Shell-wrapped only when
-            signed in, as /about is, and held while the session is checked, as a guarded page is:
+            signed in, as /contact is, and held while the session is checked, as a guarded page is:
             see ShellOrBare. */}
         <Route
           path="*"

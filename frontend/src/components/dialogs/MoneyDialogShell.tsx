@@ -1,8 +1,20 @@
 import type { ReactNode } from 'react';
-import { Dialog, DialogSurface, mergeClasses } from '@fluentui/react-components';
+import { Dialog, DialogSurface, makeStyles, mergeClasses } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
 import { useReturnFocus } from '../../hooks/useReturnFocus';
+import { colors } from '../../theme/tokens';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
+
+/**
+ * The red of a dialog that ends something for good: the pair ConfirmDialog's danger icon uses.
+ * Here and not in `moneyDialogStyles.ts`, whose tones are the two that move money.
+ */
+const useShellStyles = makeStyles({
+  headerIconDanger: {
+    backgroundColor: colors.semantic.error.light,
+    color: colors.semantic.error.main,
+  },
+});
 
 /**
  * The frame a money dialog draws around itself: the surface, the header, the one way out.
@@ -50,8 +62,11 @@ export interface MoneyDialogShellProps {
   /** Rendered in the header AND used as the surface's accessible name — one string, not two. */
   title: string;
   icon: ReactNode;
-  /** `credit` is money arriving, `debit` money leaving. The only thing the two dialogs disagreed on. */
-  tone: 'credit' | 'debit';
+  /**
+   * `credit` is money arriving, `debit` money leaving, `danger` an account closed for good. Set on
+   * the icon's box as `data-tone` too, which is what a test reads: Griffel's class names are hashed.
+   */
+  tone: 'credit' | 'debit' | 'danger';
   /** The caller's own close path, so its guards apply to the button, Escape and the backdrop alike. */
   onClose: () => void;
   /** True while an idempotency key is live. Bars every exit, and looks barred. */
@@ -75,6 +90,12 @@ export function MoneyDialogShell({
   children,
 }: MoneyDialogShellProps) {
   const styles = useMoneyDialogStyles();
+  const shellStyles = useShellStyles();
+  const toneClass = {
+    credit: styles.headerIconCredit,
+    debit: styles.headerIconDebit,
+    danger: shellStyles.headerIconDanger,
+  }[tone];
   // Every caller mounts its dialog to open it and unmounts it to close it, which is what the
   // hook asks for: `open` is true for as long as this shell is on the page.
   useReturnFocus();
@@ -104,12 +125,7 @@ export function MoneyDialogShell({
       >
         <div className={styles.header}>
           <div className={styles.headerTitle}>
-            <div
-              className={mergeClasses(
-                styles.headerIcon,
-                tone === 'credit' ? styles.headerIconCredit : styles.headerIconDebit,
-              )}
-            >
+            <div className={mergeClasses(styles.headerIcon, toneClass)} data-tone={tone}>
               {icon}
             </div>
             {title}
