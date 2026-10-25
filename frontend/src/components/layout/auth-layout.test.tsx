@@ -19,7 +19,7 @@ import { RegisterPage } from '../../pages/RegisterPage';
  */
 
 const PAGES = [
-  { name: 'sign in', ui: <LoginPage />, entry: '/login', title: 'Welcome back' },
+  { name: 'sign in', ui: <LoginPage />, entry: '/login', title: 'Sign in to AzureBank' },
   { name: 'register', ui: <RegisterPage />, entry: '/register', title: 'Create Account' },
 ] as const;
 

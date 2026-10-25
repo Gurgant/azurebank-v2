@@ -8,7 +8,7 @@ import { fieldContrast, textContrast } from './contrast';
  *
  * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
  * page it links to (not the transaction detail or PIN setup), the login and register pages without
- * a session (/about is public too, but is scanned here only inside the signed-in shell), the page
+ * a session (/contact is public too, but is scanned here only inside the signed-in shell), the page
  * for an address that names no page with a session and without, the deposit dialog, the Change
  * PIN dialog, and /accounts while its read is slow (light, dark and 375 px wide): sixteen scans,
  * with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scans are scoped to the dialog, so
@@ -58,9 +58,9 @@ const SIGNED_IN: Scan[] = [
   },
   { name: 'settings', path: '/settings', title: 'Settings · AzureBank', ready: heading(1) },
   {
-    name: 'about',
-    path: '/about',
-    title: 'About this project · AzureBank',
+    name: 'contact',
+    path: '/contact',
+    title: 'Contact · AzureBank',
     // A heading is drawn out of the shell too, on the outage page: the navigation is not.
     ready: inTheShell(heading(1)),
   },

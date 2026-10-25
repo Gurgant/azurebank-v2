@@ -372,9 +372,12 @@ export function LoginPage() {
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
       // "Back" is for somebody who has been here. On the demo that is a browser the page offers
       // a copy to; one it offers "Try the demo" has not been, and until 2026-10-06 was greeted
-      // "Welcome back" all the same. Off the demo the page is the sign-in page it was.
-      title={demo && offeredCopy === null ? 'Welcome' : 'Welcome back'}
-      subtitle={demo ? DEMO_SUBTITLE : 'Sign in to your account to continue'}
+      // "Welcome back" all the same. Off the demo nothing tells a newcomer from somebody who has
+      // signed in before: the page keeps nothing in the browser there, and a key kept only to
+      // choose a greeting is not worth a place beside the demo's, the one web storage key that
+      // SECURITY.md allows. So the title says what the page is for, which is true for both.
+      title={!demo ? 'Sign in to AzureBank' : offeredCopy === null ? 'Welcome' : 'Welcome back'}
+      subtitle={demo ? DEMO_SUBTITLE : 'Enter the email address and password you registered with.'}
       footer={
         <>
           Protected by bank-grade encryption. We never share your details.
@@ -383,8 +386,8 @@ export function LoginPage() {
               claims above are defensible — HTTPS, hashed passwords, and no third party to share
               with — so they stay; what was never defensible was promising a support team. */}
           Demo project — not a real bank.{' '}
-          <Link to="/about" style={{ color: 'inherit', textDecoration: 'underline' }}>
-            About the developer →
+          <Link to="/contact" style={{ color: 'inherit', textDecoration: 'underline' }}>
+            Contact the developer →
           </Link>
         </>
       }
