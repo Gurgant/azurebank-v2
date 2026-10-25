@@ -14,9 +14,12 @@ import {
 } from '../components/shared/TransactionRow';
 import type { TransactionType } from '../api/enums';
 import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import type { TransactionResponse } from '../features/api/apiSlice';
-import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
+import { apiSlice, useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
+import { useAppSelector } from '../app/hooks';
 import { usePageRead } from '../hooks/usePageRead';
+import { useWaitLanding } from '../hooks/useWaitLanding';
 import { formatCurrency, formatDateHeading, isIncomeType } from '../utils/format';
 
 // ============================================
@@ -163,6 +166,12 @@ const useStyles = makeStyles({
     justifyContent: 'center',
   },
 
+  // The column's width, not the words': in this centred column the bar would take the width of its
+  // one line, 666px at 375px wide, and run off a phone's screen. It wraps only in a narrower box.
+  loadMoreAlert: {
+    alignSelf: 'stretch',
+  },
+
   // ========== EMPTY STATE ==========
   emptyState: {
     flex: 1,
@@ -209,6 +218,21 @@ const FILTER_TYPES: Record<Exclude<FilterType, 'all'>, TransactionType[]> = {
   transfers: ['TransferIn', 'TransferOut'],
 };
 
+/*
+  The argument of the page's one read. The hook, the selector below and Stop's target must all
+  name the same cache entry, or the selector reads another entry and Stop stops nothing.
+*/
+const HISTORY_ARG = {};
+
+/*
+  For `isFetchNextPageError`: RTK 2.11.2's hook returns it but leaves it out of the hook's type,
+  and the endpoint's selector has it in its own.
+*/
+const selectHistory = apiSlice.endpoints.getTransactionHistory.select(HISTORY_ARG);
+
+/** The page's own sentence, in both bars, for a failure that carries no detail from the server. */
+const LOAD_FAILED = 'Could not load your transactions.';
+
 function groupByDate(transactions: TransactionResponse[]): GroupedTransactions[] {
   const groups = new Map<string, TransactionResponse[]>();
   for (const transaction of transactions) {
@@ -235,16 +259,30 @@ export function HistoryPage() {
 
   // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
   // {Transaction,'LIST'} and refetches all loaded pages (accepted cost).
-  const historyQuery = useGetTransactionHistoryInfiniteQuery({});
-  const { data, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage, requestId } =
+  const historyQuery = useGetTransactionHistoryInfiniteQuery(HISTORY_ARG);
+  const { data, error, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage, requestId } =
     historyQuery;
+  const isFetchNextPageError = useAppSelector((state) => selectHistory(state).isFetchNextPageError);
   // The spinner and the bar follow the first page's wait, not `isLoading` and `error`: a Retry
   // keeps the old error while it runs, so the bar goes away for the new wait and comes back,
-  // announced, only if that wait fails too. "Load more" is not that wait: the rows stay on screen.
+  // announced, only if that wait fails too. A next page is not that wait, and its failure is not
+  // the page's: the query keeps that error while "Load more" or its own Retry asks again, and the
+  // rows already read stay on screen through both.
+  const nextPageOwnsError = isFetchNextPageError || isFetchingNextPage;
   const { waiting, failed, problem, landingRef, stopWaiting, retry } = usePageRead(
-    { ...historyQuery, isFetching: isFetching && !isFetchingNextPage },
-    { endpoint: 'getTransactionHistory', arg: {} },
+    {
+      ...historyQuery,
+      isFetching: isFetching && !isFetchingNextPage,
+      error: nextPageOwnsError ? undefined : error,
+    },
+    { endpoint: 'getTransactionHistory', arg: HISTORY_ARG },
   );
+  // Said under the buttons, where the Retry that asks for the next page again is drawn.
+  const nextPageFailed = isFetchNextPageError && !isFetching;
+  const nextPageProblem = nextPageFailed ? (error as ApiProblem) : undefined;
+  // The pressed "Load more" is disabled while the page is on its way, so focus falls to the page;
+  // a failure gives it back on the Retry under the buttons.
+  const nextPageLanding = useWaitLanding<HTMLButtonElement>(isFetchingNextPage, requestId);
 
   /**
    * How many of the loaded pages are SHOWN. Pages are never dropped from the cache — hiding them
@@ -253,18 +291,28 @@ export function HistoryPage() {
   const [visiblePages, setVisiblePages] = useState(1);
   const loadedPages = data?.pages?.length ?? 0;
 
+  /**
+   * Fetch the next page. The Retry under the buttons calls this, not `showMore`: after "Show less"
+   * the next page to show is a hidden one, and it is not the page that failed.
+   */
+  const askNextPage = async () => {
+    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
+    // the result, it does not throw. Incrementing unconditionally would leave the cap ahead of what
+    // actually loaded, and the visible symptom is a "Show less" button that hides nothing.
+    // Armed before the request, whose new `requestId` is what spends the arm.
+    nextPageLanding.arm();
+    const result = await fetchNextPage();
+    const nowLoaded = result.data?.pages.length ?? loadedPages;
+    setVisiblePages((n) => Math.min(n + 1, nowLoaded));
+  };
+
   /** Reveal an already-loaded page if there is one, otherwise fetch the next. */
   const showMore = async () => {
     if (visiblePages < loadedPages) {
       setVisiblePages((n) => n + 1);
       return;
     }
-    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
-    // the result, it does not throw. Incrementing unconditionally would leave the cap ahead of what
-    // actually loaded, and the visible symptom is a "Show less" button that hides nothing.
-    const result = await fetchNextPage();
-    const nowLoaded = result.data?.pages.length ?? loadedPages;
-    setVisiblePages((n) => Math.min(n + 1, nowLoaded));
+    await askNextPage();
   };
 
   const transactions = useMemo(
@@ -323,7 +371,7 @@ export function HistoryPage() {
             <ReadErrorBar
               key={requestId}
               problem={problem}
-              fallback="Could not load your transactions."
+              fallback={LOAD_FAILED}
               onRetry={retry}
               retryRef={landingRef}
             />
@@ -405,8 +453,19 @@ export function HistoryPage() {
                     )}
                   </div>
                   {/* No "Stop waiting" here: the rows already loaded stay readable while the next
-                      page is on its way, and stopping it would put an error bar in their place. */}
-                  <WaitHint active={isFetchingNextPage} kind="read" failed={failed} />
+                      page is on its way, and a failure of that page is said under these buttons. */}
+                  <WaitHint active={isFetchingNextPage} kind="read" failed={nextPageFailed} />
+                  <AlertSlot className={styles.loadMoreAlert}>
+                    {nextPageProblem && (
+                      <ReadErrorBar
+                        key={requestId}
+                        problem={nextPageProblem}
+                        fallback={LOAD_FAILED}
+                        onRetry={() => void askNextPage()}
+                        retryRef={nextPageLanding.landingRef}
+                      />
+                    )}
+                  </AlertSlot>
                 </div>
               </div>
             ) : (

@@ -14,7 +14,9 @@ type PageRead = ReadState & { refetch(): unknown; requestId?: string };
  *
  * `target` must name the cache entry the page's query hook reads, with the same argument, or Stop
  * finds nothing running and stops nothing. An infinite query passes its result with
- * `isFetching: isFetching && !isFetchingNextPage`, so that "Load more" is not the page's wait.
+ * `isFetching: isFetching && !isFetchingNextPage`, and with no `error` while a next page has failed
+ * or is on its way (`isFetchNextPageError || isFetchingNextPage`), so that "Load more" is neither
+ * the page's wait nor its failure.
  *
  * A page whose reads share one landing and one Stop, as the Dashboard's three do, builds its wait
  * from the same parts itself.
