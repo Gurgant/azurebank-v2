@@ -1084,7 +1084,15 @@ jobs:
             -H 'X-AzureBank-Token-Road: bff' \
             -d '{"email":"john@example.com","password":"Test123!"}' \
             "${{ env.API_URL }}/api/auth/login" \
-            | python3 -c 'import json, sys; t = json.load(sys.stdin)["data"]["token"]["accessToken"]; assert isinstance(t, str) and t.count(".") == 2, "no JWT at data.token.accessToken"; print(t)')
+            | python3 -c '
+          import json, sys
+          try:
+              t = json.load(sys.stdin)["data"]["token"]["accessToken"]
+          except (ValueError, LookupError, TypeError):
+              t = None
+          if not isinstance(t, str) or len(t.split(".")) != 3:
+              sys.exit("no JWT at data.token.accessToken in the answer to the login")
+          print(t)') || { echo '::error::The seeded demo user got no bearer token from the login'; exit 1; }
           echo "::add-mask::$TOKEN"
           echo "API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
@@ -1115,6 +1123,7 @@ jobs:
       # the demo's claim did.
       # The step runs after a failed or cancelled job too, so the report may not exist: that is
       # said in one line and is red, since no report is no proof that anything was tested.
+      # A report cut off or left empty cannot be counted, and is said in one line and red too.
       - name: Assert the run covered the document
         if: always()
         run: |
@@ -1123,7 +1132,11 @@ jobs:
           if not os.path.isfile(sys.argv[1]):
               print("::error::The run produced no report: the Schemathesis tests did not run or did not finish")
               sys.exit(1)
-          root = ET.parse(sys.argv[1]).getroot()
+          try:
+              root = ET.parse(sys.argv[1]).getroot()
+          except ET.ParseError as error:
+              print(f"::error::The report cannot be read ({error}): the Schemathesis run did not finish writing it")
+              sys.exit(1)
           cases = [c.get("name") for c in root.iter("testcase")]
           operations = [c for c in cases if c != "Stateful tests"]
           print(f"{len(operations)} operations tested, {len(cases)} test cases in the report")
