@@ -25,7 +25,7 @@ import type { BrandVariants } from '@fluentui/react-components';
  *   (#0068A1, 5.46:1).
  * - Three dark-theme *pressed* tokens land at 3.69:1. Microsoft's own shipped `brandWeb` ramp fails
  *   the identical tokens at 3.85:1, so this is Fluent-default parity, not a regression introduced
- *   here. Revisit at U7 when dark mode is switched on.
+ *   here. The dark theme, switched on at U7, draws them as Fluent derives them.
  */
 export const brandRamp: BrandVariants = {
   10: '#001A2D',
