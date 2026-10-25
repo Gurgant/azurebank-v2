@@ -8,7 +8,8 @@ import { enableDemoMode, rememberDemoCopy, resetDemoMode } from './demoMode';
 
   The first two tests are a pair and their order is the point: the first leaves the demo on, on
   purpose, and the second says what the next test finds. Nothing in this file removes the tag
-  between them, so the second can only be green because `setup.ts` did.
+  between them, so the second can only be green because `setup.ts` did. `shuffle: false` keeps
+  them in this order when the run shuffles the tests.
 */
 const DEMO_TAGS = 'meta[name="azurebank-demo"]';
 
@@ -18,7 +19,7 @@ function demoTagsOnThePage(): number {
 
 let theTestBeforeLeftTheTag = false;
 
-describe('the switch for the demo', () => {
+describe('the switch for the demo', { shuffle: false }, () => {
   it('turns the demo on for the test that asks', () => {
     enableDemoMode();
     // Written down for the next test, which has nothing to say unless this one ran before it and

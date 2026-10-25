@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { AppLayout } from '../components/layout/AppLayout';
 import { BottomNav } from '../components/layout/BottomNav';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { pageStyleRules } from '../test/styleRules';
 import { setViewportWidth } from '../test/viewport';
 import { safeArea } from './tokens';
 
@@ -146,7 +147,7 @@ describe('the shell with no bottom bar', () => {
     );
 
     const content = container.querySelector('[data-testid="page"]')!.closest('main')!;
-    const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+    const rules = pageStyleRules();
 
     const applied = [...content.classList]
       .flatMap((cls) => rules.filter((rule) => rule.cssText.startsWith(`.${cls}`)))

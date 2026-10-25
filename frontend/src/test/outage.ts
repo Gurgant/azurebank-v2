@@ -104,38 +104,12 @@ export function alertSlot(scope: HTMLElement = document.body): HTMLElement {
   return alerts[0];
 }
 
-/*
-  jsdom runs `requestAnimationFrame` on a Node `setInterval`, which it starts on the first frame
-  request made while none is pending (jsdom/lib/jsdom/browser/Window.js). Started while the clock
-  is fake, that interval dies when the clock is restored, and every later frame in the file waits
-  for ever — and RTK delivers a store change to its subscribers on the next frame
-  (autoBatchEnhancer's default), so a page stops seeing its own cache. Measured: a test that edited
-  the accounts cache passed alone and failed after a fake-clock test in the same file, and a bare
-  frame request there never resolved.
-
-  So frame requests are kept pending at all times, made through jsdom's own function while the
-  clock is real, and the interval is never stopped for the rest of the file. TWO chains, not one:
-  jsdom drops a callback — and with the last one, the interval — before it runs it, so a lone
-  chain that renews itself starts a new interval on whatever clock is installed at that moment.
-*/
-const jsdomAnimationFrame = window.requestAnimationFrame.bind(window);
-let framesKeptReal = false;
-
-function keepAnimationFramesOnTheRealClock() {
-  if (framesKeptReal) return;
-  framesKeptReal = true;
-  const chain = () => void jsdomAnimationFrame(chain);
-  chain();
-  chain();
-}
-
 /**
  * A fake clock that still lets requests resolve. `shouldAdvanceTime` is the suite's rule
  * (SessionExpiryWarning.test.tsx): a frozen clock deadlocks anything that awaits a response.
  * Install it BEFORE the request starts, or the request's own timers run on the real clock.
  */
 export function installFakeClock() {
-  keepAnimationFramesOnTheRealClock();
   vi.useFakeTimers({ shouldAdvanceTime: true });
 }
 

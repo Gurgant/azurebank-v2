@@ -441,37 +441,40 @@ describe('the demo copy the browser keeps', () => {
     The next two tests are a pair and their order is the point. The first leaves a copy behind in
     both places the module can hold one, on purpose: one in the key, and another in memory, which
     is where a copy goes when the browser refuses the write. Nothing in this file clears either,
-    so the second can only be green because `setup.ts` did.
+    so the second can only be green because `setup.ts` did. `shuffle: false` keeps the pair in
+    this order when the run shuffles the tests.
   */
-  it('leaves a copy in the key and another in memory', () => {
-    enableDemoMode();
-    const denied = deny('setItem');
-    writeDemoCopy(copy);
-    denied.mockRestore();
-    // Put in the key after the refusal, as another tab would: a refused write leaves no key.
-    rememberDemoCopy(anotherCopy);
+  describe('a copy one test leaves behind on purpose', { shuffle: false }, () => {
+    it('leaves a copy in the key and another in memory', () => {
+      enableDemoMode();
+      const denied = deny('setItem');
+      writeDemoCopy(copy);
+      denied.mockRestore();
+      // Put in the key after the refusal, as another tab would: a refused write leaves no key.
+      rememberDemoCopy(anotherCopy);
 
-    theTestBeforeLeft = {
-      aKey: localStorage.getItem(KEY) !== null,
-      aCopyInMemory: getDemoCopySnapshot() !== null,
-    };
+      theTestBeforeLeft = {
+        aKey: localStorage.getItem(KEY) !== null,
+        aCopyInMemory: getDemoCopySnapshot() !== null,
+      };
 
-    expect(getDemoCopySnapshot()).toStrictEqual(kept(copy));
-    expect(keyNow()).toStrictEqual(kept(anotherCopy));
-    // Left there, on purpose.
-  });
+      expect(getDemoCopySnapshot()).toStrictEqual(kept(copy));
+      expect(keyNow()).toStrictEqual(kept(anotherCopy));
+      // Left there, on purpose.
+    });
 
-  it('a copy left by one test is gone for the next', () => {
-    enableDemoMode();
+    it('a copy left by one test is gone for the next', () => {
+      enableDemoMode();
 
-    expect({
-      theTestBeforeLeft,
-      key: keyNow(),
-      snapshot: getDemoCopySnapshot(),
-    }).toStrictEqual({
-      theTestBeforeLeft: { aKey: true, aCopyInMemory: true },
-      key: null,
-      snapshot: null,
+      expect({
+        theTestBeforeLeft,
+        key: keyNow(),
+        snapshot: getDemoCopySnapshot(),
+      }).toStrictEqual({
+        theTestBeforeLeft: { aKey: true, aCopyInMemory: true },
+        key: null,
+        snapshot: null,
+      });
     });
   });
 });
