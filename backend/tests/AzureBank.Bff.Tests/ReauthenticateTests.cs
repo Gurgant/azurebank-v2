@@ -214,6 +214,27 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task APasswordThatBreaksTheRegistrationRule_IsForwardedUnchanged_AndTheApisAnswerReturned()
+    {
+        // The request is bounded for length only (ADR-0026 decision 5), so a password that a chosen
+        // one could not be goes to the API as it was typed, and the API answers it as any wrong one.
+        var (host, upstream) = NewHost();
+        var client = host.CreateClient();
+        var sessions = host.Services.GetRequiredService<ISessionService>();
+
+        var sessionId = await Login(client);
+        var response = await Reauthenticate(client, sessionId, new { password = "Ab1!" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, await response.Content.ReadAsStringAsync());
+        (await response.Content.ReadAsStringAsync()).Should().Contain("INVALID_CREDENTIALS");
+        upstream.LoginBodies.Should().HaveCount(2, "the sign-in, then the re-authentication");
+        using var forwarded = JsonDocument.Parse(upstream.LoginBodies[1]);
+        forwarded.RootElement.GetProperty("password").GetString().Should().Be("Ab1!");
+        forwarded.RootElement.GetProperty("email").GetString().Should().Be(SessionEmail);
+        sessions.GetSession(sessionId).Should().NotBeNull("a refused password leaves the session as it was");
+    }
+
+    [Fact]
     public async Task WithoutASessionItIs401AndTheCredentialIsNeverForwarded()
     {
         var (host, upstream) = NewHost();

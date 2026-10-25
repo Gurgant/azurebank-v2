@@ -3640,7 +3640,6 @@ export interface components {
         LoginRequest: {
             /** Format: email */
             email: string;
-            /** @description Password must contain at least one uppercase, one lowercase, and one digit. */
             password: string;
         };
         /**
@@ -3735,7 +3734,7 @@ export interface components {
             azureTag: string;
             /** Format: email */
             email: string;
-            /** @description Password must contain at least one uppercase, one lowercase, and one digit. */
+            /** @description 8 to 128 printable ASCII characters, with at least one upper-case letter, one lower-case letter, one digit and one character that is none of these. */
             password: string;
             firstName: string;
             lastName: string;

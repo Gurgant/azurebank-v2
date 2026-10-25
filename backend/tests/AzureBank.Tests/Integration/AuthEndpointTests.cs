@@ -401,6 +401,106 @@ public class AuthEndpointTests : IntegrationTestBase
             .Should().BeAfter(DateTimeOffset.UtcNow, "the fifth wrong password latched the lock");
     }
 
+    /// <summary>
+    /// A password is verified at sign-in, never judged: one that breaks the rule a chosen password
+    /// keeps is answered as any wrong password is, with the same 401, body and headers. Answered
+    /// otherwise, its shape would be a second answer to read, and the guess would not be counted.
+    /// </summary>
+    /// <remarks>
+    /// Measured on main at bd743911 before <c>LoginRequest</c> lost <c>[Password]</c>: 400, the
+    /// framework's envelope, keyed <c>Password</c> with the rule's message, for each of these.
+    /// </remarks>
+    [Theory]
+    [InlineData("Ab1!")] // shorter than eight
+    [InlineData("password1!")] // no upper-case letter
+    [InlineData("PASSWORD1!")] // no lower-case letter
+    [InlineData("Password!!")] // no digit
+    [InlineData("Password12")] // no character that is none of the three
+    [InlineData("P\u00e4ssword1!")] // a character outside printable ASCII
+    public async Task Login_WithAPasswordThatBreaksTheRegistrationRule_IsTheSame401AsAnyWrongPassword(string password)
+    {
+        var email = $"rule{Guid.NewGuid():N}@example.com";
+        await RegisterAndGetTokensAsync(email);
+
+        var ruleBreaking = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = password }, JsonOptions);
+        var wellFormed = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = "WrongPass123!" }, JsonOptions);
+
+        var ruleBreakingText = await ruleBreaking.Content.ReadAsStringAsync();
+        ruleBreaking.StatusCode.Should().Be(HttpStatusCode.Unauthorized, ruleBreakingText);
+        wellFormed.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        using var body = JsonDocument.Parse(ruleBreakingText);
+        body.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.InvalidCredentials);
+        // Without braces, so that a failure can be read (ComparableText).
+        ComparableText.Of(ProblemBody.WithoutTraceId(ruleBreakingText)).Should().Be(
+            ComparableText.Of(ProblemBody.WithoutTraceId(await wellFormed.Content.ReadAsStringAsync())));
+        AnswerHeaders.Of(ruleBreaking).Should().Be(AnswerHeaders.Of(wellFormed));
+    }
+
+    [Fact]
+    public async Task Login_FiveRuleBreakingPasswords_LockTheAccount_AsFiveWrongOnesDo()
+    {
+        var email = $"rule{Guid.NewGuid():N}@example.com";
+        var (token, _) = await RegisterAndGetTokensAsync(email);
+        var ruleBreaking = new LoginRequest { Email = email, Password = "Ab1!" };
+
+        for (var i = 0; i < ValidationRules.MaxLoginAttempts; i++)
+        {
+            var attempt = await Client.PostAsJsonAsync("/api/auth/login", ruleBreaking, JsonOptions);
+            attempt.StatusCode.Should().Be(HttpStatusCode.Unauthorized, await attempt.Content.ReadAsStringAsync());
+        }
+
+        // Proved by what the lock answers, since a sign-in answers a lock with the same 401: behind
+        // a session, setting a PIN with the RIGHT password (the one RegisterAndGetTokensAsync
+        // registers) meets the lock's 429 (ADR-0012).
+        SetAuthHeader(token);
+        var locked = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "424242", Password = "SecurePass123!" }, JsonOptions);
+        ClearAuthHeader();
+        locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await db.Users.AsNoTracking().SingleAsync(u => u.Email == email)).LockoutEnd
+            .Should().BeAfter(DateTimeOffset.UtcNow, "the fifth rule-breaking password latched the lock");
+    }
+
+    /// <summary>
+    /// The one shape still refused before the credential check: longer than any account's password
+    /// can be, since registration holds it to 128 characters. The framework's 400 comes before the
+    /// action, so it is the same for an address that exists and for one that does not, and it is
+    /// no guess: nothing is compared and nothing is counted.
+    /// </summary>
+    [Fact]
+    public async Task Login_WithAPasswordLongerThanAnyAccountHolds_IsTheFrameworks400_AndIsNotCounted()
+    {
+        var email = $"rule{Guid.NewGuid():N}@example.com";
+        await RegisterAndGetTokensAsync(email);
+        var tooLong = new string('a', ValidationRules.PasswordMaxLength + 1);
+
+        var known = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = tooLong }, JsonOptions);
+        var unknown = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = $"nobody{Guid.NewGuid():N}@example.com", Password = tooLong }, JsonOptions);
+
+        var knownText = await known.Content.ReadAsStringAsync();
+        known.StatusCode.Should().Be(HttpStatusCode.BadRequest, knownText);
+        using var body = JsonDocument.Parse(knownText);
+        body.RootElement.GetProperty("title").GetString().Should().Be("One or more validation errors occurred.");
+        body.RootElement.TryGetProperty("errorCode", out _).Should().BeFalse("the framework's envelope carries none");
+        ComparableText.Of(body.RootElement.GetProperty("errors").GetRawText()).Should().Be(ComparableText.Of(
+            """{"Password":["The field Password must be a string or array type with a maximum length of '128'."]}"""));
+        ComparableText.Of(ProblemBody.WithoutTraceId(knownText)).Should().Be(
+            ComparableText.Of(ProblemBody.WithoutTraceId(await unknown.Content.ReadAsStringAsync())));
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await db.Users.AsNoTracking().SingleAsync(u => u.Email == email)).AccessFailedCount
+            .Should().Be(0, "a request refused before the action reaches no counter");
+    }
+
     #endregion
 
     #region GetMe Tests
