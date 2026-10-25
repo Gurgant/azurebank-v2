@@ -1,5 +1,6 @@
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Middleware;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -7,7 +8,6 @@ using AzureBank.Shared.DTOs.User;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace AzureBank.Api.Controllers;
 
@@ -234,7 +234,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<ApiResponse<UserResponse>>> GetCurrentUser(CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _authService.GetCurrentUserAsync(userId, cancellationToken);
         return Ok(ApiResponse<UserResponse>.Success(result));
     }
@@ -254,7 +254,7 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse>> Logout()
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         await _authService.LogoutAsync(userId, HttpContext.ReceivedAt());
         return Ok(ApiResponse.Success("Logged out successfully"));
     }
@@ -287,7 +287,7 @@ public class AuthController : ControllerBase
     {
         await _setPinValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         await _authService.SetPinAsync(userId, request, cancellationToken);
         return Ok(ApiResponse.Success("PIN set successfully"));
     }
@@ -311,7 +311,7 @@ public class AuthController : ControllerBase
     {
         await _verifyPinValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var isValid = await _authService.VerifyPinAsync(userId, request.Pin, cancellationToken);
 
         if (!isValid)
@@ -320,15 +320,5 @@ public class AuthController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Success(new { verified = true }, "PIN verified"));
-    }
-
-    /// <summary>
-    /// Extracts the current user ID from JWT claims.
-    /// </summary>
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
-        return Guid.Parse(userIdClaim!);
     }
 }

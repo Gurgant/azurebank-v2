@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using System.Security.Claims;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
@@ -60,7 +60,7 @@ public class TransactionController : ControllerBase
     public async Task<ActionResult<PaginatedResponse<TransactionResponse>>> GetTransactions(
         [FromQuery] TransactionFilter filter, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transactionService.GetTransactionsAsync(userId, filter, cancellationToken);
         return Ok(result);
     }
@@ -81,7 +81,7 @@ public class TransactionController : ControllerBase
     public async Task<ActionResult<ApiResponse<TransactionSummaryResponse>>> GetSummary(
         [FromQuery] TransactionSummaryFilter filter, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transactionService.GetSummaryAsync(userId, filter, cancellationToken);
         return Ok(ApiResponse<TransactionSummaryResponse>.Success(result));
     }
@@ -102,7 +102,7 @@ public class TransactionController : ControllerBase
     public async Task<ActionResult<ApiResponse<TransactionResponse>>> GetTransaction(
         Guid id, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var transaction = await _transactionService.GetTransactionByIdAsync(id, userId, cancellationToken);
         return Ok(ApiResponse<TransactionResponse>.Success(transaction));
     }
@@ -129,7 +129,7 @@ public class TransactionController : ControllerBase
     {
         await _depositValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transactionService.DepositAsync(userId, request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
@@ -180,7 +180,7 @@ public class TransactionController : ControllerBase
         await _withdrawalAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var result = await _transactionService.AuthoriseWithdrawalAsync(
-            GetCurrentUserId(), request, cancellationToken);
+            User.RequireUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Withdrawal authorised"));
@@ -227,21 +227,11 @@ public class TransactionController : ControllerBase
     {
         await _withdrawValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transactionService.WithdrawAsync(
             userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<WithdrawResponse>.Success(result, "Withdrawal successful"));
-    }
-
-    /// <summary>
-    /// Extracts the current user ID from JWT claims.
-    /// </summary>
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
-        return Guid.Parse(userIdClaim!);
     }
 }

@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
-using System.Security.Claims;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
@@ -53,7 +53,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(
         [Required][AzureTagQuery] string azureTag, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _userService.GetUserByAzureTagAsync(azureTag, userId, cancellationToken);
         return Ok(ApiResponse<RecipientLookupResponse>.Success(result));
     }
@@ -74,17 +74,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<UpdateAzureTagResponse>>> RenameAzureTag(
         [FromBody] UpdateAzureTagRequest request, CancellationToken cancellationToken)
     {
-        var newTag = await _userService.RenameAzureTagAsync(GetCurrentUserId(), request.AzureTag, cancellationToken);
+        var newTag = await _userService.RenameAzureTagAsync(User.RequireUserId(), request.AzureTag, cancellationToken);
         return Ok(ApiResponse<UpdateAzureTagResponse>.Success(new UpdateAzureTagResponse { AzureTag = newTag }));
-    }
-
-    /// <summary>
-    /// Extracts the current user ID from JWT claims.
-    /// </summary>
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
-        return Guid.Parse(userIdClaim!);
     }
 }

@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Observability;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.Constants;
@@ -77,7 +77,7 @@ public class IdempotencyMiddleware
         }
 
         var key = ReadKey(context);
-        var userId = ReadUserId(context);
+        var userId = context.User.RequireUserId();
         var endpointName = EndpointNameOf(context, endpoint);
 
         // Routing has already applied the endpoint's 32 KB limit, before authentication
@@ -261,22 +261,6 @@ public class IdempotencyMiddleware
         }
 
         return key;
-    }
-
-    private static Guid ReadUserId(HttpContext context)
-    {
-        // Same claim resolution as the controllers (GetCurrentUserId).
-        var claim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? context.User.FindFirst("sub")?.Value;
-
-        if (claim is null || !Guid.TryParse(claim, out var userId))
-        {
-            // Unreachable behind [Authorize]; defensive for misconfiguration.
-            throw new AuthenticationException(
-                "A valid user identity is required.", ErrorCodes.TokenInvalid);
-        }
-
-        return userId;
     }
 
     private static string EndpointNameOf(HttpContext context, Endpoint endpoint)

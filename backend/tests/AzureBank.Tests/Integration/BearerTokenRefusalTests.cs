@@ -17,8 +17,10 @@ namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// What the API answers a bearer token it will not take: one that has expired, one signed with
-/// another key, one for another audience, and one that is not a token. Each is a 401 in the
-/// problem shape with its own error code, and none reaches the controller.
+/// another key, one for another audience, one that is not a token, and one it signed whose
+/// subject is not a user id. Each is a 401 in the problem shape with its own error code. The
+/// first four stop at the bearer handler; the last passes it and is refused where the endpoint
+/// reads the caller's id.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -46,20 +48,28 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
     {
     }
 
-    /// <summary>A token for <paramref name="userId"/>, as the API makes one unless an argument says otherwise.</summary>
-    private string Token(Guid userId, string? signedWith = null, string? audience = null, DateTime? expires = null)
+    /// <summary>
+    /// A token for <paramref name="userId"/>, as the API makes one unless an argument says otherwise.
+    /// A <paramref name="subject"/> takes the place of the user id: the token then carries that
+    /// <c>sub</c> and nothing else that names the caller.
+    /// </summary>
+    private string Token(
+        Guid userId, string? signedWith = null, string? audience = null, DateTime? expires = null, string? subject = null)
     {
         var options = Factory.Services.GetRequiredService<IOptions<JwtOptions>>().Value;
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signedWith ?? options.Secret));
         var expiry = expires ?? DateTime.UtcNow.AddMinutes(10);
-        var token = new JwtSecurityToken(
-            issuer: options.Issuer,
-            audience: audience ?? options.Audience,
-            claims:
+        Claim[] caller = subject is null
+            ?
             [
                 new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
                 new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
-            ],
+            ]
+            : [new Claim(JwtRegisteredClaimNames.Sub, subject)];
+        var token = new JwtSecurityToken(
+            issuer: options.Issuer,
+            audience: audience ?? options.Audience,
+            claims: caller,
             notBefore: expiry.AddHours(-1),
             expires: expiry,
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
@@ -132,5 +142,24 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
         response.Headers.Contains("Token-Expired").Should().BeFalse(
             "a client that renews on that header must not renew for a token that was never good");
         body.GetRawText().Should().NotContain("IDX", "the library's own message, with its key details, stays in the log");
+    }
+
+    [Fact]
+    public async Task ATokenSignedByTheApi_WithNoUsableUserId_Is401_AUTH_TOKEN_INVALID_NotA500()
+    {
+        // Signed, issued and addressed rightly, so the bearer handler takes it: what is wrong is
+        // only that its subject is not a user id, which the endpoint is the first to read.
+        var response = await ListAccountsWithAsync(Token(Guid.Empty, subject: "not-a-user-id"));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        using var all = new AssertionScope();
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Content.Headers.ContentType?.ToString().Should().Be(TheApplicationsOwnJson);
+        body.GetProperty("errorCode").GetString().Should().Be("AUTH_TOKEN_INVALID");
+        body.GetProperty("detail").GetString().Should().Be("A valid user identity is required.");
+        body.GetProperty("instance").GetString().Should().Be("/api/accounts");
+        response.Headers.Contains("Token-Expired").Should().BeFalse(
+            "a client that renews on that header must not renew for a token that names nobody");
+        body.GetRawText().Should().NotContain("IDX", "the library's own message stays in the log");
     }
 }
