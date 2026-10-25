@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
+import { useId } from 'react';
 import { makeStyles, Text, tokens } from '@fluentui/react-components';
 import { ArrowLeft20Regular, Open16Regular } from '@fluentui/react-icons';
 import { atMedia } from '../theme/breakpoints';
 import { colors, surfaces } from '../theme/tokens';
 import { Logo } from '../components/shared/Logo';
+import { SectionTitle } from '../components/shared/SectionTitle';
 import { useAppSelector } from '../app/hooks';
 import { selectAuthStatus } from '../features/auth/authSlice';
 
@@ -94,10 +96,6 @@ const useStyles = makeStyles({
   },
 
   cardTitle: {
-    display: 'block',
-    fontSize: '16px',
-    fontWeight: 600,
-    color: colors.neutral[800],
     marginBottom: '8px',
   },
 
@@ -134,6 +132,8 @@ const useStyles = makeStyles({
 export function AboutPage() {
   const styles = useStyles();
   const isAuthenticated = useAppSelector(selectAuthStatus) === 'authenticated';
+  const madeOfId = useId();
+  const whoId = useId();
 
   return (
     <div className={styles.page}>
@@ -161,8 +161,10 @@ export function AboutPage() {
         banking application is built end to end.
       </Text>
 
-      <section className={styles.card}>
-        <Text className={styles.cardTitle}>What it is made of</Text>
+      <section className={styles.card} aria-labelledby={madeOfId}>
+        <SectionTitle id={madeOfId} className={styles.cardTitle}>
+          What it is made of
+        </SectionTitle>
         <Text as="p" className={styles.body}>
           A .NET API and a BFF that holds the session so the browser never sees a token, with a
           React front end. The parts that are usually skipped in a demo are the ones it takes most
@@ -171,8 +173,10 @@ export function AboutPage() {
         </Text>
       </section>
 
-      <section className={styles.card}>
-        <Text className={styles.cardTitle}>Who wrote it</Text>
+      <section className={styles.card} aria-labelledby={whoId}>
+        <SectionTitle id={whoId} className={styles.cardTitle}>
+          Who wrote it
+        </SectionTitle>
         <Text as="p" className={styles.body}>
           Vladislav Aleshaev — sole developer. The code is public and so is the history, including
           the mistakes and what they cost.

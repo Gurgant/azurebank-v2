@@ -59,7 +59,7 @@ describe('accounts list (A1)', () => {
     // Measured before U4: this page exposed NO heading at any level — the only authenticated page
     // that did not, because both of its titles were `<Text>`, which renders an inline `<span>`.
     // Heading navigation found nothing here.
-    const headings = screen.getAllByRole('heading');
+    const headings = screen.getAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
     expect(headings[0].tagName).toBe('H1');
 
@@ -67,6 +67,16 @@ describe('accounts list (A1)', () => {
     // come to call this somewhere different — it said "My Accounts" while the nav said "Accounts".
     expect(headings[0]).toHaveTextContent('Accounts');
     expect(headings[0]).not.toHaveTextContent('My Accounts');
+  });
+
+  it("names each account's card with a level-2 heading, the level under the page's <h1>", async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    // Level 2 and not 3: the `<h1>` is the only heading above the cards.
+    expect(
+      screen.getAllByRole('heading').map((heading) => `${heading.tagName}:${heading.textContent}`),
+    ).toStrictEqual(['H1:Accounts', 'H2:Main Account', 'H2:Rainy Day']);
   });
 
   it('a load failure shows the problem detail and Retry recovers (D22 error state)', async () => {

@@ -1,12 +1,12 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
-import { formatCurrency, formatDateHeading } from '../utils/format';
+import { formatCurrency, formatDateHeading, formatTime } from '../utils/format';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransactionDetailPage } from './TransactionDetailPage';
 
@@ -77,6 +77,37 @@ describe('transaction detail (T2)', () => {
     expect(screen.getByText(formatCurrency(seededBalanceAfter(T1_DEPOSIT)))).toBeInTheDocument();
   });
 
+  it('titles the details with a level-2 heading, and gives them as label and value pairs', async () => {
+    renderDetail(T1_DEPOSIT);
+    await screen.findByText('+€1,250.50');
+    const deposit = mockState.transactions.find((t) => t.id === T1_DEPOSIT);
+    if (!deposit) throw new Error(`No seeded transaction ${T1_DEPOSIT}`);
+
+    const details = screen.getByRole('region', { name: 'Transaction Information' });
+    const terms = within(details).getAllByRole('term');
+    const definitions = within(details).getAllByRole('definition');
+    expect({
+      tree: screen
+        .getAllByRole('heading')
+        .map((heading) => `${heading.tagName}:${heading.textContent}`),
+      pairs: terms.map((term, i) => [term.textContent, definitions[i]?.textContent]),
+      definitions: definitions.length,
+    }).toStrictEqual({
+      tree: ['H1:Transaction Details', 'H2:Transaction Information'],
+      pairs: [
+        ['Transaction number', deposit.transactionNumber],
+        [
+          'Date & time',
+          `${formatDateHeading(deposit.createdAt)} · ${formatTime(deposit.createdAt)}`,
+        ],
+        ['Type', 'Deposit'],
+        ['Description', 'Salary'],
+        ['Balance after', formatCurrency(seededBalanceAfter(T1_DEPOSIT))],
+      ],
+      definitions: 5,
+    });
+  });
+
   it('shows the transfer counterparty and the Pending status', async () => {
     renderDetail(T3_TRANSFER);
 
@@ -97,6 +128,9 @@ describe('transaction detail (T2)', () => {
     renderDetail('00000000-0000-0000-0000-000000000000');
 
     expect(await screen.findByText('Transaction not found')).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('heading').map((heading) => `${heading.tagName}:${heading.textContent}`),
+    ).toStrictEqual(['H1:Transaction Details', 'H2:Transaction not found']);
     expect(screen.getByRole('button', { name: 'Back to history' })).toBeInTheDocument();
     expect(screen.queryByText(/Support code/)).not.toBeInTheDocument();
   });

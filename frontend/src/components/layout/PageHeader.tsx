@@ -161,10 +161,11 @@ export function PageHeader({
       </div>
 
       {/*
-        The page's one `<h1>`, and on four of these pages the ONLY heading of any level: measured
-        live, `/history`, `/transactions/:id`, `/transfer` and `/transfer/internal` each exposed an
-        empty heading tree at every width, so heading navigation found nothing while `/settings` and
-        `/login` worked. `as="h1"` matches what `SettingsPage` and `AuthLayout` already do.
+        The page's one `<h1>`, and the level the page's section titles rank under: they are `<h2>`s
+        (`SectionTitle`). Measured live before it was added, `/history`, `/transactions/:id`,
+        `/transfer` and `/transfer/internal` each exposed an empty heading tree at every width, so
+        heading navigation found nothing there. `as="h1"` matches what `SettingsPage` and
+        `AuthLayout` already do.
 
         Rendered only when there is something to announce. An empty `<h1>` is worse than no heading —
         it puts a blank entry in the rotor. Not reachable today (the sole title-less caller is

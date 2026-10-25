@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
+import { format } from 'date-fns';
 import { AppToaster } from '../components/feedback';
 import { apiSlice } from '../features/api/apiSlice';
 import { AuthBootstrap } from '../features/auth';
@@ -190,6 +191,29 @@ describe('the ledger', () => {
 });
 
 describe('the rest of the page', () => {
+  it("titles each section with a level-2 heading under the balance's <h1>, and names it so", async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+    await screen.findByText('Salary');
+
+    const month = `${format(new Date(), 'MMMM')} so far`;
+    const titles = [month, 'Needs attention', 'Recent activity', 'Need help?'];
+    expect({
+      tree: screen
+        .getAllByRole('heading')
+        .map((heading) => `${heading.tagName}:${heading.textContent}`),
+      // Each section a region named by its title, and the title inside it.
+      regions: titles.map(
+        (name) =>
+          within(screen.getByRole('region', { name })).getByRole('heading', { level: 2 })
+            .textContent,
+      ),
+    }).toStrictEqual({
+      tree: ['H1:€2,080.50', ...titles.map((title) => `H2:${title}`)],
+      regions: titles,
+    });
+  });
+
   it('turns the one pending item into a task you can open', async () => {
     renderDashboard();
     await screen.findByRole('heading', { level: 1 });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../theme/themeContext';
 import type { ThemePreference } from '../theme/themePreference';
@@ -27,6 +27,7 @@ import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { useLogoutMutation } from '../features/api/apiSlice';
 import { ChangePinDialog, RenameAzureTagDialog } from '../components';
+import { SectionTitle } from '../components/shared/SectionTitle';
 
 // Features with a designed home here but no backend yet — shown as disabled "Coming soon" rows so
 // the page is honest about the roadmap instead of pretending dead controls work. This used to end
@@ -89,10 +90,11 @@ const useStyles = makeStyles({
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
 
+  // Inline, as the title was before it was a heading. The header's line then holds the header's
+  // own 14 px text beside the 16 px title and is 21 px tall; a block title alone makes it 20 px
+  // (measured), and every card below would move up a pixel.
   cardTitle: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: colors.neutral[800],
+    display: 'inline',
   },
 
   cardBody: {
@@ -322,6 +324,8 @@ export function SettingsPage() {
   const showProblem = useProblemToast();
   const [renameOpen, setRenameOpen] = useState(false);
   const [changePinOpen, setChangePinOpen] = useState(false);
+  // One prefix for the five cards' titles, which name their cards.
+  const titleId = useId();
 
   // Identity comes from the session — the shell shows the same user, and the two must never
   // disagree on one screen.
@@ -354,9 +358,11 @@ export function SettingsPage() {
       </Text>
 
       {/* ===== Profile ===== */}
-      <section className={styles.card}>
+      <section className={styles.card} aria-labelledby={`${titleId}-profile`}>
         <div className={styles.cardHeader}>
-          <Text className={styles.cardTitle}>Profile</Text>
+          <SectionTitle id={`${titleId}-profile`} className={styles.cardTitle}>
+            Profile
+          </SectionTitle>
         </div>
         <div className={styles.cardBody}>
           <div className={styles.profileHeader}>
@@ -411,9 +417,11 @@ export function SettingsPage() {
       </section>
 
       {/* ===== Security ===== */}
-      <section className={styles.card}>
+      <section className={styles.card} aria-labelledby={`${titleId}-security`}>
         <div className={styles.cardHeader}>
-          <Text className={styles.cardTitle}>Security</Text>
+          <SectionTitle id={`${titleId}-security`} className={styles.cardTitle}>
+            Security
+          </SectionTitle>
         </div>
         <div className={styles.cardBody}>
           {/*
@@ -451,9 +459,11 @@ export function SettingsPage() {
       </section>
 
       {/* ===== Appearance ===== */}
-      <section className={styles.card}>
+      <section className={styles.card} aria-labelledby={`${titleId}-appearance`}>
         <div className={styles.cardHeader}>
-          <Text className={styles.cardTitle}>Appearance</Text>
+          <SectionTitle id={`${titleId}-appearance`} className={styles.cardTitle}>
+            Appearance
+          </SectionTitle>
         </div>
         <div className={styles.cardBody}>
           {/*
@@ -483,9 +493,11 @@ export function SettingsPage() {
       </section>
 
       {/* ===== Coming soon ===== */}
-      <section className={styles.card}>
+      <section className={styles.card} aria-labelledby={`${titleId}-more`}>
         <div className={styles.cardHeader}>
-          <Text className={styles.cardTitle}>More settings</Text>
+          <SectionTitle id={`${titleId}-more`} className={styles.cardTitle}>
+            More settings
+          </SectionTitle>
         </div>
         <div className={styles.cardBody} style={{ gap: 0 }}>
           {COMING_SOON.map((item) => (
@@ -504,9 +516,11 @@ export function SettingsPage() {
       </section>
 
       {/* ===== Danger zone ===== */}
-      <section className={styles.card}>
+      <section className={styles.card} aria-labelledby={`${titleId}-danger`}>
         <div className={styles.cardHeader}>
-          <Text className={styles.cardTitle}>Danger zone</Text>
+          <SectionTitle id={`${titleId}-danger`} className={styles.cardTitle}>
+            Danger zone
+          </SectionTitle>
         </div>
         <div className={styles.cardBody}>
           <div className={styles.actionRow}>

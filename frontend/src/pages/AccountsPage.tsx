@@ -25,6 +25,7 @@ import {
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
 import { PageHeader } from '../components/layout/PageHeader';
+import { SectionTitle } from '../components/shared/SectionTitle';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
 import type { AccountResponse } from '../features/api/apiSlice';
@@ -204,12 +205,6 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: '2px',
-  },
-
-  accountName: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: colors.neutral[800],
   },
 
   accountBalanceSection: {
@@ -538,7 +533,8 @@ export function AccountsPage() {
                     {getAccountIcon(account.type)}
                   </div>
                   <div className={styles.accountInfo}>
-                    <Text className={styles.accountName}>{account.name}</Text>
+                    {/* A level-2 heading: the page's `<h1>` is the one heading above it. */}
+                    <SectionTitle>{account.name}</SectionTitle>
                     <AccountNumberField account={account} />
                   </div>
                   <Menu>
