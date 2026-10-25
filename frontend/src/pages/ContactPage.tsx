@@ -10,7 +10,7 @@ import { useAppSelector } from '../app/hooks';
 import { selectAuthStatus } from '../features/auth/authSlice';
 
 /**
- * What this project is, and who wrote it.
+ * Who I am and how to reach me, then what the project is.
  *
  * ONE route, reached from two places that look different but are the same page:
  *
@@ -24,7 +24,8 @@ import { selectAuthStatus } from '../features/auth/authSlice';
  *
  * **No email address and no phone number, deliberately.** This repository is public, so anything on
  * this page is scraped the day it ships. LinkedIn is the professional channel and it has its own
- * spam controls; a mailto here would just be a harvested inbox.
+ * spam controls; a mailto here would just be a harvested inbox. A security problem goes to GitHub's
+ * private vulnerability reporting, the channel SECURITY.md names, and never to a public issue.
  *
  * This page is also where the app stops pretending. Everywhere else AzureBank behaves like a bank —
  * it has to, or it would not demonstrate anything — and the honest place to say so is the one
@@ -32,9 +33,12 @@ import { selectAuthStatus } from '../features/auth/authSlice';
  */
 
 const LINKS = [
-  { label: 'LinkedIn', href: 'https://www.linkedin.com/in/vladislav-aleshaev/' },
-  { label: 'GitHub', href: 'https://github.com/Gurgant' },
+  { label: 'LinkedIn profile', href: 'https://www.linkedin.com/in/vladislav-aleshaev/' },
+  { label: 'GitHub profile', href: 'https://github.com/Gurgant' },
+  { label: 'Source code', href: 'https://github.com/Gurgant/azurebank-v2' },
 ] as const;
+
+const SECURITY_HREF = 'https://github.com/Gurgant/azurebank-v2/security';
 
 const useStyles = makeStyles({
   page: {
@@ -88,15 +92,17 @@ const useStyles = makeStyles({
     color: colors.neutral[700],
   },
 
+  // A column, because a card now holds more than one paragraph and the reset in `index.css` gives
+  // a `<p>` no margin of its own. The gap spaces the title too, so the title takes no margin: one
+  // would add to the gap.
   card: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${surfaces.border}`,
     borderRadius: '14px',
     padding: '20px',
-  },
-
-  cardTitle: {
-    marginBottom: '8px',
   },
 
   body: {
@@ -110,7 +116,7 @@ const useStyles = makeStyles({
     display: 'flex',
     flexWrap: 'wrap',
     gap: '12px',
-    marginTop: '16px',
+    marginTop: tokens.spacingVerticalS,
   },
 
   extLink: {
@@ -127,13 +133,25 @@ const useStyles = makeStyles({
     ':hover': { backgroundColor: colors.neutral[50] },
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
+
+  // A link inside a sentence is underlined, which the reset in `index.css` takes off every link:
+  // by colour alone it measured 1.71:1 against the words around it, and WCAG 1.4.1 asks for 3:1
+  // or a mark that is not colour. Fluent's link colour, not the brand's: this line sits outside
+  // the cards, on the shell's grey canvas when signed in, where the brand blue measured 4.42:1.
+  // Hover and focus as on the not-found page's link.
+  inlineLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'underline',
+    ':hover': { color: tokens.colorBrandForegroundLinkHover },
+    ':focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
 });
 
-export function AboutPage() {
+export function ContactPage() {
   const styles = useStyles();
   const isAuthenticated = useAppSelector(selectAuthStatus) === 'authenticated';
-  const madeOfId = useId();
-  const whoId = useId();
+  const meId = useId();
+  const projectId = useId();
 
   return (
     <div className={styles.page}>
@@ -152,34 +170,21 @@ export function AboutPage() {
       </div>
 
       <Text as="h1" className={styles.title}>
-        About this project
+        Contact
       </Text>
 
-      <Text as="p" className={styles.lede}>
-        AzureBank is a portfolio project, not a real bank. No money moves, no account here belongs
-        to anyone, and every balance on the screen is generated. It exists to demonstrate how a
-        banking application is built end to end.
-      </Text>
-
-      <section className={styles.card} aria-labelledby={madeOfId}>
-        <SectionTitle id={madeOfId} className={styles.cardTitle}>
-          What it is made of
-        </SectionTitle>
+      <section className={styles.card} aria-labelledby={meId}>
+        <SectionTitle id={meId}>Vladislav Aleshaev</SectionTitle>
         <Text as="p" className={styles.body}>
-          A .NET API and a BFF that holds the session so the browser never sees a token, with a
-          React front end. The parts that are usually skipped in a demo are the ones it takes most
-          seriously: idempotent money operations, step-up authentication before a transfer, and
-          guards that stop a form being submitted twice.
+          Full-stack engineer (.NET, React, Azure)
         </Text>
-      </section>
-
-      <section className={styles.card} aria-labelledby={whoId}>
-        <SectionTitle id={whoId} className={styles.cardTitle}>
-          Who wrote it
-        </SectionTitle>
         <Text as="p" className={styles.body}>
-          Vladislav Aleshaev — sole developer. The code is public and so is the history, including
-          the mistakes and what they cost.
+          I built AzureBank as my portfolio project. I designed the system, wrote part of the code
+          myself and direct the AI coding agents that write the rest. I read the code I merge and I
+          merge every pull request myself.
+        </Text>
+        <Text as="p" className={styles.body}>
+          The quickest way to reach me is LinkedIn.
         </Text>
         <div className={styles.linkRow}>
           {LINKS.map((link) => (
@@ -196,8 +201,36 @@ export function AboutPage() {
           ))}
         </div>
       </section>
+
+      <section className={styles.card} aria-labelledby={projectId}>
+        <SectionTitle id={projectId}>About this project</SectionTitle>
+        <Text as="p" className={styles.lede}>
+          AzureBank is a portfolio project, not a real bank. No money moves, no account here belongs
+          to anyone, and every balance on the screen is generated. It exists to demonstrate how a
+          banking application is built end to end.
+        </Text>
+        <Text as="p" className={styles.body}>
+          A .NET API and a BFF that holds the session so the browser never sees a token, with a
+          React front end. The parts that are usually skipped in a demo are the ones it takes most
+          seriously: idempotent money operations, step-up authentication before a transfer, and
+          guards that stop a form being submitted twice.
+        </Text>
+      </section>
+
+      <Text as="p" className={styles.body}>
+        Found a security problem? Please report it privately through GitHub&apos;s{' '}
+        <a
+          className={styles.inlineLink}
+          href={SECURITY_HREF}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          private vulnerability reporting
+        </a>
+        .
+      </Text>
     </div>
   );
 }
 
-export default AboutPage;
+export default ContactPage;

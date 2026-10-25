@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -501,10 +501,177 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     await pasteDigits('123456');
     const alert = await screen.findByRole('alert');
 
-    expect(alert).toHaveTextContent(
-      'Too many incorrect passwords. Your account is locked; try again later.',
-    );
+    expect(alert).toHaveTextContent(/^Your account is locked\.$/);
+    expect(screen.getByRole('timer')).toHaveTextContent(/^Try again in (15:00|14:5\d)$/);
   });
+
+  /**
+   * The lock's refusal as the browser receives it: the API's body and its `Retry-After`, as
+   * measured on the API's host (SetPinLockAnswerTests) and forwarded unchanged by the BFF's
+   * (SetPinLockForwardingTests), with `seconds` for the wait left. With no seconds the answer
+   * carries neither the field nor the header.
+   */
+  function lockAnswer(seconds?: number) {
+    return problem({
+      instance: '/api/auth/pin',
+      status: 429,
+      errorCode: 'ACCOUNT_LOCKED',
+      detail:
+        'Too many failed login attempts. Your account is temporarily locked; try again later.',
+      ...(seconds === undefined
+        ? {}
+        : {
+            extensions: {
+              retryAfterSeconds: seconds,
+              lockedUntil: new Date(Date.now() + seconds * 1000).toISOString(),
+            },
+            headers: { 'Retry-After': String(seconds) },
+          }),
+    });
+  }
+
+  /** Every save from now on, counted; the first `locks` are refused with a wait of `seconds`. */
+  function lockedFor(seconds: number, locks: number) {
+    const saves: unknown[] = [];
+    const refusedAt: number[] = [];
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        saves.push(await request.clone().json());
+        if (saves.length <= locks) {
+          refusedAt.push(Date.now());
+          return lockAnswer(seconds);
+        }
+      }),
+    );
+    return { saves, refusedAt };
+  }
+
+  const setPinButton = () => screen.getByRole('button', { name: 'Set PIN' });
+
+  it('a lock with a wait says the account is locked, and counts down outside the alert', async () => {
+    lockedFor(900, 1);
+    await toTheConfirmation();
+    await typePassword();
+    await pasteDigits('123456');
+    const alert = await screen.findByRole('alert');
+    const timer = screen.getByRole('timer');
+
+    expect(alert).toHaveTextContent(/^Your account is locked\.$/);
+    expect(timer).toHaveTextContent(/^Try again in (15:00|14:5\d)$/);
+    expect(timer).toHaveAttribute('aria-live', 'polite');
+    expect(alert).not.toContainElement(timer);
+    await waitFor(() => expect(screen.getByLabelText('Account password')).toHaveFocus());
+    expect(setPinButton()).toBeDisabled();
+  });
+
+  it('while the lock counts nothing sends, edits included; at zero it goes and Set PIN saves', async () => {
+    const { saves, refusedAt } = lockedFor(900, 1);
+    await toTheConfirmation();
+    await typePassword();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await screen.findByRole('timer');
+
+    // An edit clears a refusal, and the lock with it would give the save back at once.
+    const password = screen.getByLabelText('Account password');
+    fireEvent.change(password, { target: { value: `${MOCK_PASSWORD}x` } });
+    fireEvent.change(password, { target: { value: MOCK_PASSWORD } });
+    // Six digits again, with the password in hand: the boxes' own send is held too.
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await advanceUntil(refusedAt[0], 855_000);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Your account is locked\.$/);
+    expect(screen.getByRole('timer')).toHaveTextContent(/^Try again in 4\ds$/);
+    expect(setPinButton()).toBeDisabled();
+    expect(saves).toHaveLength(1);
+
+    await advanceUntil(refusedAt[0], 899_000);
+    expect(screen.getByRole('timer')).toBeInTheDocument();
+    expect(setPinButton()).toBeDisabled();
+
+    // Three seconds past the wait, not one: the page takes its deadline a moment after the
+    // handler's instant, and the countdown looks at the clock once a second.
+    await advanceUntil(refusedAt[0], 903_000);
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(setPinButton()).toBeEnabled();
+
+    // Sent, with the PIN and the password kept. What it is answered is not this test's: fifteen
+    // minutes on the fake clock have also ended the mock's session.
+    await user.click(setPinButton());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1]).toEqual({ pin: '123456', password: MOCK_PASSWORD });
+  });
+
+  it('a second lock with the same wait counts from its own answer', async () => {
+    const { saves, refusedAt } = lockedFor(60, 2);
+    await toTheConfirmation();
+    await typePassword();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await screen.findByRole('timer');
+    await advanceUntil(refusedAt[0], 63_000);
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+
+    await user.click(setPinButton());
+
+    expect(await screen.findByRole('timer')).toHaveTextContent(/^Try again in (1:00|59s)$/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Your account is locked\.$/);
+    expect(setPinButton()).toBeDisabled();
+    expect(saves).toHaveLength(2);
+  });
+
+  it('a lock goes back with the visitor to the first step, and goes at zero there', async () => {
+    // Unlike a refusal of what was typed, the lock is the account's, whichever step is on screen.
+    const { saves, refusedAt } = lockedFor(60, 1);
+    await toTheConfirmation();
+    await typePassword();
+    installFakeClock();
+    const user = fakeClockUser();
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await screen.findByRole('timer');
+
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Create your PIN')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Your account is locked\.$/);
+    expect(screen.getByRole('timer')).toHaveTextContent(/^Try again in (1:00|59s|58s)$/);
+
+    await advanceUntil(refusedAt[0], 63_000);
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // The password was kept, so the six boxes of the confirmation send by themselves again.
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await user.click(screen.getByLabelText('Digit 1 of 6'));
+    await user.paste('123456');
+    await waitFor(() => expect(saves).toHaveLength(2));
+  });
+
+  it.each([
+    { what: 'names no wait', seconds: undefined },
+    { what: 'has no wait left', seconds: 0 },
+  ])(
+    'a lock whose answer $what is said as before, with no countdown and no hold',
+    async ({ seconds }) => {
+      server.use(http.post('*/bff/auth/set-pin', () => lockAnswer(seconds)));
+      await toTheConfirmation();
+      await typePassword();
+      await pasteDigits('123456');
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Too many incorrect passwords. Your account is locked; try again later.',
+      );
+      expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+      expect(setPinButton()).toBeEnabled();
+    },
+  );
 
   /** The six boxes of the confirm step, in order. */
   const boxes = () =>
@@ -565,7 +732,7 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     },
     {
       code: 'ACCOUNT_LOCKED',
-      says: 'Too many incorrect passwords. Your account is locked; try again later.',
+      says: 'Your account is locked.',
       typed: MOCK_PASSWORD,
       arrange: () => {
         mockState.loginLockedUntil[MOCK_USER.email] = new Date(

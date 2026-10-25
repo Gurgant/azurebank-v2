@@ -33,6 +33,9 @@ import { darkPalette } from './darkPalette';
 const CHROME = { light: '#FFFFFF', dark: '#292929' } as const;
 const WHITE = CHROME.light;
 
+/** The text roles that carry words a visitor reads. */
+const READABLE_TEXT = ['primary', 'secondary', 'tertiary', 'link', 'danger'] as const;
+
 /** WCAG 2.1 relative luminance. */
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((i) => {
@@ -141,18 +144,18 @@ describe.each([
     expect(contrast(colors.brand[60], chrome)).toBeGreaterThanOrEqual(4.5);
   });
 
-  /** Body text on the card it is printed on. WCAG 1.4.3 AA for normal text. */
-  it('prints primary text on the card at 4.5:1 or better', () => {
+  /** neutral[700] on the card it is printed on. WCAG 1.4.3 AA for normal text. */
+  it('prints neutral[700] on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[700], chrome)).toBeGreaterThanOrEqual(4.5);
   });
 
-  /** Secondary text is still text: same threshold, and the one most often quietly failed. */
-  it('prints secondary text on the card at 4.5:1 or better', () => {
+  /** `text.tertiary` is still text: same threshold, and the one most often quietly failed. */
+  it('prints tertiary text on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[500], chrome)).toBeGreaterThanOrEqual(4.5);
   });
 
   /**
-   * The card is not the only ground the secondary grey is drawn on, nor the hardest. It is drawn
+   * The card is not the only ground the tertiary grey is drawn on, nor the hardest. It is drawn
    * on the canvas, on the wells and the chips, on the hairline grey under a hovered chip, on the
    * brand tints, as on a chosen card, and on the green of a found recipient. In the light theme
    * every one of them is darker than the card.
@@ -165,9 +168,36 @@ describe.each([
     ['brand[120]', colors.brand[120]],
     ['brand[130]', colors.brand[130]],
     ['semantic.success.light', colors.semantic.success.light],
-  ])('prints secondary text on %s at 4.5:1 or better', (ground, hex) => {
+  ])('prints tertiary text on %s at 4.5:1 or better', (ground, hex) => {
     const ratio = contrast(colors.neutral[500], hex);
     expect(ratio, `neutral[500] on ${ground}: ${ratio.toFixed(2)}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /**
+   * Every text role on the two grounds of its theme: the card and the canvas under it. The
+   * roles are words, so the threshold is 4.5:1 for each, link and danger included.
+   */
+  describe.each(READABLE_TEXT)('text.%s', (role) => {
+    it.each([
+      ['the card', chrome],
+      ['the canvas', surfaces.canvas],
+    ])('reads on %s at 4.5:1 or better', (ground, hex) => {
+      const ratio = contrast(palette.text[role], hex);
+      expect(ratio, `text.${role} on ${ground}: ${ratio.toFixed(2)}`).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+
+  /**
+   * `text.disabled` is held to nothing: WCAG 1.4.3 asks no contrast of an inactive control, and
+   * Fluent's own disabled grey, which this is, measures 1.88:1 on white. Every other role is in
+   * `READABLE_TEXT`, so a role added later is held to 4.5:1 unless it is put here by name.
+   */
+  it('leaves only text.disabled out of the 4.5:1 rule', () => {
+    const exempt = Object.keys(palette.text).filter(
+      (role) => !(READABLE_TEXT as readonly string[]).includes(role),
+    );
+    expect(exempt).toEqual(['disabled']);
+    expect(contrast(palette.text.disabled, chrome)).toBeLessThan(4.5);
   });
 
   /** Every status chip: pale-on-deep in dark, deep-on-pale in light — the ratio is what must hold. */

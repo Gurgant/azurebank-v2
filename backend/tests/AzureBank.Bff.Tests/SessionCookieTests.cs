@@ -66,8 +66,8 @@ public class SessionCookieTests : IClassFixture<WebApplicationFactory<Program>>
 
     private static async Task<string> LoginAndGetSetCookie(HttpClient client)
     {
-        // The BFF model-validates LoginRequest before any upstream call — the password
-        // must satisfy the [Password] policy or the request 400s before the fake backend.
+        // The BFF model-validates LoginRequest before any upstream call: a missing or malformed
+        // address, or a missing, blank or over-128-character password, 400s before the fake backend.
         var response = await client.PostAsJsonAsync(
             "/bff/auth/login", new { email = "cookie@example.com", password = "Password1!" });
         response.StatusCode.Should().Be(HttpStatusCode.OK);

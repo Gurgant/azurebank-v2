@@ -79,7 +79,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
+          # The newest 24 at every run: the reason is at the first setup-node of ci.yml.
           node-version: '24'
+          check-latest: true
 
       - name: Install Bruno CLI
         # PINNED, and printed. Unpinned, every run installed whatever npm served that day, so a green

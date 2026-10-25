@@ -164,7 +164,9 @@ export const useMoneyDialogStyles = makeStyles({
     background: 'transparent',
     textAlign: 'center',
     width: '180px',
-    '::placeholder': { color: colors.neutral[300] },
+    // The hint "0" is read, so it takes the token of the description field's hint, which follows
+    // the theme: 4.74 to 1 on this ground in the light theme and 5.79 to 1 in the dark one.
+    '::placeholder': { color: tokens.colorNeutralForeground4 },
   },
   newBalance: { fontSize: '13px', color: colors.neutral[500] },
   // `error.dark`, the red for words, as in `transferWizardStyles`: `error.main` measured 3.75 to

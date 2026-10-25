@@ -17,7 +17,7 @@ import {
   Eye20Regular,
   EyeOff20Regular,
   ChevronRight16Regular,
-  Headset24Regular,
+  ContactCard24Regular,
 } from '@fluentui/react-icons';
 import { format, startOfMonth } from 'date-fns';
 import { atMedia } from '../theme/breakpoints';
@@ -278,7 +278,7 @@ const useStyles = makeStyles({
   },
 
   // The title on a line of its own above the link (`SectionTitle` is a block): inline, the two
-  // ran together as "Need help?Get in touch".
+  // ran together as "Questions about this demo?Contact the developer".
   supportTitle: {
     width: '100%',
     marginBottom: '4px',
@@ -960,17 +960,17 @@ export function DashboardPage() {
             >
               <div className={styles.supportRow}>
                 <span className={styles.supportIcon} aria-hidden>
-                  <Headset24Regular />
+                  <ContactCard24Regular />
                 </span>
                 <div>
                   <SectionTitle id={`${titleId}-support`} className={styles.supportTitle}>
-                    Need help?
+                    Questions about this demo?
                   </SectionTitle>
                   {/* NOT "our support team is available 24/7". There is no team: this is a portfolio
                   project, and a line promising staffed support is the same defect as a button that
                   cannot extend a session. The link goes somewhere real and says what it is. */}
-                  <Link to="/about" className={styles.supportLink}>
-                    Get in touch <ChevronRight16Regular />
+                  <Link to="/contact" className={styles.supportLink}>
+                    Contact the developer <ChevronRight16Regular />
                   </Link>
                 </div>
               </div>

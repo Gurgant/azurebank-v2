@@ -861,7 +861,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
           </div>
 
           <div className={styles.amountSection}>
-            <Text className={styles.amountLabel}>Enter amount</Text>
+            <Text className={styles.amountLabel}>Amount</Text>
             <AmountField
               control={control}
               name="amount"

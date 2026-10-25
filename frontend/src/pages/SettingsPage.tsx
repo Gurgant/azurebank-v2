@@ -16,7 +16,6 @@ import {
   Alert24Regular,
   Globe24Regular,
   Link24Regular,
-  SignOut24Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
@@ -26,7 +25,7 @@ import { useProblemToast } from '../components/feedback';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { useLogoutMutation } from '../features/api/apiSlice';
-import { ChangePinDialog, RenameAzureTagDialog } from '../components';
+import { ChangePinDialog, RenameAzureTagDialog, SIGN_OUT_ACTION } from '../components';
 import { SectionTitle } from '../components/shared/SectionTitle';
 
 // Features with a designed home here but no backend yet — shown as disabled "Coming soon" rows so
@@ -255,7 +254,7 @@ const useStyles = makeStyles({
     color: colors.neutral[400],
   },
 
-  // ===== Action rows (security, danger zone) =====
+  // ===== Action rows (security, session) =====
   actionRow: {
     display: 'flex',
     alignItems: 'center',
@@ -270,8 +269,8 @@ const useStyles = makeStyles({
   },
 
   // The row's button keeps the width of its label. Left free to shrink, it lost to the sentence
-  // beside it on a phone: at 375 px it was squeezed to its 96 px minimum and its label broke in
-  // two ("Log" / "out"). The sentence wraps instead.
+  // beside it on a phone: at 375 px it was squeezed to its 96 px minimum and its two-word label
+  // broke in two. The sentence wraps instead.
   actionButton: { flexShrink: 0 },
 
   actionTitle: {
@@ -515,33 +514,30 @@ export function SettingsPage() {
         </div>
       </section>
 
-      {/* ===== Danger zone ===== */}
-      <section className={styles.card} aria-labelledby={`${titleId}-danger`}>
+      {/* ===== Session =====
+          Signing out destroys nothing and is undone by signing in again, so its button wears no
+          danger colour: it is the plain secondary button that "Change PIN" is. */}
+      <section className={styles.card} aria-labelledby={`${titleId}-session`}>
         <div className={styles.cardHeader}>
-          <SectionTitle id={`${titleId}-danger`} className={styles.cardTitle}>
-            Danger zone
+          <SectionTitle id={`${titleId}-session`} className={styles.cardTitle}>
+            Session
           </SectionTitle>
         </div>
         <div className={styles.cardBody}>
           <div className={styles.actionRow}>
             <div className={styles.actionInfo}>
-              <Text className={styles.actionTitle}>Log out</Text>
-              <Text className={styles.actionSubtitle}>
-                Sign out of your account on this device.
-              </Text>
+              <Text className={styles.actionTitle}>{SIGN_OUT_ACTION.label}</Text>
+              <Text className={styles.actionSubtitle}>End your session in this browser.</Text>
             </div>
             <Button
               appearance="secondary"
               className={styles.actionButton}
-              // The label in the red for words: `error.main`, which the border keeps, measured
-              // 3.92 to 1 as 14 px text on the card in the light theme.
-              style={{ borderColor: colors.semantic.error.main, color: colors.semantic.error.dark }}
-              icon={<SignOut24Regular />}
+              icon={<SIGN_OUT_ACTION.icon />}
               onClick={() => {
                 void handleLogout();
               }}
             >
-              Log out
+              {SIGN_OUT_ACTION.label}
             </Button>
           </div>
         </div>

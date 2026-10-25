@@ -174,6 +174,16 @@ those caught only by reading. Outside TypeScript it reads nothing: the theme var
 `src/theme/themeVariables.test.ts`, and `index.html` and `public/site.webmanifest` name the
 colours of the browser's own surfaces.
 
+**Words that more than one surface says have one owner**, a named export in the module of the
+feature that owns them: the act of signing out in `src/components/layout/signOutAction.ts`, what
+the PIN confirms in `src/features/auth/pinWords.ts`, the demo's sentences in
+`src/features/demo/demoWords.ts` and the app's sentences for a refusal in
+`src/api/problemMessages.ts`. A test that finds a control by its name types the name out and
+never imports it: an imported name follows a wrong rename, and the test still passes. Sign in and
+Sign out, never Log in or Log out: lint refuses the second pair in a string, a template or JSX
+text. It needs white space between the two words, a line break included, so `/bff/auth/logout`
+and `logout` stay legal.
+
 **MSW is a test tool.** `dev:mock` is for click-throughs and demos, never the development path:
 a frontend developed only against mocks drifts from the real contract.
 

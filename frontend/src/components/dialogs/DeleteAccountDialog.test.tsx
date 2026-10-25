@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { tokens } from '@fluentui/react-components';
 import { Route, Routes } from 'react-router-dom';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -20,6 +21,7 @@ import {
   sleep,
 } from '../../test/outage';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
+import { FLUENT_STATES, paintedIn, type FluentState } from '../../test/fluentStates';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 
 // The `server.events` listeners some tests register are module-level and must not leak into
@@ -84,7 +86,7 @@ function pinBoxes() {
 
 async function reachPinStep() {
   const dialog = await screen.findByRole('dialog', { name: 'Delete account?' });
-  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
   await screen.findByLabelText('Digit 1 of 6');
   return dialog;
 }
@@ -108,6 +110,42 @@ function observeRequests() {
   });
   return seen;
 }
+
+describe('DeleteAccountDialog — the confirm step says what is final', () => {
+  it('names its final button "Delete account" and frames itself in the danger tone', async () => {
+    // The tone is read from the attribute the shell sets beside its class: Griffel's class names
+    // are hashed, and jsdom computes no colour worth asserting.
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Delete account?' });
+    expect(within(dialog).getByRole('button', { name: 'Delete account' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(dialog.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('danger');
+  });
+
+  it('keeps the final button red with white text in every state Fluent restyles, a key press too', async () => {
+    // Fluent's primary button paints its pressed blue under `:active:focus-visible` as well as
+    // `:hover:active`: Space held on the focused button is a press with no pointer on it.
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Delete account?' });
+    const button = within(dialog).getByRole('button', { name: 'Delete account' });
+    const fill: Record<FluentState, string> = {
+      rest: tokens.colorStatusDangerBackground3,
+      hover: tokens.colorStatusDangerBackground3Hover,
+      'pointer press': tokens.colorStatusDangerBackground3Pressed,
+      'key press': tokens.colorStatusDangerBackground3Pressed,
+    };
+    for (const state of FLUENT_STATES) {
+      expect({ state, fill: paintedIn(button, state, 'background-color') }).toEqual({
+        state,
+        fill: fill[state],
+      });
+      expect({ state, text: paintedIn(button, state, 'color') }).toEqual({
+        state,
+        text: tokens.colorNeutralForegroundStaticInverted,
+      });
+    }
+  });
+});
 
 describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
   it('the sixth digit mints then deletes — one POST then one DELETE carrying the minted id in the header', async () => {

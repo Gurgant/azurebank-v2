@@ -1,3 +1,4 @@
+import { tokens } from '@fluentui/react-components';
 import { toVarRefs, type WidenedTree } from './cssVariables';
 
 /**
@@ -88,15 +89,16 @@ const lightColors = {
     100: '#F3F4F6', // Background light
     200: '#E5E7EB', // Border light
     300: '#D1D5DB', // Border default
-    400: '#9CA3AF', // Placeholder text
-    // Secondary text: the lightest grey of its hue that reads at 4.5:1 on every light ground it
+    // Icons and inactive text, never a sentence to read: 2.54:1 on white, under the 4.5:1 of words.
+    400: '#9CA3AF',
+    // `text.tertiary`: the lightest grey of its hue that reads at 4.5:1 on every light ground it
     // is drawn on — the card, the canvas, neutral[50] to [200], brand[120] and [130], and
     // semantic.success.light. neutral[200] is the closest, at 4.52; `surfaces.test.ts` holds each.
     500: '#626875',
-    600: '#4B5563', // Tertiary text
-    700: '#374151', // Primary text
-    800: '#1F2937', // Heading text
-    900: '#111827', // Darkest text
+    600: '#4B5563', // `text.secondary`
+    700: '#374151', // no role takes it
+    800: '#1F2937', // `text.primary`
+    900: '#111827', // the darkest; no role takes it
   },
   semantic: {
     success: {
@@ -211,6 +213,33 @@ const lightSurfaces = {
   border: '#E5E7EB',
 } as const;
 
+/**
+ * Words named by the job they do, so a sentence asks for `text.secondary` rather than for a shade.
+ *
+ * The three greys are the palette's own `neutral[800]`, `[600]` and `[500]`, and `fluentTheme.ts`
+ * gives Fluent's `colorNeutralForeground1` to `3` the same three: before, a Fluent control's label
+ * was Fluent's neutral #242424 beside a heading in the palette's cool #1F2937, on one card.
+ * `disabled` and `danger` are Fluent's own `colorNeutralForegroundDisabled` and
+ * `colorPaletteRedForeground1`; `link` is the brand's hover step, the blue that reads at 4.5:1 on
+ * the canvas too.
+ *
+ * `disabled` is the one role under 4.5:1, at 1.88:1 on white: WCAG 1.4.3 does not ask contrast of
+ * an inactive control, and `surfaces.test.ts` says so where it leaves it out.
+ */
+const lightText = {
+  primary: '#1F2937',
+  secondary: '#4B5563',
+  tertiary: '#626875',
+  disabled: '#BDBDBD',
+  link: '#0068A1',
+  danger: '#BC2F32',
+} as const;
+
+/** Lines named by role. `subtle` is the hairline of `surfaces.border`, named as a line. */
+const lightStroke = {
+  subtle: '#E5E7EB',
+} as const;
+
 const lightShadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -277,6 +306,25 @@ export const componentSizes = {
 export const transitions = {
   fast: '150ms ease',
   normal: '200ms ease',
+} as const;
+
+// ============================================
+// CORNER RADII
+// ============================================
+
+/**
+ * Corners named by what they round. Not part of the palette, as `safeArea` is not: a corner is the
+ * same in both themes, and in the palette it would be written out as a variable with a dark twin.
+ * Where Fluent has the length it is Fluent's token, so a control here and Fluent's share it.
+ */
+export const radius = {
+  control: tokens.borderRadiusMedium, // 4px: inputs and buttons, as Fluent draws them
+  tile: tokens.borderRadiusXLarge, // 8px
+  chip: tokens.borderRadiusXLarge, // 8px
+  card: '12px',
+  dialog: '12px',
+  pill: tokens.borderRadiusCircular,
+  avatar: '50%',
 } as const;
 
 // ============================================
@@ -352,6 +400,8 @@ export const safeArea = {
 export const lightPalette = {
   colors: lightColors,
   surfaces: lightSurfaces,
+  text: lightText,
+  stroke: lightStroke,
   shadows: lightShadows,
   gradients: lightGradients,
 } as const;
@@ -372,5 +422,7 @@ export type LightPalette = WidenedTree<typeof lightPalette>;
  */
 export const colors = toVarRefs(lightColors, ['colors']);
 export const surfaces = toVarRefs(lightSurfaces, ['surfaces']);
+export const text = toVarRefs(lightText, ['text']);
+export const stroke = toVarRefs(lightStroke, ['stroke']);
 export const shadows = toVarRefs(lightShadows, ['shadows']);
 export const gradients = toVarRefs(lightGradients, ['gradients']);
