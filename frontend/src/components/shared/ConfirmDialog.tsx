@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { colors, safeArea, zIndex, transitions, shadows } from '../../theme/tokens';
+import { useDangerButtonStyles } from './dangerButtonStyles';
 
 // ============================================
 // TYPES
@@ -214,13 +215,9 @@ const useStyles = makeStyles({
     },
   },
 
+  // Its fill and text come from `useDangerButtonStyles`, as on the account deletion's button.
   confirmButtonDanger: {
-    backgroundColor: colors.semantic.error.main,
-    color: tokens.colorNeutralForegroundStaticInverted,
     border: 'none',
-    ':hover': {
-      backgroundColor: colors.semantic.error.dark,
-    },
   },
 });
 
@@ -260,6 +257,7 @@ export function ConfirmDialog({
   children,
 }: ConfirmDialogProps) {
   const styles = useStyles();
+  const dangerButton = useDangerButtonStyles();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
@@ -454,7 +452,9 @@ export function ConfirmDialog({
           <Button
             className={mergeClasses(
               styles.button,
-              variant === 'danger' ? styles.confirmButtonDanger : styles.confirmButtonDefault,
+              variant === 'danger'
+                ? mergeClasses(styles.confirmButtonDanger, dangerButton.fill)
+                : styles.confirmButtonDefault,
             )}
             onClick={whileOpen(onConfirm)}
             disabled={isLoading}

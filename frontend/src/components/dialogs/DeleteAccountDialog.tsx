@@ -10,6 +10,7 @@ import {
 } from '@fluentui/react-components';
 import { Delete24Regular } from '@fluentui/react-icons';
 import { colors } from '../../theme/tokens';
+import { useDangerButtonStyles } from '../shared/dangerButtonStyles';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SERVICE_UNAVAILABLE } from '../../api/problemMessages';
 import {
@@ -82,13 +83,15 @@ export interface DeleteAccountDialogProps {
  * state or Web Storage — and the dialog is mount-on-open (AccountsPage), so the state dies with
  * the surface. `/pin-setup?returnTo=/accounts` carries a PATH.
  *
- * The shell is MoneyDialogShell (role 'dialog', accessible name = title). Tone 'debit' with no
- * destructive styling and no success screen: the dialog closes and the list refetches through
- * the mutation's own tags. Visual/semantic polish is U8's (#165/#166), not this dialog's.
+ * The shell is MoneyDialogShell (role 'dialog', accessible name = title), in its `danger` tone,
+ * and the confirm step's final button is a red fill named "Delete account": closing an account
+ * cannot be undone, and it must not look like Deposit's blue. No success screen: the dialog
+ * closes and the list refetches through the mutation's own tags.
  */
 export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogProps) {
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
+  const dangerButton = useDangerButtonStyles();
   const navigate = useNavigate();
   const errorId = useId();
 
@@ -228,7 +231,7 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
       open
       title="Delete account?"
       icon={<Delete24Regular />}
-      tone="debit"
+      tone="danger"
       onClose={requestClose}
       closeDisabled={busy}
     >
@@ -292,10 +295,11 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
             <Button
               appearance="primary"
               size="large"
+              className={dangerButton.fill}
               style={{ width: '100%', height: '48px' }}
               onClick={() => setStep('pin')}
             >
-              Delete
+              Delete account
             </Button>
             <Button
               appearance="secondary"
