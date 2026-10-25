@@ -1028,13 +1028,16 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
     expect(screen.queryByText('LOGIN PAGE')).not.toBeInTheDocument();
   });
 
-  it("Settings' Log out, when the connection failed: that sentence before the connection's", async () => {
+  it("Settings' Sign out, when the connection failed: that sentence before the connection's", async () => {
     const store = await boot(15 * 60_000);
     server.use(http.post('*/bff/auth/logout', () => HttpResponse.error()));
     renderShell(store, <SettingsPage />);
     await screen.findByRole('heading', { level: 1, name: 'Settings' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
+    // The sidebar's Sign out has the same name: the page's own is the one inside main.
+    await userEvent.click(
+      within(screen.getByRole('main')).getByRole('button', { name: 'Sign out' }),
+    );
 
     expect(await toastBodyStartingWith(COPY.signOutFailed)).toBe(
       `${COPY.signOutFailed} ${CONNECTION}`,
@@ -1066,7 +1069,7 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
     expect(screen.queryByText('Session expired or invalid')).not.toBeInTheDocument();
   });
 
-  it("a 401 from Settings' Log out says nothing of the kind either", async () => {
+  it("a 401 from Settings' Sign out says nothing of the kind either", async () => {
     const store = await boot(15 * 60_000);
     let answered = false;
     server.use(
@@ -1083,7 +1086,10 @@ describe('a sign-out that fails says the visitor is still signed in', () => {
     renderShell(store, <SettingsPage />);
     await screen.findByRole('heading', { level: 1, name: 'Settings' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
+    // The sidebar's Sign out has the same name: the page's own is the one inside main.
+    await userEvent.click(
+      within(screen.getByRole('main')).getByRole('button', { name: 'Sign out' }),
+    );
 
     await waitFor(() => expect(answered).toBe(true));
     await waitFor(() => expect(store.getState().auth.status).not.toBe('authenticated'));

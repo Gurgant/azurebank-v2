@@ -10,17 +10,20 @@ import { modelStateProblem } from './problem';
  *
  *   - the envelope is the FRAMEWORK one — rfc9110 type, no `instance`, no `errorCode`, a W3C
  *     traceparent — and not the API's handler-written shape, even though the DTO is the API's;
- *   - the gate runs before the credential check, so a malformed password can never touch the
- *     login failure counter.
+ *   - the gate runs before the credential check, so a body it refuses never touches the login
+ *     failure counter.
  *
- * Measured on the BFF (:5000), 2026-08-07 — the surface the mock intercepts, which is the whole
- * point of measuring here rather than on :7215:
+ * What it refuses on sign-in is little: a missing, malformed or over-long address, and a missing
+ * or over-long password. A password is verified there, not chosen, so `LoginRequest` holds it to
+ * `[Required]` and `[MaxLength(128)]` alone; one that breaks the rule a chosen password keeps
+ * reaches the credential check, answers the 401 of any wrong password and is counted. Measured on
+ * the BFF — the surface the mock intercepts, which is the whole point of measuring there rather
+ * than on the API — on :5000 on 2026-08-07 for the first line, and on the in-process host of the
+ * real BFF in front of the real API (`BffOverApiFactory`) on 2026-10-25 for the other two:
  *
  *   {"email":"nobody@azurebank.dev","password":"ValidPass1!"}  -> 401 INVALID_CREDENTIALS
- *   {"email":"a@b.dev","password":"Ab1!"}                      -> 400, Password format only
- *
- * The mock used to answer 401 for the second one, because it compared credentials and never
- * modelled the gate.
+ *   {"email":"a@b.dev","password":"Ab1!"}                      -> 401 INVALID_CREDENTIALS
+ *   {"email":"a@b.dev","password":<129 characters>}            -> 400, Password length only
  *
  * ─── The three semantics that are easy to get wrong, all measured ───────────────────────────
  *
@@ -38,7 +41,8 @@ import { modelStateProblem } from './problem';
  *    and `RequiredAttribute` counts whitespace as missing:
  *
  *      {"email":null,"password":null}  -> Email/Password: ["The … field is required."]
- *      {"email":"   ","password":"   "} -> both, PLUS both format messages
+ *      {"email":"   ","password":"   "} -> both, PLUS the address's format message; the
+ *                                          password's one other rule, its length, holds
  *
  * 3. The two DTOs word the same length rule DIFFERENTLY, because login uses `[MaxLength]` and
  *    register uses `[StringLength]`. Note the quotes around the number on one and not the other:
@@ -61,8 +65,9 @@ import { modelStateProblem } from './problem';
  * to be a whole envelope apart:
  *
  *   {"Email":"…","Password":"…"}           -> binds, reaches credentials (401)
- *   {"EMAIL":"a@b.dev","PASSWORD":"Ab1!"}  -> 400 keyed `Password` — the CLR name, NOT what
- *                                             was sent
+ *   {"EMAIL":"a@b.dev","PASSWORD":<129>}   -> 400 keyed `Password` — the CLR name, NOT what
+ *                                             was sent (129 characters, measured on the
+ *                                             in-process BFF host on 2026-10-25)
  *   {"eMaIl":123,…}                        -> 400 keyed `$.eMaIl` — this one DOES echo the
  *                                             member as sent
  *
@@ -152,7 +157,8 @@ const PASSWORD_MESSAGE =
   'Password must be 8-128 characters and Password must contain at least one uppercase, ' +
   'one lowercase, one digit, and one special character.';
 
-const passwordField = (): FieldSpec => ({
+/** A password CHOSEN, at registration: `[Password]`, the rule every account's password keeps. */
+const chosenPasswordField = (): FieldSpec => ({
   key: 'Password',
   json: 'password',
   required: 'The Password field is required.',
@@ -177,12 +183,10 @@ const nameField = (which: 'First' | 'Last'): FieldSpec => ({
 });
 
 /**
- * `LoginRequest` — and note it validates the password's COMPLEXITY on a path that merely VERIFIES
- * one. `BffReauthenticateRequest` documents at length why it declines to do the same ("a wrong
- * guess that fails complexity would answer 400 where every other wrong guess answers 401 — a free
- * oracle", and a password set under an older policy would be refused outright). The mock mirrors
- * what login actually does rather than what that docblock argues it should; the divergence between
- * the two endpoints is the backend's to resolve, not the mock's to paper over.
+ * `LoginRequest` — and its password is VERIFIED, not chosen, so it carries `[Required]` and
+ * `[MaxLength(128)]` and no complexity rule, as `BffReauthenticateRequest` carries none: a
+ * wrong guess that broke the rule would otherwise answer 400 where every other wrong guess answers
+ * 401, and go uncounted. Only a password longer than any account can hold is refused here.
  */
 export const LOGIN_REQUEST: RequestSpec = {
   clrType: 'AzureBank.Shared.DTOs.Auth.LoginRequest',
@@ -202,7 +206,19 @@ export const LOGIN_REQUEST: RequestSpec = {
         },
       ],
     },
-    passwordField(),
+    {
+      key: 'Password',
+      json: 'password',
+      required: 'The Password field is required.',
+      format: [
+        {
+          // UTF-16 code units on both sides: `string.Length` is what `[MaxLength]` reads.
+          fails: (v) => v.length > 128,
+          message:
+            "The field Password must be a string or array type with a maximum length of '128'.",
+        },
+      ],
+    },
   ],
 };
 
@@ -237,7 +253,7 @@ export const REGISTER_REQUEST: RequestSpec = {
         },
       ],
     },
-    passwordField(),
+    chosenPasswordField(),
     nameField('First'),
     nameField('Last'),
   ],
@@ -334,7 +350,7 @@ export function modelStateFor(body: Record<string, unknown>, spec: RequestSpec):
   const errors: Record<string, string[]> = {};
   for (const field of spec.fields) {
     // The bound member, whatever it was spelled as. The error key below stays the CLR property
-    // name regardless — measured: `{"EMAIL":…,"PASSWORD":"Ab1!"}` answers on `Password`.
+    // name regardless — measured: `{"EMAIL":…,"PASSWORD":<129 characters>}` answers on `Password`.
     const raw = body[memberFor(body, field.json) as string];
     const messages: string[] = [];
 

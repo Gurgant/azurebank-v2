@@ -49,7 +49,7 @@ describe('settings page', () => {
 
   it("titles each card with a level-2 heading under the page's <h1>, and names the card so", async () => {
     await renderSettings();
-    const cards = ['Profile', 'Security', 'Appearance', 'More settings', 'Danger zone'];
+    const cards = ['Profile', 'Security', 'Appearance', 'More settings', 'Session'];
 
     expect({
       tree: screen
@@ -63,6 +63,23 @@ describe('settings page', () => {
     }).toStrictEqual({
       tree: ['H1:Settings', ...cards.map((card) => `H2:${card}`)],
       regions: cards,
+    });
+  });
+
+  it('offers Sign out in the Session card as a plain secondary button, with no inline style', async () => {
+    await renderSettings();
+    const session = screen.getByRole('region', { name: 'Session' });
+    const signOut = within(session).getByRole('button', { name: 'Sign out' });
+    within(session).getByText('End your session in this browser.');
+
+    expect({
+      inlineStyle: signOut.getAttribute('style'),
+      danger: screen.queryByRole('region', { name: 'Danger zone' }),
+      logOut: screen.queryByText(/log out/i),
+    }).toStrictEqual({
+      inlineStyle: null,
+      danger: null,
+      logOut: null,
     });
   });
 
@@ -101,7 +118,7 @@ describe('settings page', () => {
       the textbox query above, before any click, which this cannot reach.
 
       "Nothing focused inside" was half of it. The input IS focused when the dialog opens, and
-      tabster moves focus to "Log out" 100ms later because keyborg cannot mark that focus as
+      tabster moves focus to "Sign out" 100ms later because keyborg cannot mark that focus as
       programmatic (test/keyborg.ts). With this click in place, eight busy cores on main 9dc371d
       still failed this file 2 of 10 runs.
     */

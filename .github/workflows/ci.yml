@@ -238,7 +238,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
+          # The newest 24 at every run, not the runner's cached one: on 2026-10-25 '24' took the
+          # cached 24.21.0, older than the security release 24.22.1 of 2026-10-20. The same is set
+          # at every setup-node of ci.yml, contract-tests.yml and pages.yml.
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -394,6 +398,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -490,6 +495,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -637,6 +643,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -859,6 +866,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -1248,6 +1256,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: docs-site/package-lock.json
 

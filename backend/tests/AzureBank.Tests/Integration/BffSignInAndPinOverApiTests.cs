@@ -103,19 +103,25 @@ public sealed class BffSignInAndPinOverApiTests
     [Theory]
     [InlineData("a wrong password")]
     [InlineData("an address nobody registered")]
+    [InlineData("a wrong password that breaks the registration rule")]
     public async Task ARefusedSignIn_ReachesTheBrowserAsTheApis401_WithNoSessionAndNoCookie(string refusal)
     {
-        // One answer for both, as the API gives it: which of the two was wrong is not said.
-        // Measured 2026-10-12: 401, errorCode INVALID_CREDENTIALS, no Set-Cookie.
+        // One answer for all three, as the API gives it: which of them was wrong is not said.
+        // Measured 2026-10-12: 401, errorCode INVALID_CREDENTIALS, no Set-Cookie. The third is no
+        // longer refused by the BFF's own model state: on main at bd743911 the BFF answered it 400
+        // with the [Password] message, and the API never saw it.
         using var api = new CustomWebApplicationFactory();
         var apiClient = api.CreateClient();
         using var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
         var browser = Browser(bffHost);
         var email = await RegisterAsync(apiClient);
 
-        var attempt = refusal == "a wrong password"
-            ? new LoginRequest { Email = email, Password = "NotThePassword123!" }
-            : new LoginRequest { Email = "nobody-" + email, Password = Password };
+        var attempt = refusal switch
+        {
+            "a wrong password" => new LoginRequest { Email = email, Password = "NotThePassword123!" },
+            "an address nobody registered" => new LoginRequest { Email = "nobody-" + email, Password = Password },
+            _ => new LoginRequest { Email = email, Password = "Ab1!" },
+        };
         var response = await browser.PostAsJsonAsync("/bff/auth/login", attempt, Json);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 

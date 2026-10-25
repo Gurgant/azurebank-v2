@@ -45,12 +45,15 @@ import { LoginPage } from './LoginPage';
   U+2014.
 */
 const WORDS = {
-  // The page's title: for a browser the demo has a copy for, and for every browser off the demo.
+  // The page's title on the demo, for a browser the demo has a copy for.
   title: 'Welcome back',
   // On the demo, for a browser that keeps no copy: whoever opens it has not been here before.
   titleWithNoCopy: 'Welcome',
+  // For every browser off the demo, which keeps nothing that tells a newcomer from a visitor
+  // who has signed in before.
+  titleOffTheDemo: 'Sign in to AzureBank',
   subtitle: 'Try the demo with one click. No sign-up needed.',
-  subtitleOffTheDemo: 'Sign in to your account to continue',
+  subtitleOffTheDemo: 'Enter the email address and password you registered with.',
   tryTheDemo: 'Try the demo',
   noticeFirst: 'You get a private copy of a demo bank account with invented money.',
   noticeRest:
@@ -296,13 +299,16 @@ const title = () => document.querySelector('h1')?.textContent;
 
 /**
  * Which of the harness's pages is on screen. The sign-in page is known by its title, which is
- * one of two since 2026-10-06: which of the two, and when, is held by the tests that name one.
+ * one of two on the demo since 2026-10-06 and a third off it: which, and when, is held by the
+ * tests that name one.
  */
 function where(): string {
   if (screen.queryByText('DASHBOARD')) return 'the dashboard';
   if (screen.queryByText('TRANSFER')) return 'the transfer page';
   const heading = title();
-  return heading === WORDS.title || heading === WORDS.titleWithNoCopy
+  return heading === WORDS.title ||
+    heading === WORDS.titleWithNoCopy ||
+    heading === WORDS.titleOffTheDemo
     ? 'the sign-in page'
     : 'nowhere';
 }
@@ -346,8 +352,7 @@ describe('the sign-in page without the demo', () => {
     });
   });
 
-  it('without the tag the title is "Welcome back", with a copy under the key or with none', async () => {
-    // CONTROL: green before this change
+  it('without the tag the title is "Sign in to AzureBank", with a copy under the key or with none', async () => {
     const withNoCopy = await openSignInPage({ demo: false });
     const titleWithNoCopy = title();
     withNoCopy.unmount();
@@ -356,9 +361,21 @@ describe('the sign-in page without the demo', () => {
     await openSignInPage({ demo: false });
 
     expect({ titleWithNoCopy, titleWithACopy: title() }).toStrictEqual({
-      titleWithNoCopy: WORDS.title,
-      titleWithACopy: WORDS.title,
+      titleWithNoCopy: WORDS.titleOffTheDemo,
+      titleWithACopy: WORDS.titleOffTheDemo,
     });
+  });
+
+  it('on the demo and off it, the footer leads to the Contact page', async () => {
+    const offTheDemo = await openSignInPage({ demo: false });
+    const off = screen.getByRole('link', { name: 'Contact the developer →' }).getAttribute('href');
+    offTheDemo.unmount();
+    await openSignInPage();
+
+    expect({
+      off,
+      on: screen.getByRole('link', { name: 'Contact the developer →' }).getAttribute('href'),
+    }).toStrictEqual({ off: '/contact', on: '/contact' });
   });
 
   it("without the tag nothing reads the demo's key", async () => {

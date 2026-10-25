@@ -718,6 +718,16 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     );
   });
 
+  // The same label and name as the deposit's: deposit.test.tsx has the reason.
+  it('labels the field "Amount", a word its accessible name contains', async () => {
+    renderWithdraw();
+    // Found by waiting, so the form's first validation on mount lands inside `act`.
+    const label = await screen.findByText('Amount');
+    expect(screen.getByRole('textbox', { name: 'Withdraw amount' })).toHaveAccessibleName(
+      new RegExp(`\\b${label.textContent}\\b`, 'i'),
+    );
+  });
+
   it('disables Continue and hints when the amount exceeds the balance', async () => {
     renderWithdraw();
     await userEvent.type(screen.getByLabelText('Withdraw amount'), '2000');

@@ -1592,9 +1592,11 @@ describe('failure modes the mock could not previously produce', () => {
  * `contract/validation.contract.test.ts` and run against the real stack as well; the exhaustive
  * matrix is here, where it costs nothing.
  *
- * Everything below was measured on the BFF (:5000) on 2026-08-07 and NOT on the API — the mock
- * intercepts the BFF's auth routes, and that endpoint binds the shared `LoginRequest` itself, so
- * the 400 is written by the BFF's own pipeline rather than forwarded from :7215.
+ * Everything below was measured on the BFF and NOT on the API — the mock intercepts the BFF's auth
+ * routes, and that endpoint binds the shared `LoginRequest` itself, so the 400 is written by the
+ * BFF's own pipeline rather than forwarded from :7215. On :5000 on 2026-08-07, and the sign-in
+ * password's answers on 2026-10-25 on the in-process host of the real BFF in front of the real API
+ * (`BffOverApiFactory`), once `LoginRequest` held that password to its length alone.
  */
 describe('the model-state gate on the auth routes', () => {
   beforeEach(() => {
@@ -1611,36 +1613,56 @@ describe('the model-state gate on the auth routes', () => {
 
   const errorsOf = async (response: Response) => (await response.json()).errors;
 
-  const PASSWORD_MESSAGE =
-    'Password must be 8-128 characters and Password must contain at least one uppercase, ' +
-    'one lowercase, one digit, and one special character.';
+  /** `[MaxLength(128)]`'s own sentence: the one rule the sign-in password has besides `[Required]`. */
+  const LENGTH_MESSAGE =
+    "The field Password must be a string or array type with a maximum length of '128'.";
 
-  it('refuses a malformed password with 400, not the 401 a wrong one gets', async () => {
+  const TOO_LONG = 'a'.repeat(129);
+
+  it('answers a password that breaks the rule a chosen one keeps as any wrong password', async () => {
     /*
-      The headline drift: the mock compared credentials and answered 401 for a password that never
-      reached the credential check at all.
+      A password is verified at sign-in, not chosen, so `LoginRequest` carries no complexity rule
+      and the gate lets such a password through to the credential check. Measured on the
+      in-process host of the real BFF in front of the real API, 2026-10-25:
 
-        {"email":"a@b.dev","password":"Ab1!"}          -> 400, Password only
-        {"email":"nobody@…","password":"ValidPass1!"}  -> 401 INVALID_CREDENTIALS
+        {"email":"a@b.dev","password":"Ab1!"}           -> 401 INVALID_CREDENTIALS
+        {"email":"a@b.dev","password":<129 characters>} -> 400, Password length only
 
-      The second line is the control. Without it this passes against a mock that 400s everything,
-      which would be a different and equally wrong system.
+      The second line is the control. Without it this passes against a mock that never models the
+      gate, which would be a different and equally wrong system.
     */
-    const malformed = await post('/bff/auth/login', { email: 'a@b.dev', password: 'Ab1!' });
-    expect(malformed.status).toBe(400);
-    expect(await errorsOf(malformed)).toEqual({ Password: [PASSWORD_MESSAGE] });
+    const ruleBreaking = await post('/bff/auth/login', { email: 'a@b.dev', password: 'Ab1!' });
+    expect(ruleBreaking.status).toBe(401);
+    expect((await ruleBreaking.json()).errorCode).toBe('INVALID_CREDENTIALS');
 
-    const wellFormed = await post('/bff/auth/login', {
-      email: 'nobody@azurebank.dev',
-      password: 'ValidPass1!',
-    });
-    expect(wellFormed.status).toBe(401);
-    expect((await wellFormed.json()).errorCode).toBe('INVALID_CREDENTIALS');
+    const tooLong = await post('/bff/auth/login', { email: 'a@b.dev', password: TOO_LONG });
+    expect(tooLong.status).toBe(400);
+    expect(await errorsOf(tooLong)).toEqual({ Password: [LENGTH_MESSAGE] });
   });
 
-  it('leaves the lockout counter alone, because the gate runs before it', async () => {
+  it('counts a password that breaks the rule toward the lock, as any wrong one', async () => {
+    // Five of them latch the lock, and the right password is then answered as a wrong one
+    // (ADR-0012). Measured on the API host, 2026-10-25: after five `Ab1!` the right password is
+    // answered 401, and setting a PIN with it meets 429 ACCOUNT_LOCKED.
+    for (let i = 0; i < 5; i++) {
+      const attempt = await post('/bff/auth/login', {
+        email: 'demo@azurebank.dev',
+        password: 'Ab1!',
+      });
+      expect(attempt.status).toBe(401);
+    }
+
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeDefined();
+    const right = await post('/bff/auth/login', {
+      email: 'demo@azurebank.dev',
+      password: 'Password1!',
+    });
+    expect(right.status).toBe(401);
+  });
+
+  it('leaves the lockout counter alone for a body the gate refuses, because it runs before it', async () => {
     /*
-      The property that placement buys, and the one no status code can show. Eight malformed
+      The property that placement buys, and the one no status code can show. Eight over-long
       attempts are three past the lockout threshold, so a gate placed after the counter would have
       latched a lock by now — while answering 400 the whole way, exactly as it does here.
 
@@ -1649,7 +1671,7 @@ describe('the model-state gate on the auth routes', () => {
     for (let i = 0; i < 8; i++) {
       const attempt = await post('/bff/auth/login', {
         email: 'demo@azurebank.dev',
-        password: 'short',
+        password: TOO_LONG,
       });
       expect(attempt.status).toBe(400);
     }
@@ -1697,9 +1719,10 @@ describe('the model-state gate on the auth routes', () => {
       except [Required] skips null and runs on "". [Required] itself trims before testing, so "   "
       is missing AND malformed at once. Measured both ways — the two bodies answer identically.
     */
+    // The password's one other rule, its length, holds on "" and on "   ": Required alone.
     const expected = {
       Email: ['The Email field is required.', 'The Email field is not a valid e-mail address.'],
-      Password: ['The Password field is required.', PASSWORD_MESSAGE],
+      Password: ['The Password field is required.'],
     };
 
     expect(await errorsOf(await post('/bff/auth/login', { email: '', password: '' }))).toEqual(
@@ -1926,15 +1949,21 @@ describe('the model-state gate: member names are matched case-insensitively', ()
     /*
       The two key styles disagree deliberately, and both were measured:
 
-        {"EMAIL":"a@b.dev","PASSWORD":"Ab1!"} -> `Password`  — the property name
-        {"eMaIl":123,…}                       -> `$.eMaIl`   — the path, echoing what was sent
+        {"EMAIL":"a@b.dev","PASSWORD":<129>} -> `Password`  — the property name
+        {"eMaIl":123,…}                      -> `$.eMaIl`   — the path, echoing what was sent
 
       A validation error names the property the value bound to; a conversion error names the path
       the reader walked. Asserting only one of them would have let the other regress.
     */
-    const shouted = await post('/bff/auth/login', { EMAIL: 'a@b.dev', PASSWORD: 'Ab1!' });
+    // 129 characters: measured on the in-process BFF host, 2026-10-25, keyed `Password` with
+    // `[MaxLength]`'s sentence.
+    const shouted = await post('/bff/auth/login', { EMAIL: 'a@b.dev', PASSWORD: 'a'.repeat(129) });
     expect(shouted.status).toBe(400);
-    expect(Object.keys(await errorsOf(shouted))).toEqual(['Password']);
+    expect(await errorsOf(shouted)).toEqual({
+      Password: [
+        "The field Password must be a string or array type with a maximum length of '128'.",
+      ],
+    });
 
     const mixed = await post('/bff/auth/login', { eMaIl: 123, password: 'ValidPass1!' });
     expect(Object.keys(await errorsOf(mixed)).sort()).toEqual(['$.eMaIl', 'request']);

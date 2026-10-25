@@ -66,7 +66,7 @@ describe('keyborg installed before user-event (test/keyborg.ts)', () => {
       await new Promise((resolve) => setTimeout(resolve, PAST_TABSTER_TIMERS_MS));
     });
 
-    // Without the install, focus is on "Log out", outside the dialog, and the surface carries
+    // Without the install, focus is on "Sign out", outside the dialog, and the surface carries
     // aria-hidden="true", so every role query inside the dialog fails from here on.
     expect(document.activeElement).toBe(input);
     expect(document.querySelector('.fui-DialogSurface')?.getAttribute('aria-hidden')).toBeNull();

@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using System.Security.Claims;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
@@ -85,7 +85,7 @@ public class TransferController : ControllerBase
         // FluentValidation. Only the first was mirrored at first, and the scale rule lives here.
         await _transferAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var result = await _transferService.AuthoriseTransferAsync(GetCurrentUserId(), request, cancellationToken);
+        var result = await _transferService.AuthoriseTransferAsync(User.RequireUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Transfer authorised"));
@@ -114,7 +114,7 @@ public class TransferController : ControllerBase
         await _internalTransferAuthValidator.ValidateAndThrowAsync(request, cancellationToken);
 
         var result = await _transferService.AuthoriseInternalTransferAsync(
-            GetCurrentUserId(), request, cancellationToken);
+            User.RequireUserId(), request, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<StepUpAuthorizationResponse>.Success(result, "Internal transfer authorised"));
@@ -154,7 +154,7 @@ public class TransferController : ControllerBase
     {
         await _transferValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transferService.TransferAsync(userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
@@ -187,21 +187,11 @@ public class TransferController : ControllerBase
     {
         await _internalTransferValidator.ValidateAndThrowAsync(request, cancellationToken);
 
-        var userId = GetCurrentUserId();
+        var userId = User.RequireUserId();
         var result = await _transferService.InternalTransferAsync(
             userId, request, stepUpAuthorizationId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<InternalTransferResponse>.Success(result, "Internal transfer successful"));
-    }
-
-    /// <summary>
-    /// Extracts the current user ID from JWT claims.
-    /// </summary>
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-            ?? User.FindFirst("sub")?.Value;
-        return Guid.Parse(userIdClaim!);
     }
 }

@@ -350,7 +350,7 @@ describe('RouteAnnouncer', () => {
       '/history',
       '/transactions/:id',
       '/settings',
-      '/about',
+      '/contact',
       '/transfer',
       '/transfer/internal',
       '/pin-setup',

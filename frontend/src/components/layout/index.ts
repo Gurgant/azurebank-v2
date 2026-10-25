@@ -24,4 +24,5 @@ export {
   type NavPlace,
   type NavCurrent,
 } from './navItems';
+export { SIGN_OUT_ACTION } from './signOutAction';
 export { ShellOrBare } from './ShellOrBare';

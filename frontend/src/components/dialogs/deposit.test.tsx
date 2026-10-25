@@ -234,6 +234,20 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(screen.queryByText(/idempotency key/i)).not.toBeInTheDocument();
   });
 
+  /*
+    The visible label is a `Text` beside the field, not its `<label>`: the field's name comes from
+    its `aria-label`. A visitor who speaks the word they see has to find it in that name
+    (WCAG 2.5.3), so the word on screen is held inside the name, whatever its case.
+  */
+  it('labels the field "Amount", a word its accessible name contains', async () => {
+    renderDeposit();
+    // Found by waiting, so the form's first validation on mount lands inside `act`.
+    const label = await screen.findByText('Amount');
+    expect(screen.getByRole('textbox', { name: 'Deposit amount' })).toHaveAccessibleName(
+      new RegExp(`\\b${label.textContent}\\b`, 'i'),
+    );
+  });
+
   it('disables the CTA until a valid amount is entered', async () => {
     renderDeposit();
     expect(screen.getByRole('button', { name: /^Deposit/ })).toBeDisabled();
