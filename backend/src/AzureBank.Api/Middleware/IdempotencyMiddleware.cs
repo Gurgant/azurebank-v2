@@ -76,8 +76,9 @@ public class IdempotencyMiddleware
             return;
         }
 
-        var key = ReadKey(context);
+        // The caller first: a request from nobody is refused as that (401), whatever else it lacks.
         var userId = context.User.RequireUserId();
+        var key = ReadKey(context);
         var endpointName = EndpointNameOf(context, endpoint);
 
         // Routing has already applied the endpoint's 32 KB limit, before authentication

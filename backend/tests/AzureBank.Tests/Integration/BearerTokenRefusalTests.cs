@@ -162,4 +162,25 @@ public sealed class BearerTokenRefusalTests : IntegrationTestBase
             "a client that renews on that header must not renew for a token that names nobody");
         body.GetRawText().Should().NotContain("IDX", "the library's own message stays in the log");
     }
+
+    [Fact]
+    public async Task OnAMoneyEndpoint_ATokenWithNoUsableUserId_Is401_BeforeTheMissingIdempotencyKeyIs400()
+    {
+        // The idempotency middleware runs before the action, and it reads both the caller and
+        // the key. The caller comes first: a request from nobody is refused as that, whatever
+        // else it lacks, so a client never retries with a key a request that will never be taken.
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/deposit")
+        {
+            Content = JsonContent.Create(new { }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token(Guid.Empty, subject: "not-a-user-id"));
+
+        var response = await Client.SendAsync(request);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        using var all = new AssertionScope();
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        body.GetProperty("errorCode").GetString().Should().Be("AUTH_TOKEN_INVALID");
+        body.GetProperty("instance").GetString().Should().Be("/api/transactions/deposit");
+    }
 }
