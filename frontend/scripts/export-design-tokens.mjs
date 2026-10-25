@@ -27,6 +27,13 @@ const server = await createServer({
   logLevel: 'error',
   server: { middlewareMode: true, hmr: false, ws: false, watch: null },
   optimizeDeps: { noDiscovery: true, include: [] },
+  // Fluent's packages answer the `node` condition with their CommonJS build, which hides the
+  // named export `tokens` from an ES module. Taken through Vite without that condition, they are
+  // read from their ES module builds (`import`), as the browser build reads them.
+  ssr: {
+    noExternal: [/^@fluentui\//, /^@griffel\//],
+    resolve: { conditions: ['import', 'module', 'default'] },
+  },
 });
 
 try {
