@@ -96,7 +96,9 @@ that started it, never as a page-level overlay.
   while the read runs again. A read whose content takes the wait's place passes `failed`.
 - The error bar goes inside the page's `AlertSlot`, an empty `role="alert"` that is on the page
   from the start, never into an alert that mounts already filled. One slot for each page; a
-  check whose line sits under its own field, as the recipient check's does, keeps its own.
+  check whose line sits under its own field, as the recipient check's does, keeps its own, and
+  so does History's "Load more", whose failure keeps the rows already read and is said under its
+  button.
 - Stop and Retry arm `useWaitLanding`, which puts focus on the bar's Retry unless the visitor
   has moved it meanwhile. The check view's "Check again" arms it too, and so does the view's own
   ask at the bound when focus was on the view's first button: that ask disables "Check again".

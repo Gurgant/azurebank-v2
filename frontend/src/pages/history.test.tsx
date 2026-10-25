@@ -6,6 +6,7 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { emulateFocusFixup } from '../test/outage';
 import { formatDateHeading } from '../utils/format';
 import { HistoryPage } from './HistoryPage';
 
@@ -141,34 +142,141 @@ describe('history feed (T1)', () => {
     expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
   });
 
-  it('a FAILED Load more leaves no "Show less" that hides nothing', async () => {
-    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
-    // the result rather than throwing — so incrementing the cap unconditionally put the view state
-    // ahead of the pages that actually loaded. The failure itself replaces the feed with the
-    // error state, so nothing looks wrong until Retry recovers: then one page is on screen and
-    // "Show less" is offered anyway, pointing at a page that was never fetched.
+  it('a FAILED Load more keeps the rows on screen and says so under its button', async () => {
+    // The error of `fetchNextPage` is the query's error. Drawn as the page's failure, it would put
+    // one bar in place of the filter, the totals and every row already read; it is said instead in
+    // an alert under the buttons, and the rows stay.
+    //
+    // `fetchNextPage` resolves whether or not the request succeeded, so the cap of pages shown
+    // must not run ahead of the pages loaded: no "Show less" that would hide nothing.
+    const stopFixup = emulateFocusFixup();
+    try {
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Salary');
+
+      const rowsNow = () => document.querySelectorAll('tbody tr').length;
+      const firstPage = rowsNow();
+      const loadMore = screen.getByRole('button', { name: 'Load more' });
+      // The alert under the buttons is on the page before anything fails, so its bar is announced.
+      const underLoadMore = () =>
+        screen
+          .getAllByRole('alert')
+          .filter((a) => loadMore.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(underLoadMore()).toHaveLength(1);
+      const slot = underLoadMore()[0];
+      expect(slot).toBeEmptyDOMElement();
+      const pageSlot = screen.getAllByRole('alert').find((a) => a !== slot);
+
+      // Page 1 is already cached; only the NEXT request fails, once the button shows its wait.
+      let fail = () => {};
+      const failing = new Promise<void>((resolve) => (fail = resolve));
+      server.use(
+        http.get('*/api/transactions', async () => {
+          await failing;
+          return problem({
+            status: 500,
+            errorCode: 'INTERNAL_ERROR',
+            detail: 'Page two exploded.',
+          });
+        }),
+      );
+      await userEvent.click(loadMore);
+      await waitFor(() => expect(loadMore).toBeDisabled());
+      fail();
+      await waitFor(() => expect(slot).toHaveTextContent('Page two exploded.'));
+
+      expect(pageSlot).toBeEmptyDOMElement();
+      expect(rowsNow()).toBe(firstPage);
+      expect(screen.getByRole('group', { name: /Filter transactions/i })).toBeInTheDocument();
+      expect(screen.getByText('+€1,475.50')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+      // The pressed button was disabled while it waited, so focus fell to the page: it lands on
+      // the Retry of the new bar.
+      const retry = within(slot).getByRole('button', { name: 'Retry' });
+      await waitFor(() => expect(document.activeElement).toBe(retry));
+
+      // The Retry asks for the next page again; while it runs, the bar goes and the rows stay.
+      server.resetHandlers();
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      server.use(
+        http.get('*/api/transactions', async ({ request }) => {
+          if (new URL(request.url).searchParams.get('Page') !== '2') return undefined;
+          await held;
+          return undefined;
+        }),
+      );
+      await userEvent.click(retry);
+      await waitFor(() => expect(slot).toBeEmptyDOMElement());
+      expect(pageSlot).toBeEmptyDOMElement();
+      expect(rowsNow()).toBe(firstPage);
+
+      release();
+      expect(await screen.findByText('Top-up #16')).toBeInTheDocument();
+      expect(rowsNow()).toBeGreaterThan(firstPage);
+
+      // "Show less" now hides a page that was loaded.
+      await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+      await waitFor(() => expect(rowsNow()).toBe(firstPage));
+    } finally {
+      stopFixup();
+    }
+  });
+
+  it('the Retry under "Load more" asks for the failed page even while a loaded page is hidden', async () => {
+    // "Load more" first shows a loaded page that "Show less" hid. The Retry under the buttons is for
+    // the page that failed: after "Show less" it must still ask for that page, not show a hidden
+    // one under a bar that goes on saying the failure.
+    mockState.transactions.push(
+      ...mockState.transactions.slice(5, 25).map((t, i) => ({
+        ...t,
+        id: `019f7b3f-0000-7000-8000-0000000e${String(i).padStart(4, '0')}`,
+        description: `Extra #${i + 1}`,
+        createdAt: `2020-01-01T00:${String(59 - i)}:00.0000000Z`,
+      })),
+    );
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
     await screen.findByText('Salary');
+    const loadMore = screen.getByRole('button', { name: 'Load more' });
+    const slot = screen
+      .getAllByRole('alert')
+      .find((a) => loadMore.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING);
+    if (!slot) throw new Error('no alert under "Load more"');
 
-    const rowsNow = () => document.querySelectorAll('tbody tr').length;
-    const firstPage = rowsNow();
+    await userEvent.click(loadMore);
+    expect(await screen.findByText('Extra #15')).toBeInTheDocument();
 
-    // Page 1 is already cached; only the NEXT request fails.
+    // Page 3 fails with no detail of its own, so the bar says the page's own sentence.
     server.use(
-      http.get('*/api/transactions', () =>
-        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Page two exploded.' }),
+      http.get('*/api/transactions', ({ request }) =>
+        new URL(request.url).searchParams.get('Page') === '3'
+          ? problem({ status: 500, errorCode: 'INTERNAL_ERROR' })
+          : undefined,
       ),
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
-    expect(await screen.findByText(/Page two exploded\./)).toBeInTheDocument();
+    await userEvent.click(loadMore);
+    await waitFor(() => expect(slot).toHaveTextContent('Could not load your transactions.'));
 
-    // The backend recovers and Retry restores exactly the one page that was ever loaded.
+    await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    expect(screen.queryByText('Extra #15')).not.toBeInTheDocument();
+    expect(slot).toHaveTextContent('Could not load your transactions.');
+
     server.resetHandlers();
-    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Salary');
+    const asked: string[] = [];
+    server.use(
+      http.get('*/api/transactions', ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get('Page') ?? '1');
+        return undefined;
+      }),
+    );
+    await userEvent.click(within(slot).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(asked).toEqual(['3']));
+    await waitFor(() => expect(slot).toBeEmptyDOMElement());
 
-    expect(rowsNow()).toBe(firstPage);
-    expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+    // Page 3 is loaded now: "Load more" shows the hidden pages without asking again.
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText('Extra #20')).toBeInTheDocument();
+    expect(asked).toEqual(['3']);
   });
 
   it('a load failure shows the problem detail and Retry recovers (D22)', async () => {
