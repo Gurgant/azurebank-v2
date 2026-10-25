@@ -1,5 +1,5 @@
 import { makeStyles, mergeClasses, Spinner } from '@fluentui/react-components';
-import { SignOut24Regular } from '@fluentui/react-icons';
+import { SIGN_OUT_ACTION } from './signOutAction';
 
 const useStyles = makeStyles({
   // The spinner is 20px; the box keeps the icon's 24px, so the label does not move.
@@ -29,6 +29,6 @@ export function SignOutIcon({ busy, className }: SignOutIconProps) {
       <Spinner size="tiny" aria-hidden="true" />
     </span>
   ) : (
-    <SignOut24Regular className={className} />
+    <SIGN_OUT_ACTION.icon className={className} />
   );
 }
