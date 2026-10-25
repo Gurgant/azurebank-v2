@@ -57,7 +57,13 @@ const SIGNED_IN: Scan[] = [
     ready: heading(1),
   },
   { name: 'settings', path: '/settings', title: 'Settings · AzureBank', ready: heading(1) },
-  { name: 'about', path: '/about', title: 'About this project · AzureBank', ready: heading(1) },
+  {
+    name: 'about',
+    path: '/about',
+    title: 'About this project · AzureBank',
+    // A heading is drawn out of the shell too, on the outage page: the navigation is not.
+    ready: inTheShell(heading(1)),
+  },
   {
     name: 'not-found',
     path: '/no-such-page',
@@ -93,6 +99,15 @@ function heading(level: 1 | 2 | 3) {
 function link(name: string) {
   return async (page: Page) => {
     await expect(page.getByRole('link', { name, exact: true })).toBeVisible();
+  };
+}
+
+/** What `ready` waits for, drawn inside the app shell: the navigation's link Home is there too. */
+function inTheShell(ready: (page: Page) => Promise<void>) {
+  return async (page: Page) => {
+    await ready(page);
+    const nav = page.getByRole('navigation', { name: 'Main navigation' });
+    await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
   };
 }
 
