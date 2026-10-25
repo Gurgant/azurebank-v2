@@ -145,9 +145,12 @@ describe('the renderer the app actually installs', () => {
     So the sheets already there are taken out for the test and put back where they were after
     it, and the renderer is a new one, as a page of its own would have: the module registry is
     emptied so that `ThemeProvider` is evaluated again, and emptied again afterwards, so that no
-    later test is handed a renderer that remembers sheets taken out of the page.
+    later test is handed a renderer that remembers sheets taken out of the page. The sheets that
+    renderer wrote leave with it: left in the head, they would sit among the media sheets of the
+    files that follow.
   */
   it('emits min-width rules in ascending order, so the wider breakpoint wins', async () => {
+    const before = new Set(document.head.querySelectorAll<HTMLStyleElement>('style'));
     const earlier = [...document.head.querySelectorAll<HTMLStyleElement>('style[media]')].map(
       (sheet) => {
         const place = document.createComment('media sheet');
@@ -170,7 +173,11 @@ describe('the renderer the app actually installs', () => {
       expect(widths).toEqual([...widths].sort((a, b) => a - b));
     } finally {
       vi.resetModules();
+      for (const style of document.head.querySelectorAll<HTMLStyleElement>('style')) {
+        if (!before.has(style)) style.remove();
+      }
       for (const { sheet, place } of earlier) place.replaceWith(sheet);
     }
+    expect(new Set(document.head.querySelectorAll<HTMLStyleElement>('style'))).toEqual(before);
   });
 });
