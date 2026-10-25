@@ -101,9 +101,9 @@ export interface ReadState {
  * is **waiting** on its first load and on any refetch that follows a failure, and it has **failed**
  * only once nothing is fetching. A refetch with data on screen is neither: the stale data stays.
  *
- * An infinite query passes `isFetching: isFetching && !isFetchingNextPage`, and no `error` while a
- * next page has failed or is on its way, so that "Load more" puts the whole list back neither into
- * its first-load wait nor behind its error bar.
+ * An infinite query whose rows stay on screen passes no `isFetching` and no `error` once a page
+ * has loaded, so that neither "Load more" nor a refetch of the whole list puts the list back into
+ * its first-load wait or behind its error bar.
  */
 export function readWait(q: ReadState): { waiting: boolean; failed: boolean } {
   const hasError = q.error !== undefined;
