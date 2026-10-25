@@ -265,6 +265,97 @@ describe('a partial failure', () => {
   });
 });
 
+describe('nothing said before it is loaded', () => {
+  const TRANSACTIONS = '*/api/transactions';
+
+  /** The card that lists what is pending, found by its title. */
+  const attention = () => screen.getByText('Needs attention').closest('section')!;
+
+  /**
+   * The page's loading bars inside `box`: empty boxes with the rounded corners of
+   * `styles.skeletonBar`. Nothing else on the page is an empty box with those corners.
+   */
+  const bars = (box: Element) =>
+    [...box.querySelectorAll('div, span')].filter(
+      (element) =>
+        element.childElementCount === 0 &&
+        element.textContent === '' &&
+        getComputedStyle(element).borderRadius === '6px',
+    ).length;
+
+  /** Whether a read of `endpoint` has answered. */
+  const answered = (store: TestStore, endpoint: string) => {
+    const reads = Object.values(store.getState().api.queries);
+    return reads.some((read) => read?.endpointName === endpoint && read.status === 'fulfilled');
+  };
+
+  it('while recent activity loads, the card waits instead of saying nothing is pending', async () => {
+    server.use(http.get(TRANSACTIONS, never));
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    expect({ says: attention().textContent, bars: bars(attention()) }).toStrictEqual({
+      says: 'Needs attention',
+      bars: 1,
+    });
+  });
+
+  it('when recent activity failed, the card has only its title and the alert says why', async () => {
+    server.use(
+      http.get(TRANSACTIONS, () => problem({ status: 500, detail: 'Transactions unavailable' })),
+    );
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    const alert = await screen.findByRole('alert');
+    await waitFor(() => expect(alert).toHaveTextContent('Could not load recent activity.'));
+    // Counted as elements rather than as bars: an empty placeholder has no text, and a count of
+    // bars would still be 0 if the bars' style changed.
+    expect({
+      says: attention().textContent,
+      elements: attention().childElementCount,
+    }).toStrictEqual({ says: 'Needs attention', elements: 1 });
+  });
+
+  it('while the accounts load, no line counts them', async () => {
+    // An empty feed, so that the ledger would say who it is empty for. The feed and the month are
+    // asked beside the accounts, not after them, and both answer while the accounts are held.
+    mockState.transactions = [];
+    server.use(http.get('*/api/accounts', never));
+    const { store } = renderDashboard();
+    await waitFor(() =>
+      expect({
+        recent: answered(store, 'getTransactions'),
+        month: answered(store, 'getTransactionSummary'),
+      }).toStrictEqual({ recent: true, month: true }),
+    );
+    await screen.findByText('Money in');
+
+    expect({
+      across: screen.queryAllByText(/Across/).length,
+      emptyLedger: screen.queryAllByText(/No transactions yet/).length,
+      // The figure's bar and the line's under it.
+      heroBars: bars(screen.getByText('Available balance').closest('section')!),
+    }).toStrictEqual({ across: 0, emptyLedger: 0, heroBars: 2 });
+  });
+
+  it('once everything has loaded, says nothing is pending and how many accounts it covers', async () => {
+    // CONTROL: green before this change
+    mockState.transactions = mockState.transactions.map((t) =>
+      t.status === 'Pending' ? { ...t, status: 'Completed' as const } : t,
+    );
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    expect(
+      await within(attention()).findByText('Nothing needs your attention.'),
+    ).toBeInTheDocument();
+    expect(bars(attention())).toBe(0);
+    expect(screen.getByText('Across 2 accounts')).toBeInTheDocument();
+    expect(await screen.findByText('Across all 2 accounts')).toBeInTheDocument();
+  });
+});
+
 /*
   The dashboard on the demo: the panel that says what the visitor holds, where it sits, and what
   starting over from it does to the page around it.
