@@ -9,10 +9,9 @@
  */
 
 /*
-  eslint-disable no-restricted-syntax --
-  The hardcoded-colour rule is about the app, where colour belongs to the theme. This is not the
-  app: it is a standalone page photographed on its own, with no FluentProvider and no tokens to
-  resolve, and its colours are the logo's own two hexes and shades of them — spelled out here as
+  Exempt by name from the hardcoded-colour check, src/theme/colourLiterals.test.ts. The check is
+  about the app, where colour belongs to the theme. This is not the app: it is a standalone page
+  photographed on its own, with no FluentProvider and no tokens to resolve, and its colours are the logo's own two hexes and shades of them — spelled out here as
   src/theme/ spells out the theme's, because this is where they are defined, not used.
 */
 

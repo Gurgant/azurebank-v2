@@ -163,12 +163,14 @@ disagree about what €1.005 rounds to.
 library: a second system means two focus models, two theme sources and two sets of accessibility
 behaviour.
 
-**In TypeScript, colour belongs in `src/theme/` and nowhere else.** Lint refuses a hex colour or
-an `rgb()`, `rgba()`, `hsl()` or `hsla()` call in a string of any other `.ts` or `.tsx` file. Use
-a Fluent token, or the local palette in `src/theme/tokens.ts` for what Fluent has no name for.
-Lint does not see every form: a named colour, `color-mix()` and a 3- or 4-digit hex inside a
-longer string are among those caught only by reading. Outside TypeScript lint reads nothing: the
-theme variables in `src/index.css` are generated from the palettes and held to them by
+**In TypeScript, colour belongs in `src/theme/` and nowhere else.** The unit test
+`src/theme/colourLiterals.test.ts` refuses a hex colour or an `rgb()`, `rgba()`, `hsl()` or
+`hsla()` call in a string or a template literal of any other `.ts` or `.tsx` file that lint reads,
+with its file and line; the files exempt, and why, are named in it. Use a Fluent token, or the
+local palette in `src/theme/tokens.ts` for what Fluent has no name for. The test does not see
+every form: a named colour, `color-mix()` and a 3- or 4-digit hex inside a longer string are among
+those caught only by reading. Outside TypeScript it reads nothing: the theme variables in
+`src/index.css` are generated from the palettes and held to them by
 `src/theme/themeVariables.test.ts`, and `index.html` and `public/site.webmanifest` name the
 colours of the browser's own surfaces.
 

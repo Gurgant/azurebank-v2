@@ -24,14 +24,14 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
  */
 
 /*
-  eslint-disable no-restricted-syntax --
-  The hardcoded-colour rule is right everywhere else and wrong here, which is the whole point of
-  this component. It exists to render when the theme is gone: by the time this boundary paints,
-  React has unmounted `ThemeProvider` and the `FluentProvider` inside it, so `tokens.*` resolves to
-  CSS custom properties nothing is defining any more and the screen would come out unstyled — or
-  invisible, if a colour landed on a same-coloured background. The values below are the brand
-  `#0077b6` and Fluent's own neutral pair, deliberately frozen rather than referenced. A file-level
-  disable rather than four inline ones because the constraint is a property of the whole file, and
+  Exempt by name from the hardcoded-colour check, src/theme/colourLiterals.test.ts. The check is
+  right everywhere else and wrong here, which is the whole point of this component. It exists to
+  render when the theme is gone: by the time this boundary paints, React has unmounted
+  `ThemeProvider` and the `FluentProvider` inside it, so `tokens.*` resolves to CSS custom
+  properties nothing is defining any more and the screen would come out unstyled — or invisible,
+  if a colour landed on a same-coloured background. The values below are the brand
+  `#0077b6` and Fluent's own neutral pair, deliberately frozen rather than referenced. The whole
+  file is exempt rather than its four values because the constraint is a property of the file, and
   `AppErrorBoundary.test.tsx` asserts at the source that it imports no Fluent and uses no tokens.
 */
 
