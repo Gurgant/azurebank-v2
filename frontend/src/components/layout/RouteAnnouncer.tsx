@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useMatches } from 'react-router-dom';
 import { makeStyles } from '@fluentui/react-components';
+import { focusContainer } from './focusContainer';
 import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS, TitleOverride } from './pageTitle';
 
 /**
@@ -152,17 +153,5 @@ function focusTheNewPage() {
 
   const target = main ?? document.querySelector('h1');
   if (!(target instanceof HTMLElement)) return;
-  if (!target.hasAttribute('tabindex')) {
-    target.setAttribute('tabindex', '-1');
-    target.setAttribute('data-route-focus', '');
-    target.addEventListener(
-      'blur',
-      () => {
-        target.removeAttribute('tabindex');
-        target.removeAttribute('data-route-focus');
-      },
-      { once: true },
-    );
-  }
-  target.focus({ preventScroll: true });
+  focusContainer(target);
 }

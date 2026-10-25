@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
-import { ChevronDown24Regular, ChevronUp24Regular, SignOut24Regular } from '@fluentui/react-icons';
+import { ChevronDown24Regular, ChevronUp24Regular } from '@fluentui/react-icons';
 import {
   colors,
   componentSizes,
@@ -11,6 +11,8 @@ import {
   transitions,
   shadows,
 } from '../../theme/tokens';
+import { useWaitPhase } from '../../hooks/useWaitPhase';
+import { WaitHint } from '../feedback';
 import {
   NAV_PLACES,
   TRANSFER_ACTION,
@@ -19,6 +21,7 @@ import {
   utilityPlaces,
 } from './navItems';
 import { BOTTOM_NAV_ROOM, bottomNavRoom } from './bottomNavRoom';
+import { SignOutIcon } from './SignOutIcon';
 
 // ============================================
 // TYPES
@@ -29,6 +32,8 @@ export interface BottomNavProps {
   className?: string;
   /** Sign out. Omit and the sheet simply does not offer it. */
   onLogout?: () => void;
+  /** A sign-out is under way: Sign out says so and takes no second press. */
+  signingOut?: boolean;
 }
 
 const UTILITY_ROW_ID = 'bottom-nav-utility-row';
@@ -273,16 +278,40 @@ const useStyles = makeStyles({
     // 4.868:1 on white, above the 4.5:1 this 11px text needs.
     color: colors.brand[60],
   },
+
+  // While the sign-out is under way the tile takes no press, so it shows none on hover either.
+  signOutBusy: {
+    cursor: 'progress',
+    ':hover': { backgroundColor: colors.neutral[50] },
+  },
+
+  // Under the row, at its right edge, below Sign out, the row's last tile. Fixed, as the rows are,
+  // so the room the bar reserves while the words show is the height they take.
+  signOutWait: {
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+    boxSizing: 'border-box',
+    height: componentSizes.bottomNav.waitWordsHeight,
+    padding: '0 10px 10px',
+  },
+
+  // Kept mounted with the row closed, so its 5 s run from the press and not from a reopening.
+  signOutWaitHidden: {
+    display: 'none',
+  },
 });
 
 // ============================================
 // COMPONENT
 // ============================================
 
-export function BottomNav({ className, onLogout }: BottomNavProps) {
+export function BottomNav({ className, onLogout, signingOut = false }: BottomNavProps) {
   const styles = useStyles();
   const [sheetOpen, setSheetOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  // The same clock as the WaitHint under the row: its words take a line of the bar once they show.
+  const waitPhase = useWaitPhase(signingOut);
+  const waitWords = signingOut && (waitPhase === 'slow' || waitPhase === 'stillTrying');
 
   // The browser scrolls a control that takes focus into view against the viewport's bottom edge,
   // and this fixed bar covers that edge: a Tab could stop on a control wholly under it. Scroll
@@ -293,13 +322,13 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
   // window carries none.
   useLayoutEffect(() => {
     const { style } = document.documentElement;
-    style.setProperty(BOTTOM_NAV_ROOM, bottomNavRoom(sheetOpen));
+    style.setProperty(BOTTOM_NAV_ROOM, bottomNavRoom(sheetOpen, waitWords));
     style.scrollPaddingBottom = `var(${BOTTOM_NAV_ROOM})`;
     return () => {
       style.removeProperty(BOTTOM_NAV_ROOM);
       style.removeProperty('scroll-padding-bottom');
     };
-  }, [sheetOpen]);
+  }, [sheetOpen, waitWords]);
 
   // Every control that navigates also closes the row — in its own handler, not in an effect on
   // pathname. `react-hooks/set-state-in-effect` forbids the effect version, and it is right to:
@@ -441,21 +470,32 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
 
           {/* An act, like Transfer: a button, no href, never lit. It was unreachable from the bar
               entirely — signing out meant going two levels into Settings, on the surface where
-              signing out matters most. */}
+              signing out matters most. Unlike every other control here it leaves the row open: it
+              leaves the page only once the server has answered, and until then the row shows it
+              busy, keeping its words and its focus, and drops a second press. `disabled` would
+              drop focus to the body. */}
           {onLogout && (
             <button
               type="button"
-              className={styles.utilityTile}
-              onClick={() => {
-                setSheetOpen(false);
-                onLogout();
-              }}
+              className={mergeClasses(styles.utilityTile, signingOut && styles.signOutBusy)}
+              aria-disabled={signingOut || undefined}
+              aria-busy={signingOut || undefined}
+              onClick={signingOut ? undefined : onLogout}
             >
-              <SignOut24Regular className={styles.icon} />
+              <SignOutIcon busy={signingOut} className={styles.icon} />
               <Text className={styles.label}>Sign out</Text>
             </button>
           )}
         </div>
+      )}
+      {/* A write: the server may already be ending the session, so there is no Stop. Under the
+          row rather than in it, whose height is fixed. */}
+      {onLogout && (
+        <WaitHint
+          active={signingOut}
+          kind="write"
+          className={mergeClasses(styles.signOutWait, !sheetOpen && styles.signOutWaitHidden)}
+        />
       )}
     </nav>
   );

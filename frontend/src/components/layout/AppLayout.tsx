@@ -1,8 +1,10 @@
-import { makeStyles, mergeClasses } from '@fluentui/react-components';
-import { safeArea, surfaces } from '../../theme/tokens';
+import { useRef } from 'react';
+import { makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
+import { colors, safeArea, shadows, surfaces, zIndex } from '../../theme/tokens';
 import { useResponsive } from '../../hooks/useResponsive';
 import { BottomNav } from './BottomNav';
 import { BOTTOM_NAV_ROOM, bottomNavRoom } from './bottomNavRoom';
+import { focusContainer } from './focusContainer';
 import { Sidebar } from './Sidebar';
 
 // ============================================
@@ -24,6 +26,8 @@ export interface AppLayoutProps {
   };
   /** Logout handler */
   onLogout?: () => void;
+  /** A sign-out is under way: both Sign out controls say so and take no second press. */
+  signingOut?: boolean;
   /** Additional CSS class for main content */
   className?: string;
 }
@@ -58,6 +62,36 @@ export interface AppLayoutProps {
  * viewport, which is what "fill the screen" has always meant here.
  */
 const useStyles = makeStyles({
+  /**
+   * The desktop shell's first Tab stop. Off screen until it has focus, never `display: none`, which
+   * would take it out of the Tab order. On focus it sits over the sidebar's logo row, at the top
+   * left where focus starts, in the chrome's own fill and text and with the app's focus ring.
+   */
+  skipLink: {
+    position: 'absolute',
+    top: '8px',
+    left: '-10000px',
+    // Over the sticky sidebar, which comes later in the page and would otherwise paint over it.
+    zIndex: zIndex.header,
+    padding: '10px 16px',
+    borderRadius: '10px',
+    border: `1px solid ${surfaces.border}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: colors.neutral[900],
+    boxShadow: shadows.md,
+    fontSize: '15px',
+    fontWeight: 600,
+    textDecoration: 'underline',
+
+    ':focus': {
+      left: '8px',
+    },
+    ':focus-visible': {
+      outline: `2px solid ${colors.brand[60]}`,
+      outlineOffset: '2px',
+    },
+  },
+
   // Mobile layout
   /**
    * The shell takes the display cutout, so no page has to.
@@ -183,27 +217,47 @@ export function AppLayout({
   hideSidebar = false,
   user,
   onLogout,
+  signingOut = false,
   className,
 }: AppLayoutProps) {
   const styles = useStyles();
   const { isDesktop } = useResponsive();
+  const main = useRef<HTMLElement>(null);
 
   // One tree for both layouts. React keeps a subtree only while every element above it keeps its
   // type and its place, and a page unmounted when the width crosses 1024 px would lose an open
   // dialog, what was typed in it and where focus was. So the sidebar and the bottom bar each hold
   // their slot with `false` when they are not drawn, and the page always sits in the one div of
-  // the one main.
+  // the one main. The skip link holds a slot of its own the same way.
   return (
     <div className={isDesktop ? styles.desktopContainer : styles.mobileContainer}>
+      {/* Desktop only: there the sidebar comes before the page, and on a phone the bar comes after
+          it. Focus goes to main the way RouteAnnouncer puts it there after a route change, for
+          that one focus, so main keeps no tabindex for RouteAnnouncer to find. */}
+      {isDesktop && (
+        <a
+          href="#main-content"
+          className={styles.skipLink}
+          onClick={(event) => {
+            event.preventDefault();
+            if (main.current) focusContainer(main.current);
+          }}
+        >
+          Skip to main content
+        </a>
+      )}
       {isDesktop && !hideSidebar && (
         <Sidebar
           userName={user?.name}
           userEmail={user?.email}
           userAvatar={user?.avatar}
           onLogout={onLogout}
+          signingOut={signingOut}
         />
       )}
       <main
+        id="main-content"
+        ref={main}
         className={
           isDesktop
             ? styles.desktopMain
@@ -220,7 +274,7 @@ export function AppLayout({
           {children}
         </div>
       </main>
-      {!isDesktop && !hideBottomNav && <BottomNav onLogout={onLogout} />}
+      {!isDesktop && !hideBottomNav && <BottomNav onLogout={onLogout} signingOut={signingOut} />}
     </div>
   );
 }

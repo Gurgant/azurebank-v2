@@ -1,10 +1,11 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
-import { SignOut24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, shadows, surfaces, transitions } from '../../theme/tokens';
+import { WaitHint } from '../feedback';
 import { Avatar } from '../shared/Avatar';
 import { Logo } from '../shared/Logo';
 import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
+import { SignOutIcon } from './SignOutIcon';
 
 // ============================================
 // TYPES
@@ -19,6 +20,8 @@ export interface SidebarProps {
   userAvatar?: string;
   /** Logout handler */
   onLogout?: () => void;
+  /** A sign-out is under way: Sign out says so and takes no second press. */
+  signingOut?: boolean;
   /** Additional CSS class */
   className?: string;
 }
@@ -317,6 +320,21 @@ const useStyles = makeStyles({
       color: colors.semantic.error.main,
     },
   },
+
+  // While the sign-out is under way the row takes no press, so it shows none on hover either.
+  logoutBusy: {
+    cursor: 'progress',
+    ':hover': {
+      backgroundColor: 'transparent',
+      color: colors.neutral[600],
+    },
+  },
+
+  // Under the label, which starts 16px in, past the 24px icon and its 12px gap.
+  signOutWait: {
+    paddingLeft: '52px',
+    paddingRight: '16px',
+  },
 });
 
 // ============================================
@@ -328,6 +346,7 @@ export function Sidebar({
   userEmail,
   userAvatar,
   onLogout,
+  signingOut = false,
   className,
 }: SidebarProps) {
   const styles = useStyles();
@@ -401,14 +420,26 @@ export function Sidebar({
           through the table is exactly why only mobile ever lit it. */}
       <div className={styles.footer}>
         {onLogout && (
-          <button
-            className={mergeClasses(styles.footerButton, styles.logoutButton)}
-            onClick={onLogout}
-            type="button"
-          >
-            <SignOut24Regular className={styles.navIcon} />
-            <Text className={styles.navLabel}>Sign out</Text>
-          </button>
+          <>
+            {/* While the sign-out is under way the button keeps its words and its focus and drops
+                the press: `disabled` would drop focus to the body. */}
+            <button
+              className={mergeClasses(
+                styles.footerButton,
+                styles.logoutButton,
+                signingOut && styles.logoutBusy,
+              )}
+              onClick={signingOut ? undefined : onLogout}
+              aria-disabled={signingOut || undefined}
+              aria-busy={signingOut || undefined}
+              type="button"
+            >
+              <SignOutIcon busy={signingOut} className={styles.navIcon} />
+              <Text className={styles.navLabel}>Sign out</Text>
+            </button>
+            {/* A write: the server may already be ending the session, so there is no Stop. */}
+            <WaitHint active={signingOut} kind="write" className={styles.signOutWait} />
+          </>
         )}
       </div>
     </aside>

@@ -252,6 +252,8 @@ export const componentSizes = {
     height: '72px',
     /** The utility row under the main one when More is open: a 62px tile and 2px + 10px padding. */
     utilityRowHeight: '74px',
+    /** The sign-out's wait words under the utility row: one 16px line and 10px padding below it. */
+    waitWordsHeight: '26px',
     heightWithSafeArea: '92px', // 72px + 20px safe area
     paddingX: '8px',
   },

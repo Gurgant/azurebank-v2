@@ -30,7 +30,8 @@ export function ProtectedShell({ children }: ProtectedShellProps) {
 function ShellWithSession({ children }: ProtectedShellProps) {
   const navigate = useNavigate();
   const user = useAppSelector(selectCurrentUser);
-  const [logout] = useLogoutMutation();
+  // Pending from the press to the answer: both Sign out controls show it and take no second press.
+  const [logout, { isLoading: signingOut }] = useLogoutMutation();
   const showProblem = useProblemToast();
 
   const handleLogout = async () => {
@@ -56,6 +57,7 @@ function ShellWithSession({ children }: ProtectedShellProps) {
       onLogout={() => {
         void handleLogout();
       }}
+      signingOut={signingOut}
     >
       {children}
     </AppLayout>
