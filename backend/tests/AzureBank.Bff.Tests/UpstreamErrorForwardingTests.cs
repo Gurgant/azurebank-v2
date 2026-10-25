@@ -25,13 +25,15 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
     public UpstreamErrorForwardingTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
     private HttpClient ClientWithUpstream(
-        HttpStatusCode status, string body, string mediaType, Action<HttpResponseMessage>? headers = null)
+        HttpStatusCode status, string body, string mediaType, Action<HttpResponseMessage>? headers = null,
+        Action<HttpRequestMessage>? observe = null)
     {
         return _factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
                 services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
-                    new FakeBackendApiHandler(_ =>
+                    new FakeBackendApiHandler(request =>
                     {
+                        observe?.Invoke(request);
                         var response = new HttpResponseMessage(status)
                         {
                             Content = new StringContent(body, Encoding.UTF8, mediaType)
@@ -42,8 +44,8 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
     }
 
     private static Task<HttpResponseMessage> PostLogin(HttpClient client) =>
-        // Password must pass the BFF's own [Password] model validation so the request
-        // actually reaches the (faked) upstream instead of 400ing at the controller.
+        // A well-formed address and a password of at most 128 characters pass the BFF's own model
+        // validation, so the request reaches the (faked) upstream instead of 400ing at the controller.
         client.PostAsJsonAsync("/bff/auth/login", new { email = "err@example.com", password = "Password1!" });
 
     [Fact]
@@ -61,6 +63,31 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("errorCode").GetString().Should().Be("INVALID_CREDENTIALS");
         body.GetProperty("traceId").GetString().Should().Be("deadbeef");
+    }
+
+    [Fact]
+    public async Task APasswordThatBreaksTheRegistrationRule_IsSentToTheApi_AndItsAnswerForwarded()
+    {
+        // The BFF binds the shared LoginRequest, so its own model state is the API's. On main at
+        // bd743911 it refused this password with a 400 of its own and never called the API; the
+        // password is the API's to refuse, with the 401 of any wrong one, counted toward the lock.
+        var upstreamBody = """
+            {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+             "detail":"Invalid email or password","errorCode":"INVALID_CREDENTIALS","traceId":"deadbeef"}
+            """;
+        var sent = new List<string>();
+        var client = ClientWithUpstream(HttpStatusCode.Unauthorized, upstreamBody, "application/problem+json",
+            observe: request => sent.Add(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()));
+
+        var response = await client.PostAsJsonAsync("/bff/auth/login", new { email = "err@example.com", password = "Ab1!" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, await response.Content.ReadAsStringAsync());
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("errorCode").GetString().Should().Be("INVALID_CREDENTIALS");
+        body.GetProperty("traceId").GetString().Should().Be("deadbeef", "the API's own answer, not one the BFF wrote");
+        sent.Should().ContainSingle("the password reached the API once");
+        using var forwarded = JsonDocument.Parse(sent[0]);
+        forwarded.RootElement.GetProperty("password").GetString().Should().Be("Ab1!");
     }
 
     [Fact]

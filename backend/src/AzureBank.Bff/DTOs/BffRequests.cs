@@ -16,13 +16,16 @@ namespace AzureBank.Bff.DTOs;
 /// who walked away. Making the field absent is a stronger guarantee than checking it matches.
 /// </para>
 /// <para>
-/// <b>Deliberately NOT <c>[Password]</c>, unlike <c>LoginRequest</c>.</b> That attribute enforces
+/// <b>Deliberately NOT <c>[Password]</c>, as <c>LoginRequest</c> is not.</b> That attribute enforces
 /// the complexity <i>pattern</i>, which is the right thing when a password is being CHOSEN and the
 /// wrong thing when one is being VERIFIED. Two consequences here: a wrong guess that fails
 /// complexity would answer 400 where every other wrong guess answers 401 — a free oracle — and, far
 /// worse, a correct password set under an older policy would be rejected by validation, locking a
 /// user out of their own live session with a message about character classes. Length is still
-/// bounded, because an unbounded string is a request-size problem regardless.
+/// bounded, because an unbounded string is a request-size problem regardless. The API's
+/// <c>LoginRequest</c>, which this endpoint forwards the password in, bounds it alike, so a
+/// rule-breaking password reaches the credential check there and is answered the 401 of any wrong
+/// one, counted toward the lock.
 /// </para>
 /// </remarks>
 public class BffReauthenticateRequest
