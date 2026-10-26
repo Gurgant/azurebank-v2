@@ -24,9 +24,10 @@ import {
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import {
   CONNECTION_FAILED,
+  REAUTH_SERVER_PROBLEM,
   SERVICE_UNAVAILABLE,
-  SIGN_IN_PAUSES,
   SIGN_OUT_FAILED,
+  WRONG_PASSWORD,
 } from '../../api/problemMessages';
 import { WaitHint } from '../../components/feedback';
 import { useWaitLanding } from '../../hooks/useWaitLanding';
@@ -141,8 +142,8 @@ const useStyles = makeStyles({
  * offered there and refused past its end, or once it is past its end.
  */
 function reauthMessage(problem: ApiProblem, kept: StoredDemoCopy | null): string {
-  if (problem.status === 401) {
-    if (kept === null) return `That password didn't match. ${SIGN_IN_PAUSES}`;
+  if (problem.status === 401 || problem.status === 400) {
+    if (kept === null) return WRONG_PASSWORD;
     return demoCopyHasEnded(kept) ? COPY_HAS_ENDED : COPY_STAY_PAUSED;
   }
   if (problem.status === 429) {
@@ -154,8 +155,11 @@ function reauthMessage(problem: ApiProblem, kept: StoredDemoCopy | null): string
   if (isServiceOutage(problem)) {
     return SERVICE_UNAVAILABLE;
   }
-  if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+  if (problem.status === 'NETWORK') {
     return CONNECTION_FAILED;
+  }
+  if (problem.status === 'PARSE' || (typeof problem.status === 'number' && problem.status >= 500)) {
+    return REAUTH_SERVER_PROBLEM;
   }
   return "Couldn't sign you in right now. Please try again.";
 }

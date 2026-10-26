@@ -306,7 +306,9 @@ describe('SessionExpiryWarning', () => {
     fireEvent.change(password(), { target: { value: 'Wrong1234!' } });
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/didn't match/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+    );
     unsubscribe();
 
     expect(dialog()).toBeInTheDocument();
@@ -400,13 +402,13 @@ describe('SessionExpiryWarning', () => {
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      "That password didn't match. After 5 failed attempts, sign-in is paused for 15 minutes.",
+      'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
     );
     expect(dialog()).toBeInTheDocument();
     expect(store.getState().auth.status).toBe('authenticated');
   });
 
-  it('a failure it has no words for says it could not sign in, and blames nothing', async () => {
+  it('a 500 says the password check failed on our side', async () => {
     const store = await bootAbsolute();
     server.use(
       http.post('*/bff/auth/reauthenticate', () =>
@@ -423,11 +425,42 @@ describe('SessionExpiryWarning', () => {
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent("Couldn't sign you in right now. Please try again.");
+    expect(alert).toHaveTextContent(
+      "We couldn't check your password because of a problem on our side. Please try again.",
+    );
     // Not the password's sentence and not the connection's: neither was the problem.
     expect(alert).not.toHaveTextContent(/didn't match/i);
     expect(alert).not.toHaveTextContent(/couldn't reach the server/i);
     expect(dialog()).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      answer: 'a non-JSON 502',
+      respond: () => HttpResponse.html('<html><body>Bad gateway</body></html>', { status: 502 }),
+      says: "We couldn't check your password because of a problem on our side. Please try again.",
+    },
+    {
+      answer: 'a 400 validation refusal',
+      respond: () =>
+        HttpResponse.json(
+          { status: 400, errors: { password: ['Password is too long.'] } },
+          { status: 400 },
+        ),
+      says: 'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+    },
+  ])('a password check answered $answer says the fixed sentence', async ({ respond, says }) => {
+    const store = await bootAbsolute();
+    server.use(http.post('*/bff/auth/reauthenticate', respond));
+    await reachTheWarning(store);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(says);
+    expect(dialog()).toBeInTheDocument();
+    expect(store.getState().auth.status).toBe('authenticated');
   });
 
   describe('coming back to the tab', () => {
@@ -526,7 +559,7 @@ describe('SessionExpiryWarning', () => {
       paused:
         'Your copy did not sign in. After 5 failed attempts, sign-in is paused for 15 minutes. Try again later, or sign out to get a new copy.',
       wrongPassword:
-        "That password didn't match. After 5 failed attempts, sign-in is paused for 15 minutes.",
+        'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
       tooManyAttempts: 'Too many attempts just now. Wait a moment and try again.',
     } as const;
     /** What the dialog is operated with, top to bottom, for the copy's owner and for anyone else. */
@@ -908,7 +941,7 @@ describe('SessionExpiryWarning', () => {
 
       await signedInAgain(store, () => seedMockSession());
 
-      // No "That password didn't match." over a field nobody has submitted in this session.
+      // No "Incorrect password." over a field nobody has submitted in this session.
       expect({ offered: offered(), alerts: alerts() }).toStrictEqual({
         offered: ANYONE_ELSES,
         alerts: [],

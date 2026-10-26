@@ -166,7 +166,11 @@ describe('PIN setup wizard (PR-10)', () => {
     await typePassword('WrongPassword1!');
     await pasteDigits('123456');
 
-    expect(await screen.findByText('That password is not correct.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
   });
 
@@ -710,7 +714,7 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
   it.each([
     {
       code: 'INVALID_CREDENTIALS',
-      says: 'That password is not correct.',
+      says: 'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
       typed: 'WrongPassword1!',
       arrange: () => {},
     },
@@ -783,7 +787,9 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     await toTheConfirmation();
     await typePassword('WrongPassword1!');
     await pasteDigits('123456');
-    await screen.findByText('That password is not correct.');
+    await screen.findByText(
+      'Incorrect password. After 5 failed attempts, sign-in is paused for 15 minutes.',
+    );
 
     await userEvent.clear(screen.getByLabelText('Account password'));
     await typePassword();

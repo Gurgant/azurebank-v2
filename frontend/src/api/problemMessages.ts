@@ -108,6 +108,14 @@ export const SIGN_IN_PAUSES = 'After 5 failed attempts, sign-in is paused for 15
  */
 export const SIGN_IN_REFUSED = `Invalid email or password. ${SIGN_IN_PAUSES}`;
 
+export const SIGN_IN_SERVER_PROBLEM =
+  "We couldn't sign you in because of a problem on our side. Please try again.";
+
+export const REAUTH_SERVER_PROBLEM =
+  "We couldn't check your password because of a problem on our side. Please try again.";
+
+export const WRONG_PASSWORD = `Incorrect password. ${SIGN_IN_PAUSES}`;
+
 /*
   The visitor's own account, closed under the page: closed in another tab or another session while
   this one still showed it. The API answers 404 `ACCOUNT_NOT_FOUND` to whatever is then done on
