@@ -145,6 +145,40 @@ describe('internal transfer (PR-11b)', () => {
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 
+  it('on arrival, says to choose an account to move the money to', async () => {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toHaveAccessibleDescription(
+      'Choose an account to move the money to.',
+    );
+  });
+
+  it('with a destination and an empty amount, says to enter an amount', async () => {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toHaveAccessibleDescription(
+      'Enter an amount to continue.',
+    );
+  });
+
+  it('with a valid move the button is enabled, its accessible description is empty, and the line paragraph is still in the page', async () => {
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    const review = screen.getByRole('button', { name: 'Review Transfer' });
+    const hintId = review.getAttribute('aria-describedby');
+    expect(hintId).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+
+    expect(review).toBeEnabled();
+    expect(review).not.toHaveAccessibleDescription();
+    expect(review).not.toHaveAttribute('aria-describedby');
+    const hint = document.getElementById(hintId!);
+    expect(hint).toBeInTheDocument();
+    expect(hint).toBeEmptyDOMElement();
+  });
+
   it('explains that a second account is needed when the user has only one', async () => {
     server.use(
       http.get('*/api/accounts', () =>
@@ -166,6 +200,9 @@ describe('internal transfer (PR-11b)', () => {
     );
     renderInternal();
     expect(await screen.findByText(/You need a second account to transfer/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Review Transfer' }),
+    ).not.toHaveAccessibleDescription();
   });
 
   it('says the accounts could not be loaded, and Retry actually refetches', async () => {
@@ -213,6 +250,9 @@ describe('internal transfer (PR-11b)', () => {
 
     expect(screen.getByText(/Exceeds available balance/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toHaveAccessibleDescription(
+      'Change the amount to continue.',
+    );
   });
 
   it('after IN_FLIGHT the retained key freezes Back; Send reuses the SAME key', async () => {
@@ -379,6 +419,9 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
     expect(pressed('To Rainy Day')).toBe('false');
     expect(pressed('To Main Account')).toBe('false');
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toHaveAccessibleDescription(
+      'Choose an account to move the money to.',
+    );
   });
 
   it("the header's Back goes one step at a time, and from the form it leaves for the dashboard", async () => {
@@ -598,6 +641,9 @@ describe('an account of the move is closed under the page', () => {
     // The destination the visitor chose is still the visitor's choice.
     expect(pressed('To Main Account')).toBe('true');
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toHaveAccessibleDescription(
+      'Choose an account to move money from.',
+    );
     // The amount typed is kept, and is not judged against the balance of no account.
     expect(screen.queryByText(/Exceeds available balance/)).not.toBeInTheDocument();
     expect(seen.mints).toBe(1);
