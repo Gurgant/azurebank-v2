@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -380,15 +380,6 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
-/** The name inside a delete sentence. No other sentence on this page ends this way. */
-function nameInDeleteSentence(sentence: string | null): string | undefined {
-  const suffix = '" was deleted.';
-  if (sentence !== null && sentence.startsWith('"') && sentence.endsWith(suffix)) {
-    return sentence.slice(1, -suffix.length);
-  }
-  return undefined;
-}
-
 function getAccountIcon(type: AccountType) {
   switch (type) {
     case 'Savings':
@@ -432,13 +423,23 @@ export function AccountsPage() {
   const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
   // One sentence for the last action that finished. The next action clears it as it starts.
   const [sentence, setSentence] = useState<string | null>(null);
+  // The account the last action deleted, by id: two accounts may share a name.
+  const [deletedId, setDeletedId] = useState<string | null>(null);
+  // Counts the actions started, so that an answer which arrives after another action began says
+  // nothing over it.
+  const actionsStarted = useRef(0);
+
+  const startAction = () => {
+    actionsStarted.current += 1;
+    setSentence(null);
+    setDeletedId(null);
+  };
 
   // As the dialog unmounts, useReturnFocus gives focus back to the card's menu button, still in
   // the page until the list read answers. Focus falls to body when the card leaves, and that is
-  // the moment to land on the heading. The sentence on its own is earlier than that.
-  const deletedName = nameInDeleteSentence(sentence);
+  // the moment to land on the heading. The deletion on its own is earlier than that.
   const headingRef = useFocusWhenLost<HTMLHeadingElement>(
-    deletedName !== undefined && !accounts.some((account) => account.name === deletedName),
+    deletedId !== null && !accounts.some((account) => account.id === deletedId),
   );
 
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
@@ -458,14 +459,14 @@ export function AccountsPage() {
 
   const handleDeposit = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSentence(null);
+    startAction();
     setSelectedAccount(toLegacy(account));
     setIsDepositOpen(true);
   };
 
   const handleWithdraw = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSentence(null);
+    startAction();
     setSelectedAccount(toLegacy(account));
     setIsWithdrawOpen(true);
   };
@@ -474,12 +475,12 @@ export function AccountsPage() {
   // would reach the browser's history, the server's logs and wherever the link is pasted.
   const handleTransfer = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSentence(null);
+    startAction();
     navigate('/transfer', { state: { fromAccountId: account.id } });
   };
 
   const handleAddAccount = () => {
-    setSentence(null);
+    startAction();
     setIsCreateOpen(true);
   };
 
@@ -499,10 +500,15 @@ export function AccountsPage() {
   // (two rows flip, so the whole tag family refetches). Failures have no owning
   // surface here — they go through the problem-toast pipeline.
   const handleSetPrimary = (account: AccountResponse) => {
-    setSentence(null);
+    startAction();
+    const thisAction = actionsStarted.current;
     setPrimaryAccount(account.id)
       .unwrap()
-      .then(() => setSentence(`"${account.name}" is now your primary account.`))
+      .then(() => {
+        if (actionsStarted.current === thisAction) {
+          setSentence(`"${account.name}" is now your primary account.`);
+        }
+      })
       .catch((caught) => showProblem(caught as ApiProblem));
   };
 
@@ -605,19 +611,14 @@ export function AccountsPage() {
                       <MenuList>
                         <MenuItem
                           onClick={() => {
-                            setSentence(null);
+                            startAction();
                             setRenameTarget(account);
                           }}
                         >
                           Rename
                         </MenuItem>
                         {!account.isPrimary && (
-                          <MenuItem
-                            onClick={() => {
-                              setSentence(null);
-                              handleSetPrimary(account);
-                            }}
-                          >
+                          <MenuItem onClick={() => handleSetPrimary(account)}>
                             Set as primary
                           </MenuItem>
                         )}
@@ -625,7 +626,7 @@ export function AccountsPage() {
                         <MenuItem
                           className={styles.deleteMenuItem}
                           onClick={() => {
-                            setSentence(null);
+                            startAction();
                             setDeleteTarget(account);
                           }}
                         >
@@ -728,7 +729,10 @@ export function AccountsPage() {
       {deleteTarget && (
         <DeleteAccountDialog
           account={{ id: deleteTarget.id, name: deleteTarget.name }}
-          onDeleted={(name) => setSentence(`"${name}" was deleted.`)}
+          onDeleted={(name) => {
+            setDeletedId(deleteTarget.id);
+            setSentence(`"${name}" was deleted.`);
+          }}
           onClose={() => setDeleteTarget(null)}
         />
       )}

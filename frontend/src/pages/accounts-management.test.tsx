@@ -22,6 +22,33 @@ async function openMenu(accountName: string) {
   await userEvent.click(screen.getByRole('button', { name: `Account actions for ${accountName}` }));
 }
 
+/** A zero-balance account that is not the primary, so that it can be deleted. */
+function seedTempFund(id: string) {
+  mockState.accounts.push({
+    id,
+    accountNumber: 'AB-****-****-33',
+    name: 'Temp Fund',
+    type: 'Savings',
+    balance: 0,
+    isPrimary: false,
+    createdAt: '2026-07-10T09:00:00.0000000Z',
+  });
+}
+
+/** Holds every request that matches until the returned function is called; the mock answers. */
+function holdUntilReleased(method: 'get' | 'patch', path: string) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http[method](path, async () => {
+      await held;
+    }),
+  );
+  return release;
+}
+
 /** The sentence, inside the page's polite slot. The bar's own name is not the sentence. */
 function saidInTheSlot(sentence: string) {
   const words = screen.getByText(sentence, { exact: true });
@@ -44,9 +71,9 @@ describe('rename account (A5)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     // The row's {Account,id} tag invalidates the list — never a hand-patched cache.
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'Storm Fund' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Storm Fund')).toBeInTheDocument();
+    expect(screen.queryByText('Rainy Day')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Storm Fund' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Rainy Day' })).not.toBeInTheDocument();
     saidInTheSlot('"Rainy Day" is now called "Storm Fund".');
   });
@@ -115,17 +142,9 @@ describe('delete account (A7)', () => {
     'alertdialog'. The menu item is 'Delete' and the dialog's final button 'Delete account'.
   */
   it('deletes a zero-balance account after confirmation and the PIN', async () => {
-    // Seed a deletable account directly (zero balance, not primary) — the create
-    // FLOW is already covered by accounts.test.tsx.
-    mockState.accounts.push({
-      id: '019f7b3f-0000-7000-8000-0000000000a3',
-      accountNumber: 'AB-****-****-33',
-      name: 'Temp Fund',
-      type: 'Savings',
-      balance: 0,
-      isPrimary: false,
-      createdAt: '2026-07-10T09:00:00.0000000Z',
-    });
+    // Seed a deletable account directly — the create FLOW is already covered by
+    // accounts.test.tsx.
+    seedTempFund('019f7b3f-0000-7000-8000-0000000000a3');
     renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
     await screen.findByText('Temp Fund');
 
@@ -136,9 +155,8 @@ describe('delete account (A7)', () => {
     // The sixth digit is the submit: mint, then DELETE with the minted id.
     await enterPin();
 
-    await waitFor(() =>
-      expect(screen.queryByRole('heading', { name: 'Temp Fund' })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText('Temp Fund')).not.toBeInTheDocument());
+    expect(screen.queryByRole('heading', { name: 'Temp Fund' })).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole('heading', { level: 1, name: 'Accounts' })).toHaveFocus(),
     );
@@ -151,6 +169,59 @@ describe('delete account (A7)', () => {
     expect(mockState.stepUpAuthorizations.size).toBe(1);
     const [minted] = [...mockState.stepUpAuthorizations.values()];
     expect(minted).toMatchObject({ operation: 'AccountDeletion', consumed: true });
+  });
+
+  it('lands on the heading when another account has the same name as the one deleted', async () => {
+    seedTempFund('019f7b3f-0000-7000-8000-0000000000a3');
+    seedTempFund('019f7b3f-0000-7000-8000-0000000000a4');
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    expect(await screen.findAllByRole('heading', { level: 2, name: 'Temp Fund' })).toHaveLength(2);
+
+    const [first] = screen.getAllByRole('button', { name: 'Account actions for Temp Fund' });
+    await userEvent.click(first);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await screen.findByRole('dialog', { name: 'Delete account?' });
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
+    await enterPin();
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { level: 2, name: 'Temp Fund' })).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 1, name: 'Accounts' })).toHaveFocus(),
+    );
+    saidInTheSlot('"Temp Fund" was deleted.');
+  });
+
+  it('lands on the heading only once the deleted card has left the list', async () => {
+    seedTempFund('019f7b3f-0000-7000-8000-0000000000a3');
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Temp Fund');
+
+    await openMenu('Temp Fund');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await screen.findByRole('dialog', { name: 'Delete account?' });
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account' }));
+    // The list read that the deletion's tags start is held: the page still shows the card.
+    const answerList = holdUntilReleased('get', '*/api/accounts');
+    await enterPin();
+
+    // The deletion is done and said, and the dialog is gone; the card is still listed, and its
+    // menu button has focus back. In jsdom this check alone does not tell the two halves apart: with
+    // the deletion alone as the moment, the landing runs while the menu button holds focus, so it
+    // never moves focus, and what goes red is the landing after the answer below.
+    await screen.findByText('"Temp Fund" was deleted.', { exact: true });
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Delete account?' })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('heading', { level: 2, name: 'Temp Fund' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Account actions for Temp Fund' })).toHaveFocus();
+    const heading = screen.getByRole('heading', { level: 1, name: 'Accounts' });
+    expect(heading).not.toHaveFocus();
+
+    answerList();
+    await waitFor(() => expect(screen.queryByText('Temp Fund')).not.toBeInTheDocument());
+    await waitFor(() => expect(heading).toHaveFocus());
   });
 
   it('a non-zero balance is refused INLINE and the dialog stays open (D17)', async () => {
@@ -224,6 +295,27 @@ describe('a sentence for what the action did', () => {
     expectNoNestedLiveRegions();
 
     await userEvent.click(screen.getByRole('button', { name: 'Deposit to Rainy Day' }));
+    expect(
+      screen.queryByText('"Rainy Day" is now your primary account.', { exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says nothing for a new primary whose answer arrives after another action started', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const answerSetPrimary = holdUntilReleased('patch', '*/api/accounts/:id/set-primary');
+
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    await screen.findByRole('dialog');
+
+    answerSetPrimary();
+    // The answer has arrived once the list it refreshes puts Rainy Day first.
+    await waitFor(() => {
+      const names = screen.getAllByText(/^(Main Account|Rainy Day)$/).map((el) => el.textContent);
+      expect(names[0]).toBe('Rainy Day');
+    });
     expect(
       screen.queryByText('"Rainy Day" is now your primary account.', { exact: true }),
     ).not.toBeInTheDocument();
