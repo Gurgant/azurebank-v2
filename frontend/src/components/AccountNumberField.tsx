@@ -74,6 +74,9 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
 
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Counts the copies started and the times the number was hidden, so that a clipboard write which
+  // finishes after either says nothing over a newer notice.
+  const copyEpoch = useRef(0);
 
   // Unmount (e.g. navigating away) counts as an auto-rehide: drop both timers so nothing fires
   // against a gone component and no revealed value lingers.
@@ -93,6 +96,7 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
   const conceal = (after: 'hiddenAgain' | null) => {
     clearTimeout(hideTimer.current);
     clearTimeout(copiedTimer.current);
+    copyEpoch.current += 1;
     setFullNumber(null);
     setNotice(after);
     reset();
@@ -123,8 +127,11 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
     if (fullNumber === null) return;
     setNotice(null);
     clearTimeout(copiedTimer.current);
+    copyEpoch.current += 1;
+    const thisCopy = copyEpoch.current;
     try {
       await navigator.clipboard.writeText(fullNumber);
+      if (copyEpoch.current !== thisCopy) return;
       setNotice('copied');
       copiedTimer.current = setTimeout(() => setNotice(null), COPIED_TIMEOUT_MS);
     } catch {

@@ -190,6 +190,39 @@ describe('account number reveal (ADR-0020)', () => {
     );
   });
 
+  it('a copy that finishes after the number was hidden again does not say Copied', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let finishCopy = () => {};
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    mockState.authLevel = 2;
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
+    expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
+
+    await act(async () => {
+      vi.advanceTimersByTime(REVEAL_TIMEOUT_MS);
+    });
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    const status = within(numberRow(revealName)).getByRole('status');
+    expect(status).toHaveTextContent('Account number hidden again.');
+
+    await act(async () => {
+      finishCopy();
+    });
+    expect(status).toHaveTextContent('Account number hidden again.');
+    expect(status).not.toHaveTextContent('Copied');
+  });
+
   it('the PIN modal says what the PIN is asked for, and no transfer', async () => {
     // The number's reveal is the only thing that brings this modal up (ADR-0041), and until
     // 2026-10-06 it asked for the PIN "to authorize this transfer".

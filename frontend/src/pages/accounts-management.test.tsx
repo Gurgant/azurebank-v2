@@ -322,6 +322,64 @@ describe('a sentence for what the action did', () => {
   });
 });
 
+describe('a dialog whose answer arrives after another action started', () => {
+  /** Holds the answer to a POST of `path` until the returned function is called. */
+  function holdPostUntilReleased(path: string) {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post(path, async () => {
+        await held;
+      }),
+    );
+    return release;
+  }
+
+  it('says nothing for a create that was cancelled before its answer arrived', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const answerCreate = holdPostUntilReleased('*/api/accounts');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    await userEvent.type(await screen.findByLabelText('Account name'), 'Holiday Pot');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Rainy Day' }));
+    answerCreate();
+    // The answer has arrived once the list it refreshes holds the new account.
+    await screen.findByText('Holiday Pot');
+    expect(
+      screen.queryByText('Your new account "Holiday Pot" is open.', { exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says nothing for a rename that was cancelled before its answer arrived', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = holdUntilReleased('patch', '*/api/accounts/:id');
+
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const input = await screen.findByLabelText('Account name');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Storm Fund');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Main Account' }));
+    answerRename();
+    await screen.findByText('Storm Fund');
+    expect(
+      screen.queryByText('"Rainy Day" is now called "Storm Fund".', { exact: true }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('what the card says about what each action does', () => {
   it('sets Delete apart from the other items, with a separator directly before it', async () => {
     renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });

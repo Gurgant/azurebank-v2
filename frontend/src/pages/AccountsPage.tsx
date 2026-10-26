@@ -428,6 +428,10 @@ export function AccountsPage() {
   // Counts the actions started, so that an answer which arrives after another action began says
   // nothing over it.
   const actionsStarted = useRef(0);
+  // The action count when the Create or Rename dialog opened: its answer is said only while that
+  // is still the latest action, as set-primary's is.
+  const [createOpenedAt, setCreateOpenedAt] = useState(0);
+  const [renameOpenedAt, setRenameOpenedAt] = useState(0);
 
   const startAction = () => {
     actionsStarted.current += 1;
@@ -481,6 +485,7 @@ export function AccountsPage() {
 
   const handleAddAccount = () => {
     startAction();
+    setCreateOpenedAt(actionsStarted.current);
     setIsCreateOpen(true);
   };
 
@@ -612,6 +617,7 @@ export function AccountsPage() {
                         <MenuItem
                           onClick={() => {
                             startAction();
+                            setRenameOpenedAt(actionsStarted.current);
                             setRenameTarget(account);
                           }}
                         >
@@ -710,7 +716,11 @@ export function AccountsPage() {
       {isCreateOpen && (
         <CreateAccountDialog
           open
-          onDone={(name) => setSentence(`Your new account "${name}" is open.`)}
+          onDone={(name) => {
+            if (actionsStarted.current === createOpenedAt) {
+              setSentence(`Your new account "${name}" is open.`);
+            }
+          }}
           onClose={() => setIsCreateOpen(false)}
         />
       )}
@@ -718,7 +728,11 @@ export function AccountsPage() {
       {renameTarget && (
         <RenameAccountDialog
           account={{ id: renameTarget.id, name: renameTarget.name }}
-          onDone={(name) => setSentence(`"${renameTarget.name}" is now called "${name}".`)}
+          onDone={(name) => {
+            if (actionsStarted.current === renameOpenedAt) {
+              setSentence(`"${renameTarget.name}" is now called "${name}".`);
+            }
+          }}
           onClose={() => setRenameTarget(null)}
         />
       )}
