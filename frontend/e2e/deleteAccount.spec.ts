@@ -93,8 +93,13 @@ test.describe('closing an account (ADR-0049)', () => {
       }
 
       await expect(dialog).toBeHidden({ timeout: 15_000 });
-      // The list refetched through the mutation's own tags: the card is gone, not hidden.
-      await expect(page.getByText(name)).toBeHidden({ timeout: 15_000 });
+      // The list refetched through the mutation's own tags: the card is gone, not hidden. Only
+      // the card's title is looked for: the page now says `"<name>" was deleted.`, which holds the
+      // name too.
+      await expect(page.getByRole('heading', { name, exact: true })).toBeHidden({
+        timeout: 15_000,
+      });
+      await expect(page.getByText(`"${name}" was deleted.`, { exact: true })).toBeVisible();
     } finally {
       // Harmless once the dialog closed it (the mint answers 404 and the helper returns).
       await closeViaApi(page, id, { tolerate404: true });
