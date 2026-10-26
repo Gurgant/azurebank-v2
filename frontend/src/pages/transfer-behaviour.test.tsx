@@ -659,6 +659,35 @@ describe('money flows — the behaviour the unification must preserve', () => {
       },
     );
 
+    it('returns to the amount when the daily limit refuses a resend under a retained key', async () => {
+      // The first send is answered 409, so the key is kept and the PIN step offers "Check again";
+      // the resend then meets the daily 422. The key is dropped only after `run` has finished, so
+      // the move to the form has to wait for it rather than be refused under a live key.
+      let sends = 0;
+      server.use(
+        http.post('*/api/transfers', () => {
+          sends += 1;
+          return sends === 1
+            ? problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT', detail: 'Still working.' })
+            : problem({
+                status: 422,
+                errorCode: 'DAILY_LIMIT_EXCEEDED',
+                detail: 'Daily transfer limit exceeded.',
+                extensions: DAILY_MEMBERS,
+              });
+        }),
+      );
+      await externalToReview();
+      await confirmWithPin();
+      await userEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+
+      const amount = await screen.findByLabelText('Transfer amount');
+      await waitFor(() => expect(amount).toHaveFocus());
+      expect(sends).toBe(2);
+      expect(screen.getByText(/That's more than you can send today\./)).toBeInTheDocument();
+      expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    });
+
     it('keeps the daily refusal on the returned form, then clears it on the edit that supersedes it', async () => {
       // 'input' scope, for the same reason INSUFFICIENT_FUNDS has it: the message names the amount,
       // and the amount is what the user goes back to change. Reachable at all only because a 422 is

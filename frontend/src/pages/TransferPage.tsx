@@ -409,12 +409,26 @@ export function TransferPage() {
   const focusAmountOnForm = useRef(false);
   useEffect(() => {
     // The amount input is unmounted on the PIN step: wait for the form and its RHF ref. The flag
-    // is spent by the first step change after it is set, so a `toForm()` that refused under a live
-    // key cannot move focus on some later, unrelated return to the form.
-    if (!focusAmountOnForm.current) return;
+    // is set together with a `toForm()` that cannot be refused, and spent once the form is the
+    // step shown, so no later, unrelated return to the form moves focus.
+    if (!focusAmountOnForm.current || wizard.step !== 'form') return;
     focusAmountOnForm.current = false;
-    if (wizard.step === 'form') setFocus('amount');
+    setFocus('amount');
   }, [wizard.step, setFocus]);
+
+  /*
+    The daily refusal asks to go back to the amount. A send under a retained key answers it while
+    `run` is still in its `try`, and `toForm` refuses under a live key: the refusal handler's own
+    `wizard` is the render the send began in, with a live key and no way to see it dropped. So the
+    handler only asks, and this effect moves once a render says the key is gone.
+  */
+  const [returnToAmount, setReturnToAmount] = useState(false);
+  useEffect(() => {
+    if (!returnToAmount || keyLive) return;
+    setReturnToAmount(false);
+    focusAmountOnForm.current = true;
+    wizard.toForm();
+  }, [returnToAmount, keyLive, wizard]);
 
   const watchedAccountId = watch('fromAccountId');
   const watchedTag = watch('recipientTag');
@@ -849,8 +863,10 @@ export function TransferPage() {
           harmless is exactly what the arm above refuses to do.
 
           RETURN TO THE AMOUNT. The amount is what the visitor has to change, and a PIN cannot
-          help. The banner is 'input'-scoped, so it survives the move to the form. `toForm()`
-          refuses under a live key, and then the visitor stays here, as before this change.
+          help. The banner is 'input'-scoped, so it survives the move to the form. A 422 drops the
+          key, but a resend under a retained key reaches this arm before the page has rendered
+          without it, and `toForm()` refuses under a live key: the move waits for the effect on
+          `returnToAmount`, which acts once `keyLive` is false.
 
           Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
           leaves the mint body either way, and every non-PIN refusal at this rung already retains it
@@ -862,8 +878,7 @@ export function TransferPage() {
       setPinNonce((n) => n + 1);
       lastAuthorization.current = null;
       setAuthorizationHeld(false);
-      focusAmountOnForm.current = true;
-      wizard.toForm();
+      setReturnToAmount(true);
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';
