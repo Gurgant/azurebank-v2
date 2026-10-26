@@ -396,7 +396,7 @@ export function TransferPage() {
   // ===== RHF step-1 form =====
   // The balance bound tracks the SELECTED account; defaults resolve once accounts load.
   const [balanceBound, setBalanceBound] = useState(0);
-  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
+  const { control, handleSubmit, setValue, setFocus, watch, formState, trigger } = useForm<
     TransferFormValues,
     unknown,
     TransferFormOutput
@@ -405,6 +405,14 @@ export function TransferPage() {
     mode: 'onChange',
     defaultValues: { fromAccountId: '', recipientTag: '', amount: '' },
   });
+
+  const focusAmountOnForm = useRef(false);
+  useEffect(() => {
+    // The amount input is unmounted on the PIN step: wait for the form and its RHF ref.
+    if (wizard.step !== 'form' || !focusAmountOnForm.current) return;
+    focusAmountOnForm.current = false;
+    setFocus('amount');
+  }, [wizard.step, setFocus]);
 
   const watchedAccountId = watch('fromAccountId');
   const watchedTag = watch('recipientTag');
@@ -824,7 +832,7 @@ export function TransferPage() {
     } else if (refusal?.errorCode === 'DAILY_LIMIT_EXCEEDED') {
       /*
           The daily outgoing-transfer bound (ADR-0050). The expiry arm's exact shape, for three
-          reasons of its own — and NO `setPinError`, NO navigation.
+          reasons of its own — and NO `setPinError`.
 
           NO RED BOXES. A1 measured `PinAccessFailedCount` 0 → 0 after three wrong-PIN over-limit
           mints, with 0 authorisations minted: the rung runs before the PIN is ever verified, so
@@ -838,10 +846,8 @@ export function TransferPage() {
           (`shouldKeepKey`), but leaning on an invariant three files away to keep a stale reference
           harmless is exactly what the arm above refuses to do.
 
-          NO NAVIGATION. SELF_TRANSFER_NOT_ALLOWED and RECIPIENT_NO_ACCOUNT already fall through this
-          rung without moving the user, the banner is 'input'-scoped so it survives the two Backs,
-          and `exitLocked` is false after a 422 so Back is live. WHERE the user should land is a flow
-          decision that belongs with #165/#166.
+          RETURN TO THE AMOUNT. The amount is what the visitor has to change, and a PIN cannot
+          help. The banner is 'input'-scoped, so it survives the move to the form.
 
           Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
           leaves the mint body either way, and every non-PIN refusal at this rung already retains it
@@ -853,6 +859,8 @@ export function TransferPage() {
       setPinNonce((n) => n + 1);
       lastAuthorization.current = null;
       setAuthorizationHeld(false);
+      focusAmountOnForm.current = true;
+      wizard.toForm();
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';

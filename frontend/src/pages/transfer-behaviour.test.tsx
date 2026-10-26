@@ -571,8 +571,8 @@ describe('money flows — the behaviour the unification must preserve', () => {
       figure-bearing refusal, and its structural neighbour in the shared tail.
 
       Deliberately NOT a new `src/api/moneyProblem.test.ts`: that module has never had one, every
-      branch it owns is proven through this page suite, and a unit file would be a second oracle for
-      one branch (plus a `test:tripwire` bookkeeping decision).
+      branch it owns is proven through page tests. The classifier's copy variants are also checked
+      in the existing policies suite.
 
       The refusal body is MEASURED — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's
       working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev,
@@ -604,15 +604,39 @@ describe('money flows — the behaviour the unification must preserve', () => {
       await externalToReview();
       await confirmWithPin();
 
-      const banner = await screen.findByText(/Daily transfer limit reached/);
-      expect(banner).toHaveTextContent('€100.00 left today');
-      expect(banner).toHaveTextContent(/The limit resets on /);
-      // The ceiling is deliberately not named — one fewer figure, one fewer copy decision taken
-      // away from #165/#166.
+      const banner = await screen.findByText(/That's more than you can send today\./);
+      expect(banner).toHaveTextContent('You can send up to €100.00 more');
+      expect(banner).toHaveTextContent(/before the limit resets on /);
+      // Headroom is actionable here; the ceiling is named only when the day is exhausted.
       expect(banner).not.toHaveTextContent('€5,000.00');
+      const amount = await screen.findByLabelText('Transfer amount');
+      expect(amount).toBeInTheDocument();
+      await waitFor(() => expect(amount).toHaveFocus());
+      expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
     });
 
-    it('and the daily refusal survives the two Backs, then clears on the edit that supersedes it', async () => {
+    it.each([5000, 5100])(
+      'names the daily ceiling when used is %s and focuses the amount',
+      async (used) => {
+        failWith('DAILY_LIMIT_EXCEEDED', 422, {
+          detail: 'Daily transfer limit exceeded.',
+          extensions: { ...DAILY_MEMBERS, used },
+        });
+        await externalToReview();
+        await confirmWithPin();
+
+        const banner = await screen.findByText(
+          /You've reached today's transfer limit of €5,000.00\./,
+        );
+        expect(banner).toHaveTextContent(/You can send again after it resets on /);
+        expect(banner).not.toHaveTextContent('You can send up to');
+        const amount = await screen.findByLabelText('Transfer amount');
+        await waitFor(() => expect(amount).toHaveFocus());
+        expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+      },
+    );
+
+    it('keeps the daily refusal on the returned form, then clears it on the edit that supersedes it', async () => {
       // 'input' scope, for the same reason INSUFFICIENT_FUNDS has it: the message names the amount,
       // and the amount is what the user goes back to change. Reachable at all only because a 422 is
       // a key-DROPPING class — see the note at the top of this describe.
@@ -622,19 +646,14 @@ describe('money flows — the behaviour the unification must preserve', () => {
       });
       await externalToReview();
       await confirmWithPin();
-      await screen.findByText(/Daily transfer limit reached/);
-
-      const backToReview = screen.getAllByRole('button', { name: 'Back' });
-      await userEvent.click(backToReview[backToReview.length - 1]);
-      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
-      await userEvent.click(backToForm[backToForm.length - 1]);
+      await screen.findByText(/That's more than you can send today\./);
 
       expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
-      expect(screen.getByText(/Daily transfer limit reached/)).toBeInTheDocument();
+      expect(screen.getByText(/That's more than you can send today\./)).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole('button', { name: '€25' }));
       await waitFor(() =>
-        expect(screen.queryByText(/Daily transfer limit reached/)).not.toBeInTheDocument(),
+        expect(screen.queryByText(/That's more than you can send today\./)).not.toBeInTheDocument(),
       );
     });
 
@@ -643,7 +662,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
         The hard degrade, or the branch renders €NaN. This is what `main` renders today through the
         tail's `problem.detail || fallback`, and what ADR-0050's Consequences calls "a correct
         refusal in the server's words, not a crash". The scope is decided by the CODE, not by
-        whether the copy came out with figures — so it still survives the two Backs, which is the
+        whether the copy came out with figures — so it still survives the return to the form, the
         half that would silently regress if the degrade were written as a fall-through.
       */
       failWith('DAILY_LIMIT_EXCEEDED', 422, { detail: 'Daily transfer limit exceeded.' });
@@ -651,12 +670,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       await confirmWithPin();
 
       expect(await screen.findByText('Daily transfer limit exceeded.')).toBeInTheDocument();
-      expect(screen.queryByText(/left today/)).not.toBeInTheDocument();
-
-      const backToReview = screen.getAllByRole('button', { name: 'Back' });
-      await userEvent.click(backToReview[backToReview.length - 1]);
-      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
-      await userEvent.click(backToForm[backToForm.length - 1]);
+      expect(screen.queryByText(/You can send up to/)).not.toBeInTheDocument();
 
       expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
       expect(screen.getByText('Daily transfer limit exceeded.')).toBeInTheDocument();
