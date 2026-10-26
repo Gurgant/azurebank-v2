@@ -67,7 +67,7 @@ describe('the components that reserve the space', () => {
    */
   it('reserves space through the token, never through a second inline env()', () => {
     const offenders = sourceFiles('src')
-      // `src/theme` is exempt for the same reason the ESLint colour rule exempts it: this is where
+      // `src/theme` is exempt for the same reason the hardcoded-colour test exempts it: this is where
       // the value is DEFINED, so naming it here is the definition, not a second copy. The scan
       // caught this file's own prose on its first run, which is the right kind of over-broad to
       // find early.
