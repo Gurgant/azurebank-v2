@@ -69,6 +69,9 @@ export const HAVE_A_COPY_SIGN_IN = "Already have a copy's email and password? Si
 export const CLAIM_POOL_EMPTY =
   'All demo copies are in use right now. New ones are added regularly. Please try again later.';
 
+export const CLAIM_SERVER_PROBLEM =
+  "We couldn't get you a demo copy because of a problem on our side. Please try again.";
+
 /** This network has had its copies for the day. Not the server's sentence either. */
 export const CLAIM_DAILY_LIMIT =
   'This network has used its demo copies for today. Please try again tomorrow.';
@@ -171,7 +174,7 @@ export const STAY_SIGNED_IN = 'Stay signed in';
 /**
  * That button's request was answered as a wrong password is, past the copy's own end. For a
  * password the browser kept and nobody typed, that answer then means the copy has ended, and this
- * is said in the place of "That password didn't match."
+ * is said in the place of the typed password's refusal.
  */
 export const COPY_HAS_ENDED = 'This demo copy has ended. Sign out to get a new one.';
 

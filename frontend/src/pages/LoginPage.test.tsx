@@ -69,6 +69,10 @@ const WORDS = {
   wrongPassword:
     'Invalid email or password. After 5 failed attempts, sign-in is paused for 15 minutes.',
   connection: "Couldn't reach the server — check your connection and try again.",
+  signInServerProblem:
+    "We couldn't sign you in because of a problem on our side. Please try again.",
+  claimServerProblem:
+    "We couldn't get you a demo copy because of a problem on our side. Please try again.",
   fallback: 'Something went wrong. Please try again.',
   continue: 'Continue with my copy',
   getNew: 'Get a new copy',
@@ -978,29 +982,84 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     });
   });
 
-  it('any other refusal: what the server said, or the fallback', async () => {
-    const answers = [
-      // The API's own 500, with its sentence.
-      () =>
+  it.each([
+    {
+      answer: 'a JSON 500',
+      respond: () =>
         problem({
           status: 500,
           errorCode: 'INTERNAL_ERROR',
           detail: 'An unexpected error occurred. Please try again later.',
         }),
-      // A refusal that says nothing.
-      () => new HttpResponse(null, { status: 500 }),
-    ];
+    },
+    {
+      answer: 'an empty 500',
+      respond: () => new HttpResponse(null, { status: 500 }),
+    },
+  ])('a claim answered $answer says the claim sentence', async ({ respond }) => {
+    const { requests } = await openSignInPage({ claim: respond });
+
+    await userEvent.click(tryTheDemo());
+
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.claimServerProblem]));
+    expect(requests.claims).toBe(1);
+  });
+
+  it('pressed again after a refusal: the second refusal takes the place of the first', async () => {
+    const answers = [poolEmpty, () => new HttpResponse(null, { status: 500 })];
     const { requests } = await openSignInPage({ claim: () => answers.shift()?.() });
 
     await userEvent.click(tryTheDemo());
-    await waitFor(() =>
-      expect(alerts()).toStrictEqual(['An unexpected error occurred. Please try again later.']),
-    );
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.poolEmpty]));
 
-    // Pressed again: the refusal takes the place of the one before it.
     await userEvent.click(tryTheDemo());
-    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.fallback]));
-    expect(requests.claims).toBe(2);
+    await waitFor(() => {
+      expect(requests.claims).toBe(2);
+      expect(alerts()).toStrictEqual([WORDS.claimServerProblem]);
+    });
+  });
+
+  it.each([
+    {
+      answer: 'a non-JSON 502',
+      respond: () => HttpResponse.html('<html><body>Bad gateway</body></html>', { status: 502 }),
+      says: WORDS.signInServerProblem,
+    },
+    {
+      answer: 'a JSON 500 with the API detail',
+      respond: () =>
+        problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        }),
+      says: WORDS.signInServerProblem,
+    },
+    {
+      answer: 'a 400 validation refusal',
+      respond: () =>
+        HttpResponse.json(
+          { status: 400, errors: { password: ['Password is too long.'] } },
+          { status: 400 },
+        ),
+      says: WORDS.wrongPassword,
+    },
+    {
+      answer: 'a 503',
+      respond: () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/login' }),
+      says: COPY.unavailable,
+    },
+  ])('the form answered $answer says one fixed sentence', async ({ respond, says }) => {
+    await openSignInPage({ signIn: respond });
+    await fillTheForm(NOBODY, 'Wrong-Pass-1!');
+
+    await userEvent.click(signInButton());
+
+    await waitFor(() => expect(alerts()).toStrictEqual([says]));
+    expect(document.body).not.toHaveTextContent('Unparseable');
+    expect(document.body).not.toHaveTextContent(
+      'An unexpected error occurred. Please try again later.',
+    );
   });
 
   it('an answer the app will not accept: the fallback, and the visitor is still on the page with nothing kept', async () => {

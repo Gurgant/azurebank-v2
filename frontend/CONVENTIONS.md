@@ -252,9 +252,13 @@ None of these fails in a way that points at the cause.
   clock before any test runs (`src/test/frames.ts`). Where requests go through the store while
   the clock is fake, install it with `installFakeClock()` from `src/test/outage.ts`: it lets real
   time pass, so a response can arrive.
-- **A test passes whatever ran before it.** Run with `--no-isolate`, Vitest gives the files of a
-  worker one page and one module registry, and with `--sequence.shuffle --sequence.seed=<n>` it
-  runs the tests in a random order: together they find a test that leans on another. A file that
+- **A test passes whatever ran before it.** The files of a worker share one page and one module
+  registry (`isolate: false` in `vitest.config.ts`), so a test must clean up what it adds
+  outside the tree it renders: restore what it spied on or stubbed, and leave no node, style
+  rule or global for the next file to find. With `--sequence.shuffle --sequence.seed=<n>` Vitest
+  runs the tests in a random order. Runs with several seeds help find a test that leans on
+  another, but a pass does not prove there is none: which files meet in a worker depends on
+  timing, so a failure may not repeat. A file that
   empties the registry (`vi.resetModules()`) hands the next file new copies of the app's modules
   on the same page, which is why `src/test/setup.ts` puts its stubs on the page again for each
   file. A pair of tests whose order is the point keeps it with `{ shuffle: false }` on its
@@ -262,6 +266,15 @@ None of these fails in a way that points at the cause.
 
 The traps of jsdom's missing layout are in
 [`docs/engineering-traps.md`](../docs/engineering-traps.md#jsdom).
+
+## Two TypeScripts
+
+**The type gate runs on the native compiler, and everything that loads the compiler's API stays
+on TypeScript 5.** `typescript` (`~5.9.3`) is what `typescript-eslint`, `openapi-typescript` and
+the editor load. `@typescript/native` is `typescript@7.0.2` under another name, and `npm run
+build` calls its binary by path (`node node_modules/@typescript/native/bin/tsc -b`). Both
+packages declare a `tsc` bin and npm links only one into `node_modules/.bin`, so `npx tsc` can
+be either: never call it, and never move `typescript` itself to 7 until those tools support it.
 
 ## `vitest run` does not run the whole suite — it excludes `src/contract/**` and `src/integration/**`
 
