@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, makeStyles, Spinner, Text, tokens } from '@fluentui/react-components';
 import { History24Filled } from '@fluentui/react-icons';
 import { colors, gradients } from '../theme/tokens';
+import { typography } from '../theme/typography';
 import { PageHeader } from '../components/layout/PageHeader';
 import { SegmentedFilter } from '../components/shared/SegmentedFilter';
 import {
@@ -80,8 +81,19 @@ const useStyles = makeStyles({
     background: gradients.brand,
     borderRadius: '12px',
     display: 'flex',
+    flexWrap: 'wrap',
     justifyContent: 'space-around',
     flexShrink: 0,
+  },
+
+  // Fluent's Text is inline; the full-width basis puts the caption on its own line under the figures.
+  summaryCaption: {
+    ...typography.caption,
+    display: 'block',
+    flexBasis: '100%',
+    marginTop: tokens.spacingVerticalS,
+    textAlign: 'center',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   summaryItem: {
@@ -218,6 +230,27 @@ const FILTER_TYPES: Record<Exclude<FilterType, 'all'>, TransactionType[]> = {
   transfers: ['TransferIn', 'TransferOut'],
 };
 
+/** The noun the caption uses for each filter, singular first. */
+const SHOWN_NOUN: Record<FilterType, readonly [string, string]> = {
+  all: ['transaction', 'transactions'],
+  deposits: ['deposit', 'deposits'],
+  withdrawals: ['withdrawal', 'withdrawals'],
+  transfers: ['transfer', 'transfers'],
+};
+
+/**
+ * Names the rows on screen. Nothing when the filter shows none: the empty state under the card
+ * speaks then.
+ */
+function shownTotalsCaption(filter: FilterType, rows: TransactionResponse[]): string | null {
+  if (rows.length === 0) return null;
+  const [singular, plural] = SHOWN_NOUN[filter];
+  const noun = rows.length === 1 ? singular : plural;
+  const counted = `Totals of the ${rows.length} ${noun} shown below.`;
+  const leavesSomeOut = rows.some((row) => row.status === 'Failed' || row.status === 'Reversed');
+  return leavesSomeOut ? `${counted} Failed and reversed ones are not counted.` : counted;
+}
+
 /*
   The argument of the page's one read. The hook, the selector below and Stop's target must all
   name the same cache entry, or the selector reads another entry and Stop stops nothing.
@@ -337,8 +370,8 @@ export function HistoryPage() {
     [data, visiblePages],
   );
 
-  // Client-side tabs over the LOADED pages — the API has no type filter, and the
-  // honest alternative to filtering what we have would be lying about totals.
+  // The API has no type filter. The tabs show this slice of the loaded pages, and the totals
+  // add up these same rows.
   const filteredTransactions = useMemo(() => {
     if (activeFilter === 'all') {
       return transactions;
@@ -352,10 +385,12 @@ export function HistoryPage() {
     [filteredTransactions],
   );
 
-  // The mock-signed trap, killed: amounts are UNSIGNED — direction comes from the
-  // TYPE. Failed/Reversed money never (or no longer) moved, so it stays out.
+  // Amounts are unsigned: direction comes from the type. Failed and reversed rows stay out of
+  // the figures, which add up the rows on screen.
   const summary = useMemo(() => {
-    const settled = transactions.filter((t) => t.status !== 'Failed' && t.status !== 'Reversed');
+    const settled = filteredTransactions.filter(
+      (t) => t.status !== 'Failed' && t.status !== 'Reversed',
+    );
     const income = settled
       .filter((t) => isIncomeType(t.type))
       .reduce((sum, t) => sum + t.amount, 0);
@@ -363,7 +398,9 @@ export function HistoryPage() {
       .filter((t) => !isIncomeType(t.type))
       .reduce((sum, t) => sum + t.amount, 0);
     return { income, expenses, net: income - expenses };
-  }, [transactions]);
+  }, [filteredTransactions]);
+
+  const totalsCaption = shownTotalsCaption(activeFilter, filteredTransactions);
 
   /*
     Under the rows, or under the empty state when the loaded pages hold none: the words of a slow
@@ -430,7 +467,7 @@ export function HistoryPage() {
               onChange={setActiveFilter}
             />
 
-            {/* Summary Card — totals over the loaded, settled transactions */}
+            {/* Summary card — settled totals of the rows on screen */}
             <div className={styles.summaryCard}>
               <div className={styles.summaryItem}>
                 <span className={styles.summaryLabel}>Income</span>
@@ -451,6 +488,11 @@ export function HistoryPage() {
                   {formatCurrency(Math.abs(summary.net))}
                 </span>
               </div>
+              {totalsCaption && (
+                <Text as="p" className={styles.summaryCaption}>
+                  {totalsCaption}
+                </Text>
+              )}
             </div>
 
             {/* Transaction List */}
