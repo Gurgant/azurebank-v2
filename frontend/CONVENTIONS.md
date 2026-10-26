@@ -256,8 +256,9 @@ None of these fails in a way that points at the cause.
   registry (`isolate: false` in `vitest.config.ts`), so a test must clean up what it adds
   outside the tree it renders: restore what it spied on or stubbed, and leave no node, style
   rule or global for the next file to find. With `--sequence.shuffle --sequence.seed=<n>` Vitest
-  runs the tests in a random order, and a pass for any `n` shows that no test leans on another;
-  which files meet in a worker depends on timing, so a failure may not repeat. A file that
+  runs the tests in a random order. Runs with several seeds help find a test that leans on
+  another, but a pass does not prove there is none: which files meet in a worker depends on
+  timing, so a failure may not repeat. A file that
   empties the registry (`vi.resetModules()`) hands the next file new copies of the app's modules
   on the same page, which is why `src/test/setup.ts` puts its stubs on the page again for each
   file. A pair of tests whose order is the point keeps it with `{ shuffle: false }` on its
