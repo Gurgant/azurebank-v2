@@ -12,6 +12,7 @@ import {
   resolveTheme,
   useThemePreference,
 } from './themePreference';
+import { pageStyleRules } from '../test/styleRules';
 
 /**
  * Two things are pinned here, and the second is the one nothing else could catch.
@@ -267,8 +268,7 @@ describe('theme preference', () => {
   describe('the theme provider', () => {
     function declaredMinHeights(element: Element): string[] {
       const classes = new Set(Array.from(element.classList).map((name) => `.${name}`));
-      const fromRules = Array.from(document.querySelectorAll('style'))
-        .flatMap((style) => Array.from(style.sheet?.cssRules ?? []))
+      const fromRules = pageStyleRules()
         .filter((rule): rule is CSSStyleRule => 'selectorText' in rule)
         .filter((rule) => rule.selectorText.split(',').some((s) => classes.has(s.trim())))
         .map((rule) => rule.style.getPropertyValue('min-height'));

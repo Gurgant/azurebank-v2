@@ -1,6 +1,5 @@
 import { makeStyles } from '@fluentui/react-components';
-import { describe, expect, it } from 'vitest';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { describe, expect, it, vi } from 'vitest';
 import { atMedia, breakpoints } from './breakpoints';
 import { compareMinWidthMediaQueries } from './mediaQueryOrder';
 
@@ -135,16 +134,50 @@ describe('the renderer the app actually installs', () => {
    * goes back to emitting `lg` before `sm` — which is exactly the state this PR found. This renders
    * through the app's own provider stack and reads the order out of the document.
    */
-  it('emits min-width rules in ascending order, so the wider breakpoint wins', () => {
-    renderWithProviders(<Probe />);
+  /*
+    The order is read from a head with no media sheet but the ones the app's renderer writes,
+    which is what a page of its own gives the file. Without isolation the page is shared with the
+    files run before, and the renderers they used leave their media sheets there: Fluent's default
+    one sorts its queries as strings, and Griffel puts a new sheet among all the media sheets of
+    the head, whoever wrote them. Measured after other files in the same worker: the probe's own
+    sheets came out as `[1024, 480]`.
 
-    const widths = [...document.head.querySelectorAll<HTMLStyleElement>('style[media]')]
-      .map((el) => /\(min-width:\s*(\d+)px\)/.exec(el.media)?.[1])
-      .filter((width): width is string => width !== undefined)
-      .map(Number);
+    So the sheets already there are taken out for the test and put back where they were after
+    it, and the renderer is a new one, as a page of its own would have: the module registry is
+    emptied so that `ThemeProvider` is evaluated again, and emptied again afterwards, so that no
+    later test is handed a renderer that remembers sheets taken out of the page. The sheets that
+    renderer wrote leave with it: left in the head, they would sit among the media sheets of the
+    files that follow.
+  */
+  it('emits min-width rules in ascending order, so the wider breakpoint wins', async () => {
+    const before = new Set(document.head.querySelectorAll<HTMLStyleElement>('style'));
+    const earlier = [...document.head.querySelectorAll<HTMLStyleElement>('style[media]')].map(
+      (sheet) => {
+        const place = document.createComment('media sheet');
+        sheet.replaceWith(place);
+        return { sheet, place };
+      },
+    );
+    vi.resetModules();
+    try {
+      const { renderWithProviders } = await import('../test/renderWithProviders');
+      renderWithProviders(<Probe />);
 
-    // Non-vacuity first: an empty list sorts as "ascending" and would pass silently.
-    expect(widths).toEqual(expect.arrayContaining([breakpoints.sm, breakpoints.lg]));
-    expect(widths).toEqual([...widths].sort((a, b) => a - b));
+      const widths = [...document.head.querySelectorAll<HTMLStyleElement>('style[media]')]
+        .map((el) => /\(min-width:\s*(\d+)px\)/.exec(el.media)?.[1])
+        .filter((width): width is string => width !== undefined)
+        .map(Number);
+
+      // Non-vacuity first: an empty list sorts as "ascending" and would pass silently.
+      expect(widths).toEqual(expect.arrayContaining([breakpoints.sm, breakpoints.lg]));
+      expect(widths).toEqual([...widths].sort((a, b) => a - b));
+    } finally {
+      vi.resetModules();
+      for (const style of document.head.querySelectorAll<HTMLStyleElement>('style')) {
+        if (!before.has(style)) style.remove();
+      }
+      for (const { sheet, place } of earlier) place.replaceWith(sheet);
+    }
+    expect(new Set(document.head.querySelectorAll<HTMLStyleElement>('style'))).toEqual(before);
   });
 });

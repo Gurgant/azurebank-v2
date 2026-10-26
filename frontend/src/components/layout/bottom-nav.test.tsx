@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { FluentProvider } from '@fluentui/react-components';
 import { describe, expect, it, vi } from 'vitest';
 import { COPY, advance } from '../../test/outage';
+import { pageStyleRules } from '../../test/styleRules';
 import { azureBankLightTheme } from '../../theme/fluentTheme';
 import { setViewportWidth } from '../../test/viewport';
 import { AppLayout } from './AppLayout';
@@ -52,7 +53,7 @@ const renderShell = () =>
  * Griffel emits one class for each property, so the page's box carries one padding-bottom class.
  */
 function shellReservation(): string {
-  const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+  const rules = pageStyleRules();
   const values = [...screen.getByRole('main').classList]
     .flatMap((cls) =>
       rules.filter(

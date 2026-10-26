@@ -243,12 +243,20 @@ None of these fails in a way that points at the cause.
   `setReducedMotion` change either for one test. After any async transition, query with
   `findBy*` or `waitFor`. jsdom reads no CSS media query, so an element a stylesheet hides behind
   a breakpoint is found only with `{ hidden: true }`.
-- **A fake clock can stop jsdom's animation frames for the rest of the file.** RTK hands a
-  request's store changes to its subscribers on the next frame, and jsdom's frame interval,
-  started under a fake clock, dies when the clock is restored. The symptom is a test that passes
-  alone and fails after a fake-clock test in the same file. Where requests go through the store
-  while the clock is fake, install it with `installFakeClock()` from `src/test/outage.ts`. A bare
-  `vi.useFakeTimers()` is safe only while nothing asks for a frame.
+- **jsdom's animation frames run on the real clock.** RTK hands a request's store changes to its
+  subscribers on the next frame, and jsdom's frame interval, started under a fake clock, dies
+  when the clock is restored and stays dead for the rest of the page's life: without isolation,
+  for every file a worker runs after that one. `src/test/setup.ts` starts the frames on the real
+  clock before any test runs (`src/test/frames.ts`). Where requests go through the store while
+  the clock is fake, install it with `installFakeClock()` from `src/test/outage.ts`: it lets real
+  time pass, so a response can arrive.
+- **A test passes whatever ran before it.** Run with `--no-isolate`, Vitest gives the files of a
+  worker one page and one module registry, and with `--sequence.shuffle --sequence.seed=<n>` it
+  runs the tests in a random order: together they find a test that leans on another. A file that
+  empties the registry (`vi.resetModules()`) hands the next file new copies of the app's modules
+  on the same page, which is why `src/test/setup.ts` puts its stubs on the page again for each
+  file. A pair of tests whose order is the point keeps it with `{ shuffle: false }` on its
+  `describe`.
 
 The traps of jsdom's missing layout are in
 [`docs/engineering-traps.md`](../docs/engineering-traps.md#jsdom).

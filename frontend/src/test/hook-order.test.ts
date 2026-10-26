@@ -17,28 +17,33 @@
  * before the teardown it was written to follow.
  */
 
-const order: string[] = [];
+// Each pair below is in order on purpose, and `shuffle: false` keeps it so when the run shuffles.
+describe('the order of afterEach hooks', { shuffle: false }, () => {
+  const order: string[] = [];
 
-afterEach(() => order.push('registered-first'));
-afterEach(() => order.push('registered-second'));
+  afterEach(() => order.push('registered-first'));
+  afterEach(() => order.push('registered-second'));
 
-it('primes the hooks (they run after this test, not before it)', () => {
-  expect(order).toEqual([]);
-});
+  it('primes the hooks (they run after this test, not before it)', () => {
+    expect(order).toEqual([]);
+  });
 
-it('runs afterEach in REVERSE registration order, so registering first runs last', () => {
-  expect(order).toEqual(['registered-second', 'registered-first']);
+  it('runs afterEach in REVERSE registration order, so registering first runs last', () => {
+    expect(order).toEqual(['registered-second', 'registered-first']);
+  });
 });
 
 /*
   `setup.ts` puts the real clock back after every test, so no file has to. The first test leaves
   the clock fake on purpose; the next one must find it real.
 */
-it('leaves the clock fake at the end of a test', () => {
-  vi.useFakeTimers();
-  expect(vi.isFakeTimers()).toBe(true);
-});
+describe('the clock between tests', { shuffle: false }, () => {
+  it('leaves the clock fake at the end of a test', () => {
+    vi.useFakeTimers();
+    expect(vi.isFakeTimers()).toBe(true);
+  });
 
-it('starts the next test on the real clock, which setup.ts put back', () => {
-  expect(vi.isFakeTimers()).toBe(false);
+  it('starts the next test on the real clock, which setup.ts put back', () => {
+    expect(vi.isFakeTimers()).toBe(false);
+  });
 });

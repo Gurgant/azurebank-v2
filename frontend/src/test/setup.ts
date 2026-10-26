@@ -7,6 +7,7 @@ import { __resetDemoCopy } from '../features/demo/demoCopyStorage';
 import { server } from '../mocks/server';
 import { resetMockState, seedMockSession } from '../mocks/state';
 import { resetDemoMode } from './demoMode';
+import { keepAnimationFramesOnTheRealClock } from './frames';
 import { installKeyborgBeforeUserEvent } from './keyborg';
 import { installLayoutStubs } from './layout';
 import {
@@ -30,9 +31,20 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 // motion reported as PREFERRED (which is what keeps Fluent's dialog transitions synchronous, and
 // therefore what keeps role queries from missing buttons that are really there). The reasoning for
 // both, and the flake each one prevents, lives beside the code that implements them.
+//
+// Assigned for every file, never only when missing: a file that empties the module registry
+// (`not-found.test.tsx` does) hands the next file of the worker a new `test/viewport.ts`, and
+// without isolation the same page. A stub kept from the old copy answers from the old copy's
+// width and tells the old copy's listeners, so `setViewportWidth` would reach nothing.
 window.innerWidth = TEST_VIEWPORT_WIDTH;
 window.innerHeight = TEST_VIEWPORT_HEIGHT;
-window.matchMedia ??= matchMediaStub;
+window.matchMedia = matchMediaStub;
+
+// A file starts on an empty page, as it does with isolation, where each file has a page of its
+// own. Without isolation the page is the worker's, and a node one file left in it is the next's.
+// Measured: `AppToaster.test.tsx` ends with five portal mount nodes still in the body, which
+// unmounting does not remove, and `themePreference.test.ts` reads the first one it finds.
+document.body.replaceChildren();
 
 // jsdom does no layout either, and unlike the two stubs above that is not a missing API — it is a
 // WRONG ANSWER: `offsetParent === null` and a 0x0 rect are what a real browser reports for an
@@ -48,6 +60,12 @@ installLayoutStubs();
 // and an open dialog then loses focus to the page 100ms later. `test/keyborg.ts` has the chain and
 // the measurements; installing keyborg here, first, keeps its wrapper under user-event's.
 installKeyborgBeforeUserEvent();
+
+// jsdom's animation frames run on an interval that a fake clock kills for the rest of the page's
+// life, and RTK hands a store change to the page on the next frame. Started here, on the real
+// clock and before any test can fake it, they keep running whatever the tests do with the clock,
+// in this file and in every file that shares the page. `test/frames.ts` has the chain.
+keepAnimationFramesOnTheRealClock();
 
 /*
   The OTHER half of the timing budget (the vitest half lives in vitest.config.ts).
