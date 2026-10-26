@@ -266,6 +266,15 @@ None of these fails in a way that points at the cause.
 The traps of jsdom's missing layout are in
 [`docs/engineering-traps.md`](../docs/engineering-traps.md#jsdom).
 
+## Two TypeScripts
+
+**The type gate runs on the native compiler, and everything that loads the compiler's API stays
+on TypeScript 5.** `typescript` (`~5.9.3`) is what `typescript-eslint`, `openapi-typescript` and
+the editor load. `@typescript/native` is `typescript@7.0.2` under another name, and `npm run
+build` calls its binary by path (`node node_modules/@typescript/native/bin/tsc -b`). Both
+packages declare a `tsc` bin and npm links only one into `node_modules/.bin`, so `npx tsc` can
+be either: never call it, and never move `typescript` itself to 7 until those tools support it.
+
 ## `vitest run` does not run the whole suite — it excludes `src/contract/**` and `src/integration/**`
 
 The suite is five commands: `npm test`, `test:contract:mock`, `test:contract:real`,
