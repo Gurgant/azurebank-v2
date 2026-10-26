@@ -1005,6 +1005,26 @@ describe('the sign-in page on the demo, in a browser that keeps no copy', () => 
     expect(requests.claims).toBe(1);
   });
 
+  it('pressed again after a refusal: the second refusal takes the place of the first', async () => {
+    const answers = [
+      () =>
+        problem({
+          status: 500,
+          errorCode: 'INTERNAL_ERROR',
+          detail: 'An unexpected error occurred. Please try again later.',
+        }),
+      () => new HttpResponse(null, { status: 500 }),
+    ];
+    const { requests } = await openSignInPage({ claim: () => answers.shift()?.() });
+
+    await userEvent.click(tryTheDemo());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.claimServerProblem]));
+
+    await userEvent.click(tryTheDemo());
+    await waitFor(() => expect(requests.claims).toBe(2));
+    expect(alerts()).toStrictEqual([WORDS.claimServerProblem]);
+  });
+
   it.each([
     {
       answer: 'a non-JSON 502',

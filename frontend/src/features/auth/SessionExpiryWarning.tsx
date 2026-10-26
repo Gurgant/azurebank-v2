@@ -130,11 +130,12 @@ const useStyles = makeStyles({
  * sign-in, which answers a locked account as it answers a wrong password, whatever password it is
  * sent, so the lock is never an oracle for a guesser (ADR-0012 decision 3). No line here says that
  * a lock stands, then, and each 401 says the rule that tells the holder of the right password to
- * wait.
+ * wait. A 400, a password the form's rules refuse before it is checked, is answered as a 401,
+ * a kept copy's lines included: to the visitor it is the same refusal.
  *
  * `kept` is the copy this browser keeps when its owner's button sent the kept password, and
- * `null` when a password was typed. It changes the 401's line and no other. A password nobody
- * typed was not mistyped: the API answers a copy that has ended, and one that is locked, as it
+ * `null` when a password was typed. It changes the line of a 401 or a 400 and no other. A
+ * password nobody typed was not mistyped: the API answers a copy that has ended, and one that is locked, as it
  * answers a wrong password. The copy's own end tells which, by this browser's clock when the
  * answer comes: past it the copy has ended; before it sign-in is paused, or the copy was closed
  * early. The copy stays kept all the same. Forgetting it here would put a password field in front
