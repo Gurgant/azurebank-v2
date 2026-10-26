@@ -408,10 +408,12 @@ export function TransferPage() {
 
   const focusAmountOnForm = useRef(false);
   useEffect(() => {
-    // The amount input is unmounted on the PIN step: wait for the form and its RHF ref.
-    if (wizard.step !== 'form' || !focusAmountOnForm.current) return;
+    // The amount input is unmounted on the PIN step: wait for the form and its RHF ref. The flag
+    // is spent by the first step change after it is set, so a `toForm()` that refused under a live
+    // key cannot move focus on some later, unrelated return to the form.
+    if (!focusAmountOnForm.current) return;
     focusAmountOnForm.current = false;
-    setFocus('amount');
+    if (wizard.step === 'form') setFocus('amount');
   }, [wizard.step, setFocus]);
 
   const watchedAccountId = watch('fromAccountId');
@@ -831,8 +833,8 @@ export function TransferPage() {
       setAuthorizationHeld(false);
     } else if (refusal?.errorCode === 'DAILY_LIMIT_EXCEEDED') {
       /*
-          The daily outgoing-transfer bound (ADR-0050). The expiry arm's exact shape, for three
-          reasons of its own — and NO `setPinError`.
+          The daily outgoing-transfer bound (ADR-0050). The expiry arm's clean-up, for three reasons
+          of its own — and NO `setPinError` — and then a move the expiry arm does not make.
 
           NO RED BOXES. A1 measured `PinAccessFailedCount` 0 → 0 after three wrong-PIN over-limit
           mints, with 0 authorisations minted: the rung runs before the PIN is ever verified, so
@@ -847,7 +849,8 @@ export function TransferPage() {
           harmless is exactly what the arm above refuses to do.
 
           RETURN TO THE AMOUNT. The amount is what the visitor has to change, and a PIN cannot
-          help. The banner is 'input'-scoped, so it survives the move to the form.
+          help. The banner is 'input'-scoped, so it survives the move to the form. `toForm()`
+          refuses under a live key, and then the visitor stays here, as before this change.
 
           Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
           leaves the mint body either way, and every non-PIN refusal at this rung already retains it

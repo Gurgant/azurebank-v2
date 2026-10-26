@@ -204,7 +204,9 @@ describe('the client mints an authorisation and presents it', () => {
     );
 
     // (b) The amount is what must change, so the form takes focus and the PIN boxes disappear.
-    // Returning to the PIN step must show empty boxes without suggesting a wrong attempt.
+    // Once the page has left the PIN step, the refusal's own clean-up of the boxes cannot be seen:
+    // Continue clears and remounts them (`onReviewed`). The tail below checks that the way back
+    // to the PIN step still starts empty and unmarked, not the refusal's clean-up.
     const amount = await screen.findByLabelText('Transfer amount');
     await waitFor(() => expect(amount).toHaveFocus());
     expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();

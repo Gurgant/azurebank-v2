@@ -30,69 +30,6 @@ import { useIdempotentMutation, type IdempotentTrigger } from '../hooks/useIdemp
 import type { BaseQueryApi } from '@reduxjs/toolkit/query';
 import { problemBaseQuery, toApiProblem, type ApiProblem } from './problemBaseQuery';
 import { classifyMoneyProblem } from './moneyProblem';
-import { formatDateTime } from '../utils/format';
-
-describe('the daily transfer refusal copy', () => {
-  const opts = {
-    messages: {},
-    fallback: 'Transfer failed. Please try again.',
-    phase: 'send' as const,
-  };
-  const reset = '2026-09-08T00:00:00Z';
-
-  it.each([
-    {
-      name: 'over with reset',
-      used: 4900,
-      resetsAt: reset,
-      text: `That's more than you can send today. You can send up to €100.00 more before the limit resets on ${formatDateTime(reset)}.`,
-    },
-    {
-      name: 'over without reset',
-      used: 4900,
-      resetsAt: undefined,
-      text: "That's more than you can send today. You can send up to €100.00 more today.",
-    },
-    {
-      name: 'reached with reset',
-      used: 5000,
-      resetsAt: reset,
-      text: `You've reached today's transfer limit of €5,000.00. You can send again after it resets on ${formatDateTime(reset)}.`,
-    },
-    {
-      name: 'reached without reset',
-      used: 5100,
-      resetsAt: undefined,
-      text: "You've reached today's transfer limit of €5,000.00.",
-    },
-  ])('$name', ({ used, resetsAt, text }) => {
-    expect(
-      classifyMoneyProblem(
-        { status: 422, errorCode: 'DAILY_LIMIT_EXCEEDED', limit: 5000, used, resetsAt },
-        opts,
-      ),
-    ).toEqual({ kind: 'message', scope: 'input', text });
-  });
-
-  it.each([
-    { limit: undefined, used: 4900 },
-    { limit: 5000, used: undefined },
-  ])('keeps the input scope without both figures: %j', (figures) => {
-    const refusal: ApiProblem = { status: 422, errorCode: 'DAILY_LIMIT_EXCEEDED', ...figures };
-    expect(
-      classifyMoneyProblem({ ...refusal, detail: 'Daily transfer limit exceeded.' }, opts),
-    ).toEqual({
-      kind: 'message',
-      scope: 'input',
-      text: 'Daily transfer limit exceeded.',
-    });
-    expect(classifyMoneyProblem(refusal, opts)).toEqual({
-      kind: 'message',
-      scope: 'input',
-      text: opts.fallback,
-    });
-  });
-});
 
 /**
  * The six flagship policy tests (ADR-0022) — the data-layer contract as executable

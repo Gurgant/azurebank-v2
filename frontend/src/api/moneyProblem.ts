@@ -256,11 +256,13 @@ export function classifyMoneyProblem(
     // `resetsAt` is a UTC instant and `formatDateTime` renders it in the VIEWER's zone. That is
     // correct for an instant; it is also why a test pinning the rendered date must pin TZ.
     const resetDate = typeof resetsAt === 'string' ? formatDateTime(resetsAt) : null;
-    const headroomSentence =
+    const refusal =
       limit - used > 0
-        ? `That's more than you can send today. You can send up to ${formatCurrency(limit - used)} more ${resetDate ? `before the limit resets on ${resetDate}` : 'today'}.`
-        : `You've reached today's transfer limit of ${formatCurrency(limit)}.${resetDate ? ` You can send again after it resets on ${resetDate}.` : ''}`;
-    return { kind: 'message', scope: 'input', text: headroomSentence };
+        ? `That's more than you can send today. You can send up to ${formatCurrency(limit - used)} more ` +
+          (resetDate ? `before the limit resets on ${resetDate}.` : 'today.')
+        : `You've reached today's transfer limit of ${formatCurrency(limit)}.` +
+          (resetDate ? ` You can send again after it resets on ${resetDate}.` : '');
+    return { kind: 'message', scope: 'input', text: refusal };
   }
   if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
     return { kind: 'message', text: 'Insufficient funds for this transfer.', scope: 'input' };

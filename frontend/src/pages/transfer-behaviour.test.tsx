@@ -571,8 +571,8 @@ describe('money flows — the behaviour the unification must preserve', () => {
       figure-bearing refusal, and its structural neighbour in the shared tail.
 
       Deliberately NOT a new `src/api/moneyProblem.test.ts`: that module has never had one, every
-      branch it owns is proven through page tests. The classifier's copy variants are also checked
-      in the existing policies suite.
+      branch it owns is proven through this page suite, and a unit file would be a second oracle for
+      one branch (plus a `test:tripwire` bookkeeping decision).
 
       The refusal body is MEASURED — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's
       working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev,
@@ -633,6 +633,29 @@ describe('money flows — the behaviour the unification must preserve', () => {
         const amount = await screen.findByLabelText('Transfer amount');
         await waitFor(() => expect(amount).toHaveFocus());
         expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      {
+        used: 4900,
+        says: "That's more than you can send today. You can send up to €100.00 more today.",
+      },
+      { used: 5000, says: "You've reached today's transfer limit of €5,000.00." },
+    ])(
+      'without a reset instant, used $used ends the sentence at "today"',
+      async ({ used, says }) => {
+        const withoutReset: Partial<typeof DAILY_MEMBERS> = { ...DAILY_MEMBERS };
+        delete withoutReset.resetsAt;
+        failWith('DAILY_LIMIT_EXCEEDED', 422, {
+          detail: 'Daily transfer limit exceeded.',
+          extensions: { ...withoutReset, used },
+        });
+        await externalToReview();
+        await confirmWithPin();
+
+        expect(await screen.findByText(says)).toBeInTheDocument();
+        expect(screen.queryByText(/resets on/)).not.toBeInTheDocument();
       },
     );
 
