@@ -58,14 +58,18 @@ function seedTempFund() {
 
 function renderDialog(account = TEMP_FUND, store: TestStore = makeTestStore()) {
   const onClose = vi.fn();
+  const onDeleted = vi.fn();
   const { router } = renderWithProviders(
     <Routes>
-      <Route path="/" element={<DeleteAccountDialog account={account} onClose={onClose} />} />
+      <Route
+        path="/"
+        element={<DeleteAccountDialog account={account} onClose={onClose} onDeleted={onDeleted} />}
+      />
       <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'], store },
   );
-  return { onClose, store, router };
+  return { onClose, onDeleted, store, router };
 }
 
 /** Count every GET /api/accounts the store makes from now on — a list-tag invalidation refetches. */
@@ -185,11 +189,13 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
         return HttpResponse.json({ message: 'Account deleted successfully' }, { status: 200 });
       }),
     );
-    const { onClose } = renderDialog();
+    const { onClose, onDeleted } = renderDialog();
     await reachPinStep();
     await enterPin();
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    expect(onDeleted).toHaveBeenCalledWith(TEMP_FUND.name);
     expect(seen.map((r) => r.kind)).toEqual(['mint', 'delete']);
     const [mint, del] = seen;
     // The PIN: in the mint's body, exactly, and nowhere else.
@@ -216,11 +222,13 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     const store = makeTestStore();
     await store.dispatch(apiSlice.endpoints.getAccounts.initiate()).unwrap();
     const gets = countListGets();
-    const { onClose } = renderDialog(TEMP_FUND, store);
+    const { onClose, onDeleted } = renderDialog(TEMP_FUND, store);
     await reachPinStep();
     await enterPin();
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    expect(onDeleted).toHaveBeenCalledWith(TEMP_FUND.name);
     await waitFor(() => expect(gets.lists).toBe(1)); // the success-path invalidatesTags refetch
     expect(mockState.accounts.some((a) => a.id === TEMP_FUND.id)).toBe(false);
     const minted = [...mockState.stepUpAuthorizations.values()];
@@ -263,7 +271,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
         problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN.' }),
       ),
     );
-    const { onClose } = renderDialog(TEMP_FUND, store);
+    const { onClose, onDeleted } = renderDialog(TEMP_FUND, store);
     await reachPinStep();
     await enterPin();
 
@@ -272,6 +280,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(await screen.findByText('Invalid PIN.')).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
     expect(store.getState().auth.status).toBe('authenticated');
   });
 
@@ -443,7 +452,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     */
     const rainyDay = mockState.accounts[1];
     expect(rainyDay.balance).toBe(830);
-    const { onClose } = renderDialog({ id: rainyDay.id, name: rainyDay.name });
+    const { onClose, onDeleted } = renderDialog({ id: rainyDay.id, name: rainyDay.name });
     await reachPinStep();
     await enterPin('000000');
 
@@ -456,6 +465,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(mockState.pinAttempts).toBe(0);
     expect(mockState.stepUpAuthorizations.size).toBe(0);
     expect(onClose).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 
   it('PRIMARY_ACCOUNT_DELETE from the mint keeps the dialog open with its own sentence — M3', async () => {
@@ -506,11 +516,13 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
         }),
       ),
     );
-    const { onClose } = renderDialog(TEMP_FUND, store);
+    const { onClose, onDeleted } = renderDialog(TEMP_FUND, store);
     await reachPinStep();
     await enterPin();
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    expect(onDeleted).toHaveBeenCalledWith(TEMP_FUND.name);
     await waitFor(() => expect(gets.lists).toBe(1)); // the refetch of the refusal's own tag
   });
 

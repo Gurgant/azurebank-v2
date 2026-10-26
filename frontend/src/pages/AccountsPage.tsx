@@ -9,6 +9,8 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  MessageBar,
+  MessageBarBody,
   Spinner,
   Text,
   tokens,
@@ -31,6 +33,7 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
 import type { AccountResponse } from '../features/api/apiSlice';
 import { useGetAccountsQuery, useSetPrimaryAccountMutation } from '../features/api/apiSlice';
+import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { usePageRead } from '../hooks/usePageRead';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { AccountNumberField } from '../components/AccountNumberField';
@@ -41,7 +44,13 @@ import {
   RenameAccountDialog,
   WithdrawDialog,
 } from '../components';
-import { AlertSlot, ReadErrorBar, useProblemToast, WaitHint } from '../components/feedback';
+import {
+  AlertSlot,
+  ReadErrorBar,
+  StatusSlot,
+  useProblemToast,
+  WaitHint,
+} from '../components/feedback';
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -371,6 +380,15 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
+/** The name inside a delete sentence. No other sentence on this page ends this way. */
+function nameInDeleteSentence(sentence: string | null): string | undefined {
+  const suffix = '" was deleted.';
+  if (sentence !== null && sentence.startsWith('"') && sentence.endsWith(suffix)) {
+    return sentence.slice(1, -suffix.length);
+  }
+  return undefined;
+}
+
 function getAccountIcon(type: AccountType) {
   switch (type) {
     case 'Savings':
@@ -412,6 +430,16 @@ export function AccountsPage() {
   const [selectedAccount, setSelectedAccount] = useState<LegacyDialogAccount | null>(null);
   const [renameTarget, setRenameTarget] = useState<AccountResponse | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
+  // One sentence for the last action that finished. The next action clears it as it starts.
+  const [sentence, setSentence] = useState<string | null>(null);
+
+  // As the dialog unmounts, useReturnFocus gives focus back to the card's menu button, still in
+  // the page until the list read answers. Focus falls to body when the card leaves, and that is
+  // the moment to land on the heading. The sentence on its own is earlier than that.
+  const deletedName = nameInDeleteSentence(sentence);
+  const headingRef = useFocusWhenLost<HTMLHeadingElement>(
+    deletedName !== undefined && !accounts.some((account) => account.name === deletedName),
+  );
 
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
   // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
@@ -430,12 +458,14 @@ export function AccountsPage() {
 
   const handleDeposit = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    setSentence(null);
     setSelectedAccount(toLegacy(account));
     setIsDepositOpen(true);
   };
 
   const handleWithdraw = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    setSentence(null);
     setSelectedAccount(toLegacy(account));
     setIsWithdrawOpen(true);
   };
@@ -444,10 +474,12 @@ export function AccountsPage() {
   // would reach the browser's history, the server's logs and wherever the link is pasted.
   const handleTransfer = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    setSentence(null);
     navigate('/transfer', { state: { fromAccountId: account.id } });
   };
 
   const handleAddAccount = () => {
+    setSentence(null);
     setIsCreateOpen(true);
   };
 
@@ -467,8 +499,10 @@ export function AccountsPage() {
   // (two rows flip, so the whole tag family refetches). Failures have no owning
   // surface here — they go through the problem-toast pipeline.
   const handleSetPrimary = (account: AccountResponse) => {
+    setSentence(null);
     setPrimaryAccount(account.id)
       .unwrap()
+      .then(() => setSentence(`"${account.name}" is now your primary account.`))
       .catch((caught) => showProblem(caught as ApiProblem));
   };
 
@@ -498,7 +532,7 @@ export function AccountsPage() {
         block was also the last page-sized brand fill left in the signed-in app; the shell paints the
         canvas now, and the dashboard's hero is a white card.
       */}
-      <PageHeader />
+      <PageHeader headingRef={headingRef} />
 
       {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainContent}>
@@ -536,6 +570,14 @@ export function AccountsPage() {
           )}
         </AlertSlot>
 
+        <StatusSlot>
+          {sentence && (
+            <MessageBar intent="success">
+              <MessageBarBody>{sentence}</MessageBarBody>
+            </MessageBar>
+          )}
+        </StatusSlot>
+
         {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
             exists yet (it previously bounced off the catch-all); management flows come later. */}
         {!waiting && !problem && (
@@ -561,16 +603,31 @@ export function AccountsPage() {
                     </MenuTrigger>
                     <MenuPopover>
                       <MenuList>
-                        <MenuItem onClick={() => setRenameTarget(account)}>Rename</MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            setSentence(null);
+                            setRenameTarget(account);
+                          }}
+                        >
+                          Rename
+                        </MenuItem>
                         {!account.isPrimary && (
-                          <MenuItem onClick={() => handleSetPrimary(account)}>
+                          <MenuItem
+                            onClick={() => {
+                              setSentence(null);
+                              handleSetPrimary(account);
+                            }}
+                          >
                             Set as primary
                           </MenuItem>
                         )}
                         <MenuDivider />
                         <MenuItem
                           className={styles.deleteMenuItem}
-                          onClick={() => setDeleteTarget(account)}
+                          onClick={() => {
+                            setSentence(null);
+                            setDeleteTarget(account);
+                          }}
                         >
                           Delete
                         </MenuItem>
@@ -649,11 +706,18 @@ export function AccountsPage() {
           under load (the surface never re-mounts — seen as a CI-only flake); a
           fresh instance per open has virgin presence state and starts clean by
           construction. */}
-      {isCreateOpen && <CreateAccountDialog open onClose={() => setIsCreateOpen(false)} />}
+      {isCreateOpen && (
+        <CreateAccountDialog
+          open
+          onDone={(name) => setSentence(`Your new account "${name}" is open.`)}
+          onClose={() => setIsCreateOpen(false)}
+        />
+      )}
 
       {renameTarget && (
         <RenameAccountDialog
           account={{ id: renameTarget.id, name: renameTarget.name }}
+          onDone={(name) => setSentence(`"${renameTarget.name}" is now called "${name}".`)}
           onClose={() => setRenameTarget(null)}
         />
       )}
@@ -664,6 +728,7 @@ export function AccountsPage() {
       {deleteTarget && (
         <DeleteAccountDialog
           account={{ id: deleteTarget.id, name: deleteTarget.name }}
+          onDeleted={(name) => setSentence(`"${name}" was deleted.`)}
           onClose={() => setDeleteTarget(null)}
         />
       )}

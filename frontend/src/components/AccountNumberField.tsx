@@ -69,7 +69,8 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
   const showProblem = useProblemToast();
   const [revealAccountNumber, { isLoading, reset }] = useRevealAccountNumberMutation();
   const [fullNumber, setFullNumber] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  // 'copied' for the two seconds after a copy; 'hiddenAgain' only after the timer re-hides.
+  const [notice, setNotice] = useState<'copied' | 'hiddenAgain' | null>(null);
 
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -87,15 +88,20 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
   const revealed = fullNumber !== null;
   const lastTwo = account.accountNumber.slice(-2);
 
-  const hide = () => {
+  // Hide passes null: the button says nothing. The timer passes 'hiddenAgain', and that is the
+  // only path that does. Either clears a "Copied" that was still showing.
+  const conceal = (after: 'hiddenAgain' | null) => {
     clearTimeout(hideTimer.current);
     clearTimeout(copiedTimer.current);
     setFullNumber(null);
-    setCopied(false);
+    setNotice(after);
     reset();
   };
 
+  const hide = () => conceal(null);
+
   const reveal = async () => {
+    setNotice(null);
     try {
       const result = await revealAccountNumber(account.id).unwrap();
       setFullNumber(result.accountNumber);
@@ -103,7 +109,7 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
       // only in this component's transient state (ASVS 14.3.1), never in Redux.
       reset();
       clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(hide, REVEAL_TIMEOUT_MS);
+      hideTimer.current = setTimeout(() => conceal('hiddenAgain'), REVEAL_TIMEOUT_MS);
     } catch (error) {
       // A cancelled PIN step-up is a benign no-op — stay masked, no toast. Anything else is real.
       const problem = error as ApiProblem;
@@ -115,11 +121,12 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
 
   const copy = async () => {
     if (fullNumber === null) return;
+    setNotice(null);
+    clearTimeout(copiedTimer.current);
     try {
       await navigator.clipboard.writeText(fullNumber);
-      setCopied(true);
-      clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied(false), COPIED_TIMEOUT_MS);
+      setNotice('copied');
+      copiedTimer.current = setTimeout(() => setNotice(null), COPIED_TIMEOUT_MS);
     } catch {
       // Clipboard blocked (permissions / insecure context): the number is still on screen to copy
       // by hand, so fail silently rather than surface a scary error.
@@ -190,11 +197,16 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
         )}
       </div>
 
-      {copied && (
-        <Text role="status" className={styles.copied}>
-          Copied
-        </Text>
-      )}
+      {/* One status for the row, there from the first render. "Copied" is on screen for two
+          seconds. The re-hide sentence uses the clipped style, and only the timer says it:
+          Reveal, Copy and Hide clear it. Empty, it is out of the flow. */}
+      <Text role="status" className={notice === 'copied' ? styles.copied : styles.spoken}>
+        {notice === 'copied'
+          ? 'Copied'
+          : notice === 'hiddenAgain'
+            ? 'Account number hidden again.'
+            : null}
+      </Text>
     </div>
   );
 }

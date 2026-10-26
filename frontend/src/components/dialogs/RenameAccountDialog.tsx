@@ -35,6 +35,8 @@ export interface RenameAccountDialogProps {
   /** The account being renamed — the parent mounts this dialog per open. */
   account: { id: string; name: string };
   onClose: () => void;
+  /** The saved account's name, just before the dialog closes. Never on a refusal. */
+  onDone?: (name: string) => void;
 }
 
 /**
@@ -46,7 +48,7 @@ export interface RenameAccountDialogProps {
  * was closed elsewhere: the dialog closes, as the delete dialog does, the visitor is told in
  * the app's toast outlet, and the list is read again by the mutation's own tags (apiSlice).
  */
-export function RenameAccountDialog({ account, onClose }: RenameAccountDialogProps) {
+export function RenameAccountDialog({ account, onClose, onDone }: RenameAccountDialogProps) {
   useReturnFocus();
   const sayAccountClosed = useAccountClosedToast();
   const [renameAccount, { isLoading, error }] = useRenameAccountMutation();
@@ -72,7 +74,8 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
 
   const onSubmit = async (data: RenameAccountFormData) => {
     try {
-      await renameAccount({ id: account.id, body: { name: data.name } }).unwrap();
+      const saved = await renameAccount({ id: account.id, body: { name: data.name } }).unwrap();
+      onDone?.(saved.name);
       onClose();
     } catch (caught) {
       const rejected = caught as ApiProblem;

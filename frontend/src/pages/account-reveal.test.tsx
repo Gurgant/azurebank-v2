@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
@@ -25,6 +25,13 @@ const MASKED_MAIN = 'AB-••••-••••-90';
 const FULL_MAIN = 'AB-1234-5678-90';
 
 const revealName = `Reveal full account number for ${MAIN}`;
+
+/** The number's own row: the button, then the box of buttons, then the row. */
+function numberRow(buttonName: string) {
+  const row = screen.getByRole('button', { name: buttonName }).parentElement?.parentElement;
+  if (!row) throw new Error(`no row for ${buttonName}`);
+  return row;
+}
 
 beforeEach(() => {
   // Every scenario starts un-elevated (level 1); the elevated cases opt in explicitly. Pinning it
@@ -144,10 +151,15 @@ describe('account number reveal (ADR-0020)', () => {
     await user.click(await screen.findByRole('button', { name: revealName }));
     await screen.findByText(FULL_MAIN);
 
+    const field = numberRow(`Hide account number for ${MAIN}`);
+    const beforeCopy = within(field).getByRole('status');
+    expect(beforeCopy).toBeEmptyDOMElement();
+    expect(getComputedStyle(beforeCopy).position).toBe('absolute');
+
     await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
 
     expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
-    expect(await screen.findByRole('status')).toHaveTextContent('Copied');
+    expect(within(field).getByRole('status')).toHaveTextContent('Copied');
   });
 
   it('auto-rehides the number after the reveal timeout', async () => {
@@ -165,6 +177,17 @@ describe('account number reveal (ADR-0020)', () => {
 
     await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
+    expect(within(numberRow(revealName)).getByRole('status')).toHaveTextContent(
+      'Account number hidden again.',
+    );
+
+    await user.click(screen.getByRole('button', { name: revealName }));
+    expect(await screen.findByText(FULL_MAIN)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Hide account number for ${MAIN}` }));
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    expect(within(numberRow(revealName)).getByRole('status')).not.toHaveTextContent(
+      'Account number hidden again.',
+    );
   });
 
   it('the PIN modal says what the PIN is asked for, and no transfer', async () => {

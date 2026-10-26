@@ -66,6 +66,8 @@ const usePinStyles = makeStyles({
 export interface DeleteAccountDialogProps {
   account: { id: string; name: string };
   onClose: () => void;
+  /** The account's name, just before the dialog closes because it is gone. Never on a refusal. */
+  onDeleted?: (name: string) => void;
 }
 
 /**
@@ -88,7 +90,7 @@ export interface DeleteAccountDialogProps {
  * cannot be undone, and it must not look like Deposit's blue. No success screen: the dialog
  * closes and the list refetches through the mutation's own tags.
  */
-export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogProps) {
+export function DeleteAccountDialog({ account, onClose, onDeleted }: DeleteAccountDialogProps) {
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
   const dangerButton = useDangerButtonStyles();
@@ -173,6 +175,7 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
         own tags on this answer, the mint's and the DELETE's alike (apiSlice.ts), so the card
         leaves the page behind the dialog.
       */
+      onDeleted?.(account.name);
       onClose();
     } else if (isServiceOutage(problem)) {
       /*
@@ -219,7 +222,9 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
         id: account.id,
         stepUpAuthorizationId: minted.authorizationId,
       }).unwrap();
-      // The mutation's own invalidatesTags refreshes the list; nothing to show here.
+      // The mutation's own invalidatesTags refreshes the list. The page is told the name, then
+      // the dialog closes.
+      onDeleted?.(account.name);
       onClose();
     } catch (caught) {
       handleRefusal(caught as ApiProblem);

@@ -8,6 +8,7 @@ import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { enterPin } from '../test/pinFlow';
 import { paintedIn } from '../test/fluentStates';
+import { expectNoNestedLiveRegions } from '../test/liveRegions';
 import { AccountsPage } from './AccountsPage';
 
 /**
@@ -19,6 +20,12 @@ import { AccountsPage } from './AccountsPage';
 
 async function openMenu(accountName: string) {
   await userEvent.click(screen.getByRole('button', { name: `Account actions for ${accountName}` }));
+}
+
+/** The sentence, inside the page's polite slot. The bar's own name is not the sentence. */
+function saidInTheSlot(sentence: string) {
+  const words = screen.getByText(sentence, { exact: true });
+  expect(words.closest('[role="status"]')).not.toBeNull();
 }
 
 describe('rename account (A5)', () => {
@@ -37,8 +44,11 @@ describe('rename account (A5)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     // The row's {Account,id} tag invalidates the list — never a hand-patched cache.
-    expect(await screen.findByText('Storm Fund')).toBeInTheDocument();
-    expect(screen.queryByText('Rainy Day')).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Storm Fund' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Rainy Day' })).not.toBeInTheDocument();
+    saidInTheSlot('"Rainy Day" is now called "Storm Fund".');
   });
 
   it('rejects a too-short name client-side before any request', async () => {
@@ -86,6 +96,7 @@ describe('set primary (A6)', () => {
       expect(names[0]).toBe('Rainy Day');
     });
     expect(screen.getAllByText('Primary')).toHaveLength(1);
+    saidInTheSlot('"Rainy Day" is now your primary account.');
 
     // The new primary's menu no longer offers the action.
     await openMenu('Rainy Day');
@@ -125,7 +136,13 @@ describe('delete account (A7)', () => {
     // The sixth digit is the submit: mint, then DELETE with the minted id.
     await enterPin();
 
-    await waitFor(() => expect(screen.queryByText('Temp Fund')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Temp Fund' })).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 1, name: 'Accounts' })).toHaveFocus(),
+    );
+    saidInTheSlot('"Temp Fund" was deleted.');
     // The rest of the list is untouched.
     expect(screen.getByText('Main Account')).toBeInTheDocument();
     expect(screen.getAllByText('Primary')).toHaveLength(1);
@@ -189,6 +206,27 @@ describe('delete account (A7)', () => {
     expect(mockState.pinAttempts).toBe(0);
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  });
+});
+
+describe('a sentence for what the action did', () => {
+  it('stays until the next action starts, and the bar is not nested in another live region', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+
+    expect(
+      await screen.findByText('"Rainy Day" is now your primary account.', { exact: true }),
+    ).toBeInTheDocument();
+    saidInTheSlot('"Rainy Day" is now your primary account.');
+    expectNoNestedLiveRegions();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Rainy Day' }));
+    expect(
+      screen.queryByText('"Rainy Day" is now your primary account.', { exact: true }),
+    ).not.toBeInTheDocument();
   });
 });
 
