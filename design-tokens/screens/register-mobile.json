@@ -1,4 +1,5 @@
 {
+  "$note": "History: this is the Figma export from before U1, kept as a record and not maintained. It still names #006DE2, the blue this project measured against the mark and rejected (see docs/brand-assets.md). The code in frontend/src/theme governs, and design-tokens/tokens.json is generated from it.",
   "screen": {
     "name": "Register - Mobile",
     "device": "iPhone 13/14",
