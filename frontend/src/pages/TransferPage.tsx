@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import {
   makeStyles,
@@ -29,7 +30,8 @@ import {
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useAppDispatch } from '../app/hooks';
+import { useAppDispatch, useAppSelector } from '../app/hooks';
+import { selectCurrentUser } from '../features/auth/authSlice';
 import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
@@ -230,6 +232,7 @@ export function TransferPage() {
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
 
   const dispatch = useAppDispatch();
+  const user = useAppSelector(selectCurrentUser);
 
   /*
     The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
@@ -385,6 +388,7 @@ export function TransferPage() {
 
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [ownHandle, setOwnHandle] = useState(false);
   const [success, setSuccess] = useState<SuccessData | null>(null);
   /*
     The receipt's title takes the focus the send lost: the PIN boxes are disabled for the send, so
@@ -524,7 +528,18 @@ export function TransferPage() {
     if (!tag) return;
     setRecipient(null);
     setRecipientError(null);
+    setOwnHandle(false);
     onBodyEdit();
+    if (user && tag.toLowerCase() === normalizeAzureTag(user.azureTag).toLowerCase()) {
+      // A lookup's wait commits the empty alert before its answer. Nothing waits here, and React
+      // would fold the two into one render: the same sentence again would change nothing to say.
+      flushSync(() => setRecipientError(null));
+      setOwnHandle(true);
+      setRecipientError(
+        'That\'s your own handle. To move money between your own accounts, use "Between your own accounts" below.',
+      );
+      return;
+    }
     try {
       const request = lookup(tag);
       runningLookup.current = request;
@@ -588,6 +603,9 @@ export function TransferPage() {
 
     While the check runs "Verify" is busy and cannot be pressed, so the line does not ask for it.
 
+    The visitor's own handle is refused locally to spare a rate-limited lookup (ADR-0014).
+    Its flag asks for another handle too, without relying on an answer from the server.
+
     A handle the check found nobody for is not sent back to "Verify": the same press gets the
     same answer, so the line asks for another handle, under the check's own sentence, which
     names the one it could not find. Until a second change of 2026-10-06 it went on saying
@@ -614,7 +632,7 @@ export function TransferPage() {
         : !recipient
           ? lookupState.isFetching
             ? 'Checking the handle…'
-            : nobodyHasTheHandle
+            : ownHandle || nobodyHasTheHandle
               ? 'Change the handle to continue.'
               : 'Press Verify to check the handle.'
           : amountNumber <= 0
@@ -1220,6 +1238,7 @@ export function TransferPage() {
                         field.onChange(e.target.value);
                         setRecipient(null);
                         setRecipientError(null);
+                        setOwnHandle(false);
                         onBodyEdit();
                       }}
                       onKeyDown={(e) => {
