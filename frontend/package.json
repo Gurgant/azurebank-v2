@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "vite --mode mock",
-    "build": "tsc -b && vite build",
+    "build": "node node_modules/@typescript/native/bin/tsc -b --checkers 4 && vite build",
     "lint": "eslint .",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
@@ -51,6 +51,7 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "4.1.12",
     "eslint": "^9.39.1",
