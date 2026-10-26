@@ -96,7 +96,7 @@ test.describe('closing an account (ADR-0049)', () => {
       // The list refetched through the mutation's own tags: the card is gone, not hidden. Only
       // the card's title is looked for: the page now says `"<name>" was deleted.`, which holds the
       // name too.
-      await expect(page.getByRole('heading', { name, exact: true })).toBeHidden({
+      await expect(page.getByRole('heading', { name, exact: true })).toHaveCount(0, {
         timeout: 15_000,
       });
       await expect(page.getByText(`"${name}" was deleted.`, { exact: true })).toBeVisible();
