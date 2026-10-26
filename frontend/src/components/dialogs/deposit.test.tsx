@@ -903,6 +903,7 @@ describe('deposit — the listing by key after a lost answer', () => {
     await user.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
 
     expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm your deposit")).toBeInTheDocument();
     expect(actions()).toEqual(['Check again', 'Check recent transactions']);
     expect(screen.getByText(/may or may not have gone through/)).toBeInTheDocument();
     expectNoNestedLiveRegions();
@@ -915,6 +916,8 @@ describe('deposit — the listing by key after a lost answer', () => {
 
     await advanceUntil(sentAt, 185_000);
     expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(screen.getByText("Your deposit didn't go through")).toBeInTheDocument();
+    expect(screen.queryByText("We couldn't confirm your deposit")).not.toBeInTheDocument();
     expect(seen).toHaveLength(2);
     expect(actions()).toEqual(['Check recent transactions', "It didn't go through — try again"]);
     // "May or may not" is no longer true, and is no longer said.
