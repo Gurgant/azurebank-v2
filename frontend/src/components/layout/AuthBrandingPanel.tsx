@@ -177,7 +177,7 @@ export function AuthBrandingPanel({ headline, intro }: AuthBrandingPanelProps) {
       {/* The year is read, not typed. It said 2024 on the sign-in page — a date that was wrong
           within months of being written, on the first screen anyone sees. It also lives here now
           rather than under the form, which frees that slot for what each page actually needs
-          there: sign-in had the copyright, registration has the terms line. */}
+          there: both pages put the demo note there. */}
       <div className={styles.footer}>
         <Text className={styles.copyright}>
           © {new Date().getFullYear()} AzureBank. All rights reserved.

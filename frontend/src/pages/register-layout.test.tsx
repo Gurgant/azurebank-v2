@@ -28,8 +28,8 @@ describe('the registration name row', () => {
     renderWithProviders(<RegisterPage />, { routerEntries: ['/register'] });
 
     expect({
-      first: nameBoxes('First Name'),
-      last: nameBoxes('Last Name'),
+      first: nameBoxes('First name'),
+      last: nameBoxes('Last name'),
     }).toStrictEqual({
       first: {
         rowAlignItems: 'flex-start',

@@ -78,7 +78,7 @@ const router = createBrowserRouter(
             page. Off the demo it draws the page, and the route is the one it was. */}
         <Route
           path="/register"
-          handle={{ title: 'Create Account' }}
+          handle={{ title: 'Create account' }}
           element={
             <ClosedInDemo>
               <RegisterPage />
