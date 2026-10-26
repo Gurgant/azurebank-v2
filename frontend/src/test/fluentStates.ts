@@ -1,3 +1,5 @@
+import { pageStyleRules } from './styleRules';
+
 /**
  * What a Fluent control is painted in a state that jsdom cannot enter: it matches no `:hover`,
  * `:active` or `:focus-visible`, so `getComputedStyle` only ever shows the rest. The answer is
@@ -33,22 +35,22 @@ export function paintedIn(
 ): string | undefined {
   const classes = new Set(element.classList);
   let winner: { weight: number; value: string } | undefined;
-  // The sheets in the order of their elements, which is the cascade's. jsdom lists
-  // `document.styleSheets` in the order they were made, and Griffel can put a sheet made later in
-  // front of one made earlier: its reset rules always go first, under every atomic class.
-  for (const style of Array.from(document.querySelectorAll('style'))) {
-    for (const rule of Array.from(style.sheet?.cssRules ?? [])) {
-      if (!(rule instanceof CSSStyleRule)) continue;
-      const value = rule.style.getPropertyValue(property);
-      if (value === '') continue;
-      for (const selector of rule.selectorText.split(',')) {
-        const match = /^\.([\w-]+)((?::[a-z-]+)*)$/.exec(selector.trim());
-        if (match === null || !classes.has(match[1])) continue;
-        const pseudos = match[2].split(':').filter(Boolean);
-        if (!pseudos.every((pseudo) => HOLDS[state].includes(pseudo))) continue;
-        if (winner === undefined || pseudos.length >= winner.weight) {
-          winner = { weight: pseudos.length, value };
-        }
+  // The page's rules in the order of their style elements, which is the cascade's, each rule
+  // once. jsdom lists `document.styleSheets` in the order they were made, and Griffel can put a
+  // sheet made later in front of one made earlier: its reset rules always go first, under every
+  // atomic class. Each renderer also writes its own copy of a rule, and where files share a page a
+  // later renderer's copy of Fluent's rule would come after the class under test and win a tie.
+  for (const rule of pageStyleRules()) {
+    if (!(rule instanceof CSSStyleRule)) continue;
+    const value = rule.style.getPropertyValue(property);
+    if (value === '') continue;
+    for (const selector of rule.selectorText.split(',')) {
+      const match = /^\.([\w-]+)((?::[a-z-]+)*)$/.exec(selector.trim());
+      if (match === null || !classes.has(match[1])) continue;
+      const pseudos = match[2].split(':').filter(Boolean);
+      if (!pseudos.every((pseudo) => HOLDS[state].includes(pseudo))) continue;
+      if (winner === undefined || pseudos.length >= winner.weight) {
+        winner = { weight: pseudos.length, value };
       }
     }
   }

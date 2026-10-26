@@ -32,6 +32,15 @@ export default defineConfig({
     */
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    /*
+      The files of a worker share one jsdom page and one module registry, instead of each file
+      getting a new pair. Measured on a run with isolation, import, environment and setup made up
+      58% of the summed worker time (686 s of 1181 s), and a new page for every file paid them
+      again each time. The price is that a test must leave nothing behind for the next file: see
+      "Testing with Fluent and jsdom" in CONVENTIONS.md, and `src/test/setup.ts` for what is reset.
+      Only this configuration: the contract and integration ones keep isolation.
+    */
+    isolate: false,
     include: ['src/**/*.test.{ts,tsx}'],
     /*
       The contract suite is excluded from the default run because half of it (CONTRACT_TARGET=real)

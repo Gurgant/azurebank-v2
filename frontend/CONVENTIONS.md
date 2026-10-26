@@ -252,9 +252,12 @@ None of these fails in a way that points at the cause.
   clock before any test runs (`src/test/frames.ts`). Where requests go through the store while
   the clock is fake, install it with `installFakeClock()` from `src/test/outage.ts`: it lets real
   time pass, so a response can arrive.
-- **A test passes whatever ran before it.** Run with `--no-isolate`, Vitest gives the files of a
-  worker one page and one module registry, and with `--sequence.shuffle --sequence.seed=<n>` it
-  runs the tests in a random order: together they find a test that leans on another. A file that
+- **A test passes whatever ran before it.** The files of a worker share one page and one module
+  registry (`isolate: false` in `vitest.config.ts`), so a test must clean up what it adds
+  outside the tree it renders: restore what it spied on or stubbed, and leave no node, style
+  rule or global for the next file to find. With `--sequence.shuffle --sequence.seed=<n>` Vitest
+  runs the tests in a random order, and a pass for any `n` shows that no test leans on another;
+  which files meet in a worker depends on timing, so a failure may not repeat. A file that
   empties the registry (`vi.resetModules()`) hands the next file new copies of the app's modules
   on the same page, which is why `src/test/setup.ts` puts its stubs on the page again for each
   file. A pair of tests whose order is the point keeps it with `{ shuffle: false }` on its
