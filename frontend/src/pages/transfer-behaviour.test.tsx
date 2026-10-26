@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TEST_PIN, confirmWithPin } from '../test/pinFlow';
+import { TEST_PIN, confirmWithPin, enterPin } from '../test/pinFlow';
 import { describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
@@ -687,6 +687,64 @@ describe('money flows — the behaviour the unification must preserve', () => {
       expect(screen.getByText(/That's more than you can send today\./)).toBeInTheDocument();
       expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
     });
+
+    it('does not leave the visitor stuck when the daily limit refuses the new confirmation after an expiry', async () => {
+      // The send is answered AUTHORIZATION_EXPIRED, which keeps the key; the PIN typed again mints
+      // a new confirmation, and that mint meets the daily 422. A mint drops no key, so the way
+      // back to the amount would wait for ever: the page shows the check view instead.
+      let mints = 0;
+      server.use(
+        http.post('*/api/transfers/authorizations', () => {
+          mints += 1;
+          if (mints === 1) return undefined;
+          return problem({
+            status: 422,
+            errorCode: 'DAILY_LIMIT_EXCEEDED',
+            detail: 'Daily transfer limit exceeded.',
+            extensions: DAILY_MEMBERS,
+          });
+        }),
+        http.post('*/api/transfers', () =>
+          problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          }),
+        ),
+      );
+      await externalToReview();
+      await confirmWithPin();
+      expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
+
+      await enterPin();
+
+      expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+      expect(mints).toBe(2);
+      expect(
+        await screen.findByRole('button', { name: "It didn't go through — start over" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    });
+
+    it.each(['not a date', ''])(
+      'ends the sentence at "today" when the reset instant %j is not a date',
+      async (resetsAt) => {
+        failWith('DAILY_LIMIT_EXCEEDED', 422, {
+          detail: 'Daily transfer limit exceeded.',
+          extensions: { ...DAILY_MEMBERS, resetsAt },
+        });
+        await externalToReview();
+        await confirmWithPin();
+
+        expect(
+          await screen.findByText(
+            "That's more than you can send today. You can send up to €100.00 more today.",
+          ),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/resets on/)).not.toBeInTheDocument();
+      },
+    );
 
     it('keeps the daily refusal on the returned form, then clears it on the edit that supersedes it', async () => {
       // 'input' scope, for the same reason INSUFFICIENT_FUNDS has it: the message names the amount,

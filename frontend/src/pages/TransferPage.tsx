@@ -868,6 +868,10 @@ export function TransferPage() {
           without it, and `toForm()` refuses under a live key: the move waits for the effect on
           `returnToAmount`, which acts once `keyLive` is false.
 
+          A MINT under a held key (the send before it answered AUTHORIZATION_EXPIRED) drops no key,
+          so that effect would wait for ever and Back stays disabled. There the page does what the
+          closed-account arm below does: `requireVerify` lets the key go and shows the check view.
+
           Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
           leaves the mint body either way, and every non-PIN refusal at this rung already retains it
           today. The amount and the payee are KEPT because WCAG 2.2 SC 3.3.7's exception covers
@@ -878,7 +882,8 @@ export function TransferPage() {
       setPinNonce((n) => n + 1);
       lastAuthorization.current = null;
       setAuthorizationHeld(false);
-      setReturnToAmount(true);
+      if (phase === 'mint' && keyLive) wizard.requireVerify();
+      else setReturnToAmount(true);
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';
