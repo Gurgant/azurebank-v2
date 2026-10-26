@@ -15,8 +15,13 @@ import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import type { ApiProblem } from '../api/problemBaseQuery';
-import { SIGN_IN_REFUSED } from '../api/problemMessages';
+import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
+import {
+  CONNECTION_FAILED,
+  SERVICE_UNAVAILABLE,
+  SIGN_IN_REFUSED,
+  SIGN_IN_SERVER_PROBLEM,
+} from '../api/problemMessages';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useClaimDemoCopyMutation, useLoginMutation } from '../features/api/apiSlice';
@@ -31,6 +36,7 @@ import { isDemoMode } from '../features/demo/demoMode';
 import {
   CLAIM_DAILY_LIMIT,
   CLAIM_POOL_EMPTY,
+  CLAIM_SERVER_PROBLEM,
   COPY_NO_LONGER_AVAILABLE,
   COPY_SIGN_IN_PAUSED,
   DEMO_SUBTITLE,
@@ -117,6 +123,15 @@ const useStyles = makeStyles({
  * "Try the demo". The first two send the same request, a sign-in, and are told apart only here.
  */
 type LoginControl = 'form' | 'continue' | 'claim';
+
+function loginFailureMessage(problem: ApiProblem, control: LoginControl | null): string {
+  if (isServiceOutage(problem)) return SERVICE_UNAVAILABLE;
+  if (problem.status === 'NETWORK') return CONNECTION_FAILED;
+  if (problem.status === 'PARSE' || (typeof problem.status === 'number' && problem.status >= 500)) {
+    return control === 'claim' ? CLAIM_SERVER_PROBLEM : SIGN_IN_SERVER_PROBLEM;
+  }
+  return 'Something went wrong. Please try again.';
+}
 
 export function LoginPage() {
   const styles = useStyles();
@@ -219,6 +234,9 @@ export function LoginPage() {
   const navStateResult = loginNavStateSchema.safeParse(location.state ?? {});
   const navState: LoginNavState = navStateResult.success ? navStateResult.data : {};
   const problem = error as ApiProblem | undefined;
+  const signInRefused =
+    problem?.errorCode === 'INVALID_CREDENTIALS' ||
+    (problem?.errorCode === 'VALIDATION_ERROR' && control === 'form');
 
   // D13: one ABSOLUTE deadline per limiter RESPONSE. Derived from the error object —
   // fresh identity on EVERY rejection — so a repeat lockout with the identical
@@ -399,7 +417,7 @@ export function LoginPage() {
         </MessageBar>
       )}
 
-      {problem?.errorCode === 'INVALID_CREDENTIALS' && (
+      {signInRefused && (
         <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>
             {control !== 'continue'
@@ -431,16 +449,12 @@ export function LoginPage() {
       {/* Whatever has no banner of its own above. The list is what keeps a refusal to one alert:
           a code that has its own banner and is missing here is said twice. */}
       {problem &&
-        ![
-          'INVALID_CREDENTIALS',
-          'RATE_LIMIT_EXCEEDED',
-          'DEMO_POOL_EMPTY',
-          'DEMO_DAILY_LIMIT',
-        ].includes(problem.errorCode) && (
+        !signInRefused &&
+        !['RATE_LIMIT_EXCEEDED', 'DEMO_POOL_EMPTY', 'DEMO_DAILY_LIMIT'].includes(
+          problem.errorCode,
+        ) && (
           <MessageBar intent="error" role="alert" className={styles.errorMessage}>
-            <MessageBarBody>
-              {problem.detail || 'Something went wrong. Please try again.'}
-            </MessageBarBody>
+            <MessageBarBody>{loginFailureMessage(problem, control)}</MessageBarBody>
           </MessageBar>
         )}
 

@@ -1,10 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
-import { mockState } from '../mocks/state';
+import { mockState, toWire } from '../mocks/state';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import {
   COPY,
@@ -21,8 +21,9 @@ import { HistoryPage } from './HistoryPage';
 
 /**
  * T1 — the infinite history feed. Pins: the signed-mock trap is dead (amounts are
- * UNSIGNED, direction comes from the TYPE), summary math excludes Failed/Reversed,
- * pages accumulate through Load more, and loading/error/empty states are first-class.
+ * UNSIGNED, direction comes from the TYPE), summary math excludes Failed/Reversed
+ * and follows the rows on screen, a caption names those rows, pages accumulate
+ * through Load more, and loading/error/empty states are first-class.
  */
 describe('history feed (T1)', () => {
   it('renders rows with type-driven signs, counterparties, and status text', async () => {
@@ -70,6 +71,11 @@ describe('history feed (T1)', () => {
     expect(screen.getByText('+€1,475.50')).toBeInTheDocument();
     expect(screen.getByText('-€250.00')).toBeInTheDocument();
     expect(screen.getByText('+€1,225.50')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Totals of the 20 transactions shown below. Failed and reversed ones are not counted.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('Load more appends page 2 and then disappears; the summary re-totals', async () => {
@@ -77,6 +83,11 @@ describe('history feed (T1)', () => {
     await screen.findByText('Salary');
 
     expect(screen.queryByText('Top-up #16')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Totals of the 20 transactions shown below. Failed and reversed ones are not counted.',
+      ),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
 
@@ -85,8 +96,14 @@ describe('history feed (T1)', () => {
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument(),
     );
-    // Summary now includes page 2's five €10 deposits.
+    // Summary now includes page 2's five €10 deposits, and the caption counts the same rows.
     expect(screen.getByText('+€1,525.50')).toBeInTheDocument();
+    expect(screen.queryByText('+€1,475.50')).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Totals of the 25 transactions shown below. Failed and reversed ones are not counted.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('filter tabs slice the LOADED pages client-side', async () => {
@@ -101,6 +118,92 @@ describe('history feed (T1)', () => {
     expect(screen.getByText('To @john_d')).toBeInTheDocument();
     expect(screen.getByText('From @anna_k')).toBeInTheDocument();
     expect(screen.queryByText('Salary')).not.toBeInTheDocument();
+
+    // Two transfers are left on screen: -€200.00 Pending and +€75.00. Neither is
+    // failed or reversed, so the card adds those two up and does not add the exclusion sentence.
+    expect(screen.getByText('-€125.00')).toBeInTheDocument();
+    expect(screen.queryByText('+€1,475.50')).not.toBeInTheDocument();
+    expect(screen.queryByText('-€250.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('+€1,225.50')).not.toBeInTheDocument();
+    expect(screen.getAllByText('+€75.00')).toHaveLength(2);
+    expect(screen.getAllByText('-€200.00')).toHaveLength(2);
+    expect(screen.getByText('Totals of the 2 transfers shown below.')).toBeInTheDocument();
+    expect(screen.queryByText(/Failed and reversed ones are not counted/)).not.toBeInTheDocument();
+  });
+
+  it('names one shown row in the singular, and skips the exclusion sentence when none is failed or reversed', async () => {
+    const cases = [
+      {
+        type: 'Deposit' as const,
+        filter: 'Deposits',
+        noun: 'deposit',
+        row: 'Salary',
+        take: (t: (typeof mockState.transactions)[number]) => t.description === 'Salary',
+      },
+      {
+        type: 'Withdrawal' as const,
+        filter: 'Withdrawals',
+        noun: 'withdrawal',
+        row: 'Withdrawal',
+        take: (t: (typeof mockState.transactions)[number]) => t.description === null,
+      },
+      {
+        type: 'TransferIn' as const,
+        filter: 'Transfers',
+        noun: 'transfer',
+        row: 'From @anna_k',
+        take: (t: (typeof mockState.transactions)[number]) => t.senderAzureTag === 'anna_k',
+      },
+    ];
+
+    for (const item of cases) {
+      const entry = mockState.transactions.find(
+        (t) => t.type === item.type && t.status === 'Completed' && item.take(t),
+      );
+      if (!entry) throw new Error(`the mock has no completed ${item.type} named ${item.row}`);
+
+      server.use(
+        http.get('*/api/transactions', () =>
+          HttpResponse.json({
+            data: [toWire(entry)],
+            pagination: {
+              page: 1,
+              pageSize: 20,
+              totalItems: 1,
+              totalPages: 1,
+              hasNextPage: false,
+              hasPreviousPage: false,
+            },
+          }),
+        ),
+      );
+
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      expect(await screen.findByText(item.row)).toBeInTheDocument();
+      expect(screen.getByText('Totals of the 1 transaction shown below.')).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Failed and reversed ones are not counted/),
+      ).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: item.filter }));
+      expect(screen.getByText(`Totals of the 1 ${item.noun} shown below.`)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Failed and reversed ones are not counted/),
+      ).not.toBeInTheDocument();
+
+      if (item.noun === 'transfer') {
+        await userEvent.click(screen.getByRole('button', { name: 'Deposits' }));
+        expect(
+          screen.getByText('No transactions found for the selected filter.'),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/Totals of the/)).not.toBeInTheDocument();
+        expect(screen.getAllByText('+€0.00')).toHaveLength(2);
+        expect(screen.getByText('-€0.00')).toBeInTheDocument();
+      }
+
+      cleanup();
+      server.resetHandlers();
+    }
   });
 
   it('announces which filter is selected, not just colours it', async () => {
@@ -519,5 +622,8 @@ describe('history feed (T1)', () => {
 
     expect(await screen.findByText('No Transactions')).toBeInTheDocument();
     expect(screen.getByText('Your transactions will appear here.')).toBeInTheDocument();
+    expect(screen.queryByText(/Totals of the/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('+€0.00')).toHaveLength(2);
+    expect(screen.getByText('-€0.00')).toBeInTheDocument();
   });
 });

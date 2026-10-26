@@ -23,7 +23,7 @@ import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { PinInput } from '../components/PinInput';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
-import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../api/problemMessages';
+import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN, WRONG_PASSWORD } from '../api/problemMessages';
 
 // ============================================
 // STYLES
@@ -232,7 +232,7 @@ export function PinSetupPage() {
         refusal = passwordError('Enter your account password to set a PIN.');
       } else if (problem.errorCode === 'INVALID_CREDENTIALS') {
         // Named, not generic: the PIN boxes are fine and re-entering them would be busywork.
-        refusal = passwordError('That password is not correct.');
+        refusal = passwordError(WRONG_PASSWORD);
       } else if (problem.errorCode === 'ACCOUNT_LOCKED') {
         // Wrong passwords here count toward the SAME login lockout — say so, rather than leaving
         // the user to discover it at the login screen. The wait is counted down from the answer's
