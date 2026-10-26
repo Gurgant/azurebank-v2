@@ -360,7 +360,7 @@ export function RegisterPage() {
           label="Password"
           validationState={errors.password ? 'error' : 'none'}
           validationMessage={errors.password?.message}
-          hint="At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol, such as ! or #."
+          hint="At least 8 characters, with an uppercase letter, a lowercase letter, a number and one character that is not a letter or a digit, such as ! or #."
         >
           <div className={styles.passwordWrapper}>
             <Input

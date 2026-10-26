@@ -14,7 +14,7 @@ import { RegisterPage } from './RegisterPage';
  */
 
 const PASSWORD_HINT =
-  'At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol, such as ! or #.';
+  'At least 8 characters, with an uppercase letter, a lowercase letter, a number and one character that is not a letter or a digit, such as ! or #.';
 const EMAIL_EMPTY = 'Enter your email address.';
 const EMAIL_MALFORMED = 'Enter an email address in the correct format, like name@example.com.';
 const EMAIL_OLD = 'Please enter a valid email address';
