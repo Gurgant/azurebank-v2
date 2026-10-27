@@ -162,6 +162,26 @@ describe('internal transfer (PR-11b)', () => {
     );
   });
 
+  it.each(['0', '0.00', '.'])(
+    'with a destination and %s typed, says to change the amount, then to enter it when cleared',
+    async (amount) => {
+      renderInternal();
+      await screen.findByRole('button', { name: 'From Main Account' });
+      await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+      const review = screen.getByRole('button', { name: 'Review Transfer' });
+      const field = screen.getByLabelText('Transfer amount');
+      await userEvent.type(field, amount);
+
+      expect(review).toBeDisabled();
+      expect(review).toHaveAccessibleDescription('Change the amount to continue.');
+
+      await userEvent.clear(field);
+
+      expect(review).toBeDisabled();
+      expect(review).toHaveAccessibleDescription('Enter an amount to continue.');
+    },
+  );
+
   it('with a valid move the button is enabled, its accessible description is empty, and the line paragraph is still in the page', async () => {
     renderInternal();
     await screen.findByRole('button', { name: 'From Main Account' });

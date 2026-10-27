@@ -427,7 +427,7 @@ export function InternalTransferPage() {
         ? 'Choose an account to move money from.'
         : !toAccount
           ? 'Choose an account to move the money to.'
-          : amountNumber <= 0
+          : watch('amount').trim() === ''
             ? 'Enter an amount to continue.'
             : !amountCanBeSent
               ? 'Change the amount to continue.'

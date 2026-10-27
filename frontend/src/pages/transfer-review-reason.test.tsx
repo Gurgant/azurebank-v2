@@ -233,8 +233,31 @@ describe('what "Review Transfer" is still waiting for', () => {
 
     expect({ empty, zero: now() }).toStrictEqual({
       empty: { disabled: true, describedBy: [WORDS.noAmount] },
-      zero: { disabled: true, describedBy: [WORDS.noAmount] },
+      zero: { disabled: true, describedBy: [WORDS.amountCannotBeSent] },
     });
+  });
+
+  it.each(['0.00', '.'])('a handle checked and %s typed: to change the amount', async (amount) => {
+    await openTheForm();
+    await userEvent.type(handleField(), 'friend');
+    await userEvent.click(verify());
+    await screen.findByText('A. Friend');
+    await userEvent.type(amountField(), amount);
+
+    expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.amountCannotBeSent] });
+  });
+
+  it('a handle checked and zero cleared: to enter an amount again', async () => {
+    await openTheForm();
+    await userEvent.type(handleField(), 'friend');
+    await userEvent.click(verify());
+    await screen.findByText('A. Friend');
+    await userEvent.type(amountField(), '0');
+    expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.amountCannotBeSent] });
+
+    await userEvent.clear(amountField());
+
+    expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.noAmount] });
   });
 
   it('an amount that cannot be sent: to change it, under the field saying why', async () => {
