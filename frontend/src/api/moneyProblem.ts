@@ -255,7 +255,11 @@ export function classifyMoneyProblem(
     // reader arriving from the record would misread a sentence bound to it.
     // `resetsAt` is a UTC instant and `formatDateTime` renders it in the VIEWER's zone. That is
     // correct for an instant; it is also why a test pinning the rendered date must pin TZ.
-    const resetDate = typeof resetsAt === 'string' ? formatDateTime(resetsAt) : null;
+    // A string that is not a date is treated as absent: `formatDateTime` throws on it.
+    const resetDate =
+      typeof resetsAt === 'string' && !Number.isNaN(new Date(resetsAt).getTime())
+        ? formatDateTime(resetsAt)
+        : null;
     const refusal =
       limit - used > 0
         ? `That's more than you can send today. You can send up to ${formatCurrency(limit - used)} more ` +

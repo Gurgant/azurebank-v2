@@ -435,7 +435,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text as="p" className={styles.outcomeSentence} ref={checkTitle} tabIndex={-1}>
-            We couldn&apos;t confirm your deposit
+            {check.verdict === 'none' ? (
+              <>Your deposit didn&apos;t go through</>
+            ) : (
+              <>We couldn&apos;t confirm your deposit</>
+            )}
           </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}

@@ -176,9 +176,9 @@ export interface AuthLayoutProps {
   /**
    * Fine print beneath the form.
    *
-   * A slot rather than a fixed string because the two pages put different KINDS of thing here —
-   * sign-in a copyright, registration its terms line — which is why it could not simply be hoisted
-   * with the rest. The copyright itself moved into the brand panel.
+   * A slot, because the two pages do not put the same thing here. Sign-in adds its encryption
+   * sentence above the shared demo note; registration shows the demo note alone. The copyright
+   * lives in the brand panel.
    */
   footer?: ReactNode;
   /** Banners, the form, and whatever follows it. */
@@ -263,6 +263,21 @@ export function AuthCrossLink({
         <FluentLink as="span">{label}</FluentLink>
       </Link>
     </div>
+  );
+}
+
+/**
+ * The line both entry pages use to say what this is, and who to write to.
+ * Sign-in draws it under its encryption sentence; registration draws it alone.
+ */
+export function AuthDemoNote() {
+  return (
+    <>
+      Demo project — not a real bank.{' '}
+      <Link to="/contact" style={{ color: 'inherit', textDecoration: 'underline' }}>
+        Contact the developer →
+      </Link>
+    </>
   );
 }
 

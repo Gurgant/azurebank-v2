@@ -771,7 +771,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text as="p" className={styles.outcomeSentence} ref={checkTitle} tabIndex={-1}>
-            We couldn&apos;t confirm your withdrawal
+            {check.verdict === 'none' ? (
+              <>Your withdrawal didn&apos;t go through</>
+            ) : (
+              <>We couldn&apos;t confirm your withdrawal</>
+            )}
           </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}

@@ -79,8 +79,8 @@ const PUBLIC: Scan[] = [
   {
     name: 'register',
     path: '/register',
-    title: 'Create Account · AzureBank',
-    ready: labelled('Email'),
+    title: 'Create account · AzureBank',
+    ready: labelled('Email address'),
   },
   {
     name: 'not-found-signed-out',

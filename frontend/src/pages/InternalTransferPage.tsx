@@ -6,6 +6,8 @@ import {
   MessageBar,
   MessageBarBody,
   MessageBarActions,
+  makeStyles,
+  tokens,
 } from '@fluentui/react-components';
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { useForm, type FieldErrors } from 'react-hook-form';
@@ -22,6 +24,7 @@ import {
   TRANSFER_WENT_THROUGH,
   TRY_AGAIN,
 } from '../api/problemMessages';
+import { typography } from '../theme/typography';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -81,8 +84,21 @@ interface SuccessData {
 const PIN_LENGTH = 6;
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
+const useStyles = makeStyles({
+  reviewHint: {
+    display: 'block',
+    margin: 0,
+    ...typography.caption,
+    lineHeight: tokens.lineHeightBase300,
+    minHeight: tokens.lineHeightBase300,
+    textAlign: 'center',
+    color: tokens.colorNeutralForeground2,
+  },
+});
+
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
+  const localStyles = useStyles();
 
   const accountsQuery = useGetAccountsQuery();
   const {
@@ -399,6 +415,23 @@ export function InternalTransferPage() {
   // bounds); the derived accounts are the belt-and-suspenders the legacy code kept.
   const canReview =
     formState.isValid && !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id;
+  const reviewHintId = useId();
+  const amountCanBeSent = internalTransferFormSchema(balanceBound).shape.amount.safeParse(
+    watch('amount'),
+  ).success;
+  const reviewWaitsFor = canReview
+    ? null
+    : accounts.length < 2
+      ? null
+      : !fromAccount
+        ? 'Choose an account to move money from.'
+        : !toAccount
+          ? 'Choose an account to move the money to.'
+          : amountNumber <= 0
+            ? 'Enter an amount to continue.'
+            : !amountCanBeSent
+              ? 'Change the amount to continue.'
+              : null;
   const fromNewBalance = availableBalance - amountNumber;
 
   /**
@@ -946,9 +979,16 @@ export function InternalTransferPage() {
                 style={{ width: '100%', height: '48px' }}
                 onClick={() => wizard.toReview()}
                 disabled={!canReview}
+                aria-describedby={reviewWaitsFor ? reviewHintId : undefined}
               >
                 Review Transfer
               </Button>
+              {/* Always on the page, and empty once the button can be pressed, so nothing under
+                  it moves. Words to read and the button's description, not a region that speaks
+                  by itself, as on /transfer. */}
+              <Text as="p" id={reviewHintId} className={localStyles.reviewHint}>
+                {reviewWaitsFor}
+              </Text>
               <button className={styles.linkBtn} onClick={() => requestLeave('/transfer')}>
                 <ArrowSwap24Regular style={{ width: '18px', height: '18px' }} />
                 Send to someone else

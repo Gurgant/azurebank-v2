@@ -1,5 +1,12 @@
-import { Button, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
-import { screen } from '@testing-library/react';
+import {
+  Button,
+  createDOMRenderer,
+  makeStyles,
+  mergeClasses,
+  RendererProvider,
+  tokens,
+} from '@fluentui/react-components';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { paintedIn } from './fluentStates';
 import { renderWithProviders } from './renderWithProviders';
@@ -64,5 +71,19 @@ describe('paintedIn', () => {
     );
     const forced = renderButton((styles) => styles.insideForcedColours, 'Forced');
     expect(paintedIn(forced, 'rest', 'background-color')).toBe(tokens.colorBrandBackground);
+  });
+
+  it('reads one copy of a rule when a second renderer has written its own, later in the page', () => {
+    const pointer = renderButton((styles) => styles.pointerPressOnly);
+    // Files that share a page leave the rules of each renderer in it, and a renderer made later
+    // writes Fluent's own pressed rule again, after the class the test is about.
+    render(
+      <RendererProvider renderer={createDOMRenderer(document)}>
+        <Button appearance="primary">Later copy</Button>
+      </RendererProvider>,
+    );
+    expect(paintedIn(pointer, 'pointer press', 'background-color')).toBe(
+      tokens.colorPaletteRedBackground3,
+    );
   });
 });
