@@ -115,7 +115,11 @@ export function ResultUnknownView({
             <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
           <Text as="p" className={styles.outcomeSentence} ref={titleRef} tabIndex={-1}>
-            We couldn&apos;t confirm your transfer
+            {check?.verdict === 'none' ? (
+              <>Your transfer didn&apos;t go through</>
+            ) : (
+              <>We couldn&apos;t confirm your transfer</>
+            )}
           </Text>
           {/* Hidden once the listing says it did not go through: "may or may not" is no longer
               true. */}

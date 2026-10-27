@@ -828,7 +828,7 @@ describe('an account of the move is closed under the page', () => {
     closeElsewhere(SAVINGS_ACCOUNT_ID);
     await enterPin();
 
-    expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+    expect(await screen.findByText("Your transfer didn't go through")).toBeInTheDocument();
     expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
     expectNothingOfTheServers();
     expect(seen.mints).toBe(2);

@@ -166,7 +166,7 @@ describe('ResultUnknownView, with the listing by key', () => {
     };
   }
 
-  const renderWith = (movementCheck: MovementCheck) =>
+  const renderWith = (movementCheck?: MovementCheck) =>
     renderWithProviders(
       <ResultUnknownView
         title="Send Money"
@@ -248,6 +248,46 @@ describe('ResultUnknownView, with the listing by key', () => {
       expectNoNestedLiveRegions();
     },
   );
+
+  it.each<[string, MovementCheck | undefined, string]>([
+    ['without check', undefined, "We couldn't confirm your transfer"],
+    ['off', check('off'), "We couldn't confirm your transfer"],
+    ['looking', check('looking'), "We couldn't confirm your transfer"],
+    ['notYet', check('notYet'), "We couldn't confirm your transfer"],
+    ['none', check('none', { pastLive: true }), "Your transfer didn't go through"],
+    ['unchecked', check('unchecked'), "We couldn't confirm your transfer"],
+    ['found', check('found'), "We couldn't confirm your transfer"],
+  ])('title for verdict %s: gives %s', (_name, movementCheck, expectedTitle) => {
+    renderWith(movementCheck);
+    expect(screen.getByText(expectedTitle)).toBeInTheDocument();
+    const otherTitle =
+      expectedTitle === "Your transfer didn't go through"
+        ? "We couldn't confirm your transfer"
+        : "Your transfer didn't go through";
+    expect(screen.queryByText(otherTitle)).not.toBeInTheDocument();
+  });
+
+  it('keeps focus on the title paragraph across a rerender from notYet to none', () => {
+    const { rerender } = renderWith(check('notYet'));
+
+    const initialTitle = screen.getByText("We couldn't confirm your transfer");
+    expect(initialTitle).toHaveFocus();
+
+    rerender(
+      <ResultUnknownView
+        title="Send Money"
+        repeatWarning="send twice"
+        onCheckTransactions={() => {}}
+        onStartOver={() => {}}
+        check={check('none', { pastLive: true })}
+      />,
+    );
+
+    const updatedTitle = screen.getByText("Your transfer didn't go through");
+    expect(updatedTitle).toBe(initialTitle);
+    expect(updatedTitle).toHaveFocus();
+    expect(screen.queryByText("We couldn't confirm your transfer")).not.toBeInTheDocument();
+  });
 
   it('is on screen and empty while it asks, with the hint of the read beside it and "Check again" disabled', () => {
     renderWith(check('looking'));

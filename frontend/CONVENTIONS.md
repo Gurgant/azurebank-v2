@@ -107,7 +107,8 @@ that started it, never as a page-level overlay.
 **The view that says a send went through with no receipt puts lost focus on its sentence, and
 the check view on its title.** The control that sent is disabled during the send, so either view
 appears with focus on `body`, and a view that mounts with its words in it is not announced. The
-sentence, and the title "We couldn't confirm your …", are each a `<Text as="p">` with
+sentence, and the title "We couldn't confirm your …" (or "Your … didn't go through" once the
+check has found that the send did not happen), are each a `<Text as="p">` with
 `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. Neither is a live region, an alert or
 a status as well, and no button's `aria-describedby` points at either: each would say the words
 a second time. `WentThroughView` and `ResultUnknownView` do this on the two transfer pages, and

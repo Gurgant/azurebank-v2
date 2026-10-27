@@ -1562,6 +1562,8 @@ describe('withdraw — the listing by key after a lost answer', () => {
     await userEvent.click(screen.getByRole('button', { name: '€50' }));
 
     expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(screen.getByText("Your withdrawal didn't go through")).toBeInTheDocument();
+    expect(screen.queryByText("We couldn't confirm your withdrawal")).not.toBeInTheDocument();
     expect(screen.queryByText(/may or may not have gone through/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
     expectNoNestedLiveRegions();
