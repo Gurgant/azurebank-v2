@@ -64,7 +64,14 @@ const useStyles = makeStyles({
  * component state (never the RTK Query store: we `reset()` it away) and auto-rehides on a timer or
  * on unmount (navigation).
  */
-export function AccountNumberField({ account }: { account: AccountResponse }) {
+export function AccountNumberField({
+  account,
+  onActionStart,
+}: {
+  account: AccountResponse;
+  /** Reveal, Copy and Hide, as they start: a page that says its last action clears it then. */
+  onActionStart?: () => void;
+}) {
   const styles = useStyles();
   const showProblem = useProblemToast();
   const [revealAccountNumber, { isLoading, reset }] = useRevealAccountNumberMutation();
@@ -102,9 +109,13 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
     reset();
   };
 
-  const hide = () => conceal(null);
+  const hide = () => {
+    onActionStart?.();
+    conceal(null);
+  };
 
   const reveal = async () => {
+    onActionStart?.();
     setNotice(null);
     try {
       const result = await revealAccountNumber(account.id).unwrap();
@@ -125,6 +136,7 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
 
   const copy = async () => {
     if (fullNumber === null) return;
+    onActionStart?.();
     setNotice(null);
     clearTimeout(copiedTimer.current);
     copyEpoch.current += 1;

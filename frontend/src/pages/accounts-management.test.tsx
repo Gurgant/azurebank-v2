@@ -52,6 +52,26 @@ function holdUntilReleased(method: 'get' | 'patch', path: string) {
   return release;
 }
 
+/** Waits until the mock has answered a request, and then a few tasks for the page to read it. */
+function answered(method: string, pathname: RegExp) {
+  return new Promise<void>((resolve) => {
+    const listener = ({ request }: { request: Request }) => {
+      if (request.method !== method || !pathname.test(new URL(request.url).pathname)) return;
+      server.events.removeListener('response:mocked', listener);
+      void (async () => {
+        for (let task = 0; task < 10; task += 1) {
+          await new Promise((next) => setTimeout(next, 0));
+        }
+        resolve();
+      })();
+    };
+    server.events.on('response:mocked', listener);
+    onTestFinished(() => {
+      server.events.removeListener('response:mocked', listener);
+    });
+  });
+}
+
 /** The sentence, inside the page's polite slot. The bar's own name is not the sentence. */
 function saidInTheSlot(sentence: string) {
   const words = screen.getByText(sentence, { exact: true });
@@ -422,6 +442,53 @@ describe('a dialog whose answer arrives after another action started', () => {
     expect(
       screen.queryByText('"Rainy Day" is now called "Storm Fund".', { exact: true }),
     ).not.toBeInTheDocument();
+  });
+  it('says a new primary started after a cancelled create, when the create answers first', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const answerCreate = holdPostUntilReleased('*/api/accounts');
+    const answerSetPrimary = holdUntilReleased('patch', '*/api/accounts/:id/set-primary');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    await userEvent.type(await screen.findByLabelText('Account name'), 'Holiday Pot');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+
+    // The list is read again only once set-primary has answered too: wait on the create's answer.
+    const createAnswered = answered('POST', /\/api\/accounts$/);
+    answerCreate();
+    await createAnswered;
+    answerSetPrimary();
+    await screen.findByText('"Rainy Day" is now your primary account.', { exact: true });
+    saidInTheSlot('"Rainy Day" is now your primary account.');
+  });
+
+  it('says a new primary started after a cancelled rename, when the rename answers first', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = holdUntilReleased('patch', '*/api/accounts/:id');
+    const answerSetPrimary = holdUntilReleased('patch', '*/api/accounts/:id/set-primary');
+
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const input = await screen.findByLabelText('Account name');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Storm Fund');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+
+    const renameAnswered = answered('PATCH', /\/api\/accounts\/[^/]+$/);
+    answerRename();
+    await renameAnswered;
+    answerSetPrimary();
+    await screen.findByText('"Rainy Day" is now your primary account.', { exact: true });
+    saidInTheSlot('"Rainy Day" is now your primary account.');
   });
 });
 

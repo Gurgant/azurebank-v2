@@ -287,3 +287,67 @@ describe('account number reveal (ADR-0020)', () => {
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
   });
 });
+
+describe("the number's buttons count as actions on the page", () => {
+  const primarySentence = (name: string) => `"${name}" is now your primary account.`;
+
+  async function setPrimary(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(screen.getByRole('button', { name: `Account actions for ${name}` }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+  }
+
+  it("Reveal, Copy and Hide each clear the page's sentence", async () => {
+    mockState.authLevel = 2;
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    await setPrimary(user, 'Rainy Day');
+    await screen.findByText(primarySentence('Rainy Day'), { exact: true });
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
+
+    await setPrimary(user, MAIN);
+    await screen.findByText(primarySentence(MAIN), { exact: true });
+    await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
+    expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
+    expect(screen.queryByText(primarySentence(MAIN), { exact: true })).toBeNull();
+
+    await setPrimary(user, 'Rainy Day');
+    await screen.findByText(primarySentence('Rainy Day'), { exact: true });
+    await user.click(screen.getByRole('button', { name: `Hide account number for ${MAIN}` }));
+    expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument();
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
+  });
+
+  it('says nothing for a new primary whose answer arrives after a Reveal', async () => {
+    mockState.authLevel = 2;
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.patch('*/api/accounts/:id/set-primary', async () => {
+        await held;
+      }),
+    );
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    await setPrimary(user, 'Rainy Day');
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+
+    release();
+    // The answer has arrived once the list it refreshes puts Rainy Day first.
+    await waitFor(() => {
+      const names = screen.getAllByText(/^(Main Account|Rainy Day)$/).map((el) => el.textContent);
+      expect(names[0]).toBe('Rainy Day');
+    });
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
+  });
+});

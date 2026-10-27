@@ -436,7 +436,9 @@ export function AccountsPage() {
   // The action count when the Create or Rename dialog opened: its answer is said only while that
   // is still the latest action, as set-primary's is. Closing either dialog counts as an action,
   // so that an answer which arrives after a Cancel says nothing; on a save the sentence is held
-  // before the dialog closes.
+  // before the dialog closes. A dialog cancelled while its request was out still closes itself
+  // when the answer comes, after it has gone: that close counts only while its dialog is still
+  // the latest action, or it would silence an action started after the Cancel.
   const [createOpenedAt, setCreateOpenedAt] = useState(0);
   const [renameOpenedAt, setRenameOpenedAt] = useState(0);
 
@@ -623,7 +625,7 @@ export function AccountsPage() {
                   <div className={styles.accountInfo}>
                     {/* A level-2 heading: the page's `<h1>` is the one heading above it. */}
                     <SectionTitle>{account.name}</SectionTitle>
-                    <AccountNumberField account={account} />
+                    <AccountNumberField account={account} onActionStart={startAction} />
                   </div>
                   <Menu>
                     <MenuTrigger disableButtonEnhancement>
@@ -743,7 +745,7 @@ export function AccountsPage() {
             }
           }}
           onClose={() => {
-            actionsStarted.current += 1;
+            if (actionsStarted.current === createOpenedAt) actionsStarted.current += 1;
             setIsCreateOpen(false);
           }}
         />
@@ -758,7 +760,7 @@ export function AccountsPage() {
             }
           }}
           onClose={() => {
-            actionsStarted.current += 1;
+            if (actionsStarted.current === renameOpenedAt) actionsStarted.current += 1;
             setRenameTarget(null);
           }}
         />
