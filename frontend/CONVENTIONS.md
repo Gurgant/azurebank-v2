@@ -107,7 +107,8 @@ that started it, never as a page-level overlay.
 **The view that says a send went through with no receipt puts lost focus on its sentence, and
 the check view on its title.** The control that sent is disabled during the send, so either view
 appears with focus on `body`, and a view that mounts with its words in it is not announced. The
-sentence, and the title "We couldn't confirm your …", are each a `<Text as="p">` with
+sentence, and the title "We couldn't confirm your …" (or "Your … didn't go through" once the
+check has found that the send did not happen), are each a `<Text as="p">` with
 `tabIndex={-1}` and the ref of `useFocusWhenLost(active)`. Neither is a live region, an alert or
 a status as well, and no button's `aria-describedby` points at either: each would say the words
 a second time. `WentThroughView` and `ResultUnknownView` do this on the two transfer pages, and
@@ -275,6 +276,17 @@ the editor load. `@typescript/native` is `typescript@7.0.2` under another name, 
 build` calls its binary by path (`node node_modules/@typescript/native/bin/tsc -b`). Both
 packages declare a `tsc` bin and npm links only one into `node_modules/.bin`, so `npx tsc` can
 be either: never call it, and never move `typescript` itself to 7 until those tools support it.
+
+## Two linters
+
+**`npm run lint` runs Oxlint, then ESLint, and a rule runs in one of them.** `.oxlintrc.json`
+lists what Oxlint runs, and `eslint.config.js` ends with `eslint-plugin-oxlint`, which turns
+those same rules off in ESLint: to move a rule, edit the first file and nothing else. A rule
+goes to Oxlint only once both report the same rules on a file that breaks each one. What stays
+in ESLint is the React Compiler's rules (Oxlint's disagree with them on this code: purity, refs,
+`set-state-in-effect`, `incompatible-library`), `react-refresh/only-export-components`,
+`no-octal` and the Sign in / Sign out rule, which has no Oxlint equivalent. While any
+Compiler rule is on in ESLint, its Babel pass runs on every file.
 
 ## `vitest run` does not run the whole suite — it excludes `src/contract/**` and `src/integration/**`
 

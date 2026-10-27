@@ -301,7 +301,7 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
     await user.type(screen.getByLabelText(/first name/i), 'Test');
     await user.type(screen.getByLabelText(/last name/i), 'User');
     await user.type(screen.getByLabelText(/azuretag/i), 'test_user');
-    await user.type(screen.getByLabelText(/^email$/i), email);
+    await user.type(screen.getByLabelText(/^email address$/i), email);
     await user.type(screen.getByLabelText(/^password$/i), 'Password1!');
     await user.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
     await user.click(screen.getByRole('button', { name: /create account/i }));
@@ -318,7 +318,7 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
     );
     expect(screen.getByText(/sign in with this email/i)).toBeInTheDocument();
     // Field values survive (D15) — the user edits, not retypes.
-    expect(screen.getByLabelText(/^email$/i)).toHaveValue('taken@azurebank.dev');
+    expect(screen.getByLabelText(/^email address$/i)).toHaveValue('taken@azurebank.dev');
   });
 
   it('shows the countdown and disables submit on the shared-bucket 429', async () => {

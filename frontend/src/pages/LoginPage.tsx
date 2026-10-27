@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useState, useSyncExternalStore } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
@@ -15,6 +15,7 @@ import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { emailField } from '../forms/emailField';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
 import {
   CONNECTION_FAILED,
@@ -23,7 +24,12 @@ import {
   SIGN_IN_SERVER_PROBLEM,
 } from '../api/problemMessages';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
-import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
+import {
+  AuthCrossLink,
+  AuthDemoNote,
+  AuthDivider,
+  AuthLayout,
+} from '../components/layout/AuthLayout';
 import { useClaimDemoCopyMutation, useLoginMutation } from '../features/api/apiSlice';
 import { DemoEntry, StartOverDialog } from '../features/demo';
 import {
@@ -45,7 +51,7 @@ import {
 
 // Validation schema
 const loginSchema = z.object({
-  email: z.email('Please enter a valid email address'),
+  email: emailField,
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -386,7 +392,7 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      headline="Banking Made Simple, Secure, and Smart"
+      headline="Banking made simple, secure and smart"
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
       // "Back" is for somebody who has been here. On the demo that is a browser the page offers
       // a copy to; one it offers "Try the demo" has not been, and until 2026-10-06 was greeted
@@ -403,10 +409,7 @@ export function LoginPage() {
           {/* The first screen anyone sees, which is the honest place to say what this is. The two
               claims above are defensible — HTTPS, hashed passwords, and no third party to share
               with — so they stay; what was never defensible was promising a support team. */}
-          Demo project — not a real bank.{' '}
-          <Link to="/contact" style={{ color: 'inherit', textDecoration: 'underline' }}>
-            Contact the developer →
-          </Link>
+          <AuthDemoNote />
         </>
       }
     >
@@ -482,7 +485,9 @@ export function LoginPage() {
         </>
       )}
 
-      <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
+      {/* noValidate: the browser's own check would hide the sentence this form gives for a
+          value that is not an email address. */}
+      <form className={styles.form} noValidate onSubmit={handleSubmit(onSubmit)}>
         <Field
           label="Email address"
           validationState={errors.email ? 'error' : 'none'}

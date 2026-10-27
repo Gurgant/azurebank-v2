@@ -15,14 +15,20 @@ import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { emailField } from '../forms/emailField';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { toFieldName } from '../api/validationErrors';
-import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
+import {
+  AuthCrossLink,
+  AuthDemoNote,
+  AuthDivider,
+  AuthLayout,
+} from '../components/layout/AuthLayout';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
 import { useRegisterMutation } from '../features/api/apiSlice';
 
 // Validation schema — mirrors the backend contract (ValidationRules): AzureTag pattern
-// and the full password policy (upper + lower + digit + special, 8-128).
+// and the full password policy (upper + lower + digit + special, printable ASCII, 8-128).
 const registerSchema = z
   .object({
     firstName: z.string().min(1, 'First name is required').max(50, 'First name is too long'),
@@ -33,7 +39,7 @@ const registerSchema = z
         /^[a-z][a-z0-9_]{2,19}$/,
         'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores (3-20 characters)',
       ),
-    email: z.email('Please enter a valid email address'),
+    email: emailField,
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')
@@ -41,7 +47,11 @@ const registerSchema = z
       .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
       .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
       .regex(/[0-9]/, 'Password must contain at least one number')
-      .regex(/[^a-zA-Z0-9]/, 'Password must contain at least one special character'),
+      .regex(/[^a-zA-Z0-9]/, 'Password must contain at least one special character')
+      .regex(
+        /^[\x20-\x7E]*$/,
+        'Use only letters A to Z, numbers and the symbols on a standard keyboard.',
+      ),
     confirmPassword: z.string().min(1, 'Please confirm your password'),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -217,11 +227,11 @@ export function RegisterPage() {
 
   return (
     <AuthLayout
-      headline="Start Your Financial Journey Today"
-      intro="Join thousands of customers who trust AzureBank for their everyday banking needs. Quick setup, powerful features."
-      title="Create Account"
+      headline="Start banking in a minute"
+      intro="Open an account, then deposit, withdraw and send money in a working demo."
+      title="Create account"
       subtitle="Join AzureBank today"
-      footer="By creating an account, you agree to our Terms of Service and Privacy Policy"
+      footer={<AuthDemoNote />}
     >
       {/* D15: tag-collision-blind dual-path banner — FORM-level, never field-attached,
           neutral copy, "Sign in" pre-fills the typed email via route state. */}
@@ -271,11 +281,13 @@ export function RegisterPage() {
         )}
 
       {/* Register Form */}
-      <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
+      {/* noValidate: the browser's own check would hide the sentence this form gives for a
+          value that is not an email address. */}
+      <form className={styles.form} noValidate onSubmit={handleSubmit(onSubmit)}>
         {/* Name Row */}
         <div className={styles.nameRow}>
           <Field
-            label="First Name"
+            label="First name"
             validationState={errors.firstName ? 'error' : 'none'}
             validationMessage={errors.firstName?.message}
             className={styles.nameField}
@@ -291,7 +303,7 @@ export function RegisterPage() {
           </Field>
 
           <Field
-            label="Last Name"
+            label="Last name"
             validationState={errors.lastName ? 'error' : 'none'}
             validationMessage={errors.lastName?.message}
             className={styles.nameField}
@@ -328,7 +340,7 @@ export function RegisterPage() {
 
         {/* Email */}
         <Field
-          label="Email"
+          label="Email address"
           validationState={errors.email ? 'error' : 'none'}
           validationMessage={errors.email?.message}
         >
@@ -348,7 +360,7 @@ export function RegisterPage() {
           label="Password"
           validationState={errors.password ? 'error' : 'none'}
           validationMessage={errors.password?.message}
-          hint="Min 8 characters, 1 uppercase, 1 lowercase, 1 number"
+          hint="At least 8 characters, with an uppercase letter, a lowercase letter, a number and one character that is not a letter or a digit, such as ! or #."
         >
           <div className={styles.passwordWrapper}>
             <Input
@@ -374,7 +386,7 @@ export function RegisterPage() {
 
         {/* Confirm Password */}
         <Field
-          label="Confirm Password"
+          label="Confirm password"
           validationState={errors.confirmPassword ? 'error' : 'none'}
           validationMessage={errors.confirmPassword?.message}
         >
@@ -409,14 +421,14 @@ export function RegisterPage() {
           type="submit"
           disabled={isLoading || rateLimited}
         >
-          {isLoading ? <Spinner size="tiny" /> : 'Create Account'}
+          {isLoading ? <Spinner size="tiny" /> : 'Create account'}
         </Button>
         <WaitHint active={isLoading} kind="write" />
       </form>
 
       <AuthDivider />
 
-      <AuthCrossLink prompt="Already have an account?" to="/login" label="Sign In" />
+      <AuthCrossLink prompt="Already have an account?" to="/login" label="Sign in" />
     </AuthLayout>
   );
 }

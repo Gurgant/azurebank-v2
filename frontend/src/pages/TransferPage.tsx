@@ -396,7 +396,7 @@ export function TransferPage() {
   // ===== RHF step-1 form =====
   // The balance bound tracks the SELECTED account; defaults resolve once accounts load.
   const [balanceBound, setBalanceBound] = useState(0);
-  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
+  const { control, handleSubmit, setValue, setFocus, watch, formState, trigger } = useForm<
     TransferFormValues,
     unknown,
     TransferFormOutput
@@ -405,6 +405,30 @@ export function TransferPage() {
     mode: 'onChange',
     defaultValues: { fromAccountId: '', recipientTag: '', amount: '' },
   });
+
+  const focusAmountOnForm = useRef(false);
+  useEffect(() => {
+    // The amount input is unmounted on the PIN step: wait for the form and its RHF ref. The flag
+    // is set together with a `toForm()` that cannot be refused, and spent once the form is the
+    // step shown, so no later, unrelated return to the form moves focus.
+    if (!focusAmountOnForm.current || wizard.step !== 'form') return;
+    focusAmountOnForm.current = false;
+    setFocus('amount');
+  }, [wizard.step, setFocus]);
+
+  /*
+    The daily refusal asks to go back to the amount. A send under a retained key answers it while
+    `run` is still in its `try`, and `toForm` refuses under a live key: the refusal handler's own
+    `wizard` is the render the send began in, with a live key and no way to see it dropped. So the
+    handler only asks, and this effect moves once a render says the key is gone.
+  */
+  const [returnToAmount, setReturnToAmount] = useState(false);
+  useEffect(() => {
+    if (!returnToAmount || keyLive) return;
+    setReturnToAmount(false);
+    focusAmountOnForm.current = true;
+    wizard.toForm();
+  }, [returnToAmount, keyLive, wizard]);
 
   const watchedAccountId = watch('fromAccountId');
   const watchedTag = watch('recipientTag');
@@ -823,8 +847,8 @@ export function TransferPage() {
       setAuthorizationHeld(false);
     } else if (refusal?.errorCode === 'DAILY_LIMIT_EXCEEDED') {
       /*
-          The daily outgoing-transfer bound (ADR-0050). The expiry arm's exact shape, for three
-          reasons of its own — and NO `setPinError`, NO navigation.
+          The daily outgoing-transfer bound (ADR-0050). The expiry arm's clean-up, for three reasons
+          of its own — and NO `setPinError` — and then a move the expiry arm does not make.
 
           NO RED BOXES. A1 measured `PinAccessFailedCount` 0 → 0 after three wrong-PIN over-limit
           mints, with 0 authorisations minted: the rung runs before the PIN is ever verified, so
@@ -838,10 +862,15 @@ export function TransferPage() {
           (`shouldKeepKey`), but leaning on an invariant three files away to keep a stale reference
           harmless is exactly what the arm above refuses to do.
 
-          NO NAVIGATION. SELF_TRANSFER_NOT_ALLOWED and RECIPIENT_NO_ACCOUNT already fall through this
-          rung without moving the user, the banner is 'input'-scoped so it survives the two Backs,
-          and `exitLocked` is false after a 422 so Back is live. WHERE the user should land is a flow
-          decision that belongs with #165/#166.
+          RETURN TO THE AMOUNT. The amount is what the visitor has to change, and a PIN cannot
+          help. The banner is 'input'-scoped, so it survives the move to the form. A 422 drops the
+          key, but a resend under a retained key reaches this arm before the page has rendered
+          without it, and `toForm()` refuses under a live key: the move waits for the effect on
+          `returnToAmount`, which acts once `keyLive` is false.
+
+          A MINT under a held key (the send before it answered AUTHORIZATION_EXPIRED) drops no key,
+          so that effect would wait for ever and Back stays disabled. There the page does what the
+          closed-account arm below does: `requireVerify` lets the key go and shows the check view.
 
           Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
           leaves the mint body either way, and every non-PIN refusal at this rung already retains it
@@ -853,6 +882,8 @@ export function TransferPage() {
       setPinNonce((n) => n + 1);
       lastAuthorization.current = null;
       setAuthorizationHeld(false);
+      if (phase === 'mint' && keyLive) wizard.requireVerify();
+      else setReturnToAmount(true);
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';

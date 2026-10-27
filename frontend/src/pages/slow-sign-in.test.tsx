@@ -50,10 +50,10 @@ async function register() {
   await userEvent.type(await screen.findByLabelText(/first name/i), 'Test');
   await userEvent.type(screen.getByLabelText(/last name/i), 'User');
   await userEvent.type(screen.getByLabelText(/azuretag/i), 'test_user');
-  await userEvent.type(screen.getByLabelText(/^email$/i), 'fresh@azurebank.dev');
+  await userEvent.type(screen.getByLabelText(/^email address$/i), 'fresh@azurebank.dev');
   await userEvent.type(screen.getByLabelText(/^password$/i), 'Password1!');
   await userEvent.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
-  return screen.getByRole('button', { name: 'Create Account' });
+  return screen.getByRole('button', { name: 'Create account' });
 }
 
 describe('a slow sign-in or registration says so', () => {

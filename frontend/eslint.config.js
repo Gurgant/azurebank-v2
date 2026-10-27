@@ -2,6 +2,7 @@ import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
+import oxlint from 'eslint-plugin-oxlint'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
@@ -47,4 +48,7 @@ export default defineConfig([
       ],
     },
   },
+  // Last, so that it wins: turns off the rules that `.oxlintrc.json` runs, which `npm run lint`
+  // runs first. A rule is moved by editing that file, never by a line here.
+  ...oxlint.buildFromOxlintConfigFile('./.oxlintrc.json'),
 ])
