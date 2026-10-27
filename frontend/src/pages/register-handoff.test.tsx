@@ -23,7 +23,7 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, email: st
   await user.type(screen.getByLabelText(/first name/i), 'Test');
   await user.type(screen.getByLabelText(/last name/i), 'User');
   await user.type(screen.getByLabelText(/azuretag/i), 'test_user');
-  await user.type(screen.getByLabelText(/^email$/i), email);
+  await user.type(screen.getByLabelText(/^email address$/i), email);
   await user.type(screen.getByLabelText(/^password$/i), 'Password1!');
   await user.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
   await user.click(screen.getByRole('button', { name: /create account/i }));
@@ -104,7 +104,7 @@ describe('register: a refusal that names fields', () => {
     await user.type(screen.getByLabelText(/first name/i), 'Test');
     await user.type(screen.getByLabelText(/last name/i), 'User');
     await user.type(screen.getByLabelText(/azuretag/i), 'test_user');
-    await user.type(screen.getByLabelText(/^email$/i), 'fresh@azurebank.dev');
+    await user.type(screen.getByLabelText(/^email address$/i), 'fresh@azurebank.dev');
     await user.type(screen.getByLabelText(/^password$/i), 'Password1!');
     await user.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
   }
@@ -132,13 +132,13 @@ describe('register: a refusal that names fields', () => {
     expect(screen.getByText('This handle is reserved.')).toBeVisible();
     expect(screen.queryByText('A second sentence that is not shown.')).not.toBeInTheDocument();
     expect({
-      email: screen.getByLabelText(/^email$/i).getAttribute('aria-invalid'),
+      email: screen.getByLabelText(/^email address$/i).getAttribute('aria-invalid'),
       azureTag: screen.getByLabelText(/azuretag/i).getAttribute('aria-invalid'),
       password: screen.getByLabelText(/^password$/i).getAttribute('aria-invalid'),
       firstName: screen.getByLabelText(/first name/i).getAttribute('aria-invalid'),
     }).toEqual({ email: 'true', azureTag: 'true', password: 'false', firstName: 'false' });
     // What was typed is kept: the visitor corrects, and does not start again.
-    expect(screen.getByLabelText(/^email$/i)).toHaveValue('fresh@azurebank.dev');
+    expect(screen.getByLabelText(/^email address$/i)).toHaveValue('fresh@azurebank.dev');
     expect(screen.queryByText('PIN SETUP PAGE')).not.toBeInTheDocument();
   });
 
@@ -198,7 +198,7 @@ describe('register: the limiter lets go', () => {
     await typing.type(screen.getByLabelText(/first name/i), 'Test');
     await typing.type(screen.getByLabelText(/last name/i), 'User');
     await typing.type(screen.getByLabelText(/azuretag/i), 'test_user');
-    await typing.type(screen.getByLabelText(/^email$/i), 'fresh@azurebank.dev');
+    await typing.type(screen.getByLabelText(/^email address$/i), 'fresh@azurebank.dev');
     await typing.type(screen.getByLabelText(/^password$/i), 'Password1!');
     await typing.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
 

@@ -20,7 +20,7 @@ import { RegisterPage } from '../../pages/RegisterPage';
 
 const PAGES = [
   { name: 'sign in', ui: <LoginPage />, entry: '/login', title: 'Sign in to AzureBank' },
-  { name: 'register', ui: <RegisterPage />, entry: '/register', title: 'Create Account' },
+  { name: 'register', ui: <RegisterPage />, entry: '/register', title: 'Create account' },
 ] as const;
 
 describe.each(PAGES)('$name', ({ ui, entry, title }) => {
@@ -74,8 +74,8 @@ describe('the two auth pages', () => {
     const login = panelTextOf(<LoginPage />, '/login');
     const register = panelTextOf(<RegisterPage />, '/register');
 
-    expect(login).toContain('Banking Made Simple');
-    expect(register).toContain('Start Your Financial Journey');
+    expect(login).toContain('Banking made simple, secure and smart');
+    expect(register).toContain('Start banking in a minute');
     expect(login).not.toBe(register);
 
     for (const shared of ['Bank-grade security protection', 'AzureBank']) {
@@ -90,6 +90,6 @@ describe('the two auth pages', () => {
     unmount();
 
     renderWithProviders(<RegisterPage />, { routerEntries: ['/register'] });
-    expect(screen.getByText(/Terms of Service and Privacy Policy/i)).toBeInTheDocument();
+    expect(screen.getByText(/Demo project — not a real bank\./)).toBeInTheDocument();
   });
 });
