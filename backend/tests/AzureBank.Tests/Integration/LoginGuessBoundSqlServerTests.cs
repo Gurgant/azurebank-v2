@@ -271,33 +271,68 @@ public sealed class LoginGuessBoundSqlServerTests : IDisposable
     /// <summary>One request per password, all released by one signal, each on a client of its own.</summary>
     private async Task<HttpStatusCode[]> SendTogetherAsync(string email, string[] passwords)
     {
-        var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sends = passwords.Select(password => Task.Run(async () =>
+        var clients = CreateClients(passwords.Length);
+        try
         {
-            using var client = _host!.CreateClient();
-            await go.Task;
-            return (await LoginAsync(client, email, password)).Status;
-        })).ToArray();
-        go.SetResult();
-        return await Task.WhenAll(sends);
+            var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var sends = passwords.Select((password, i) => Task.Run(async () =>
+            {
+                await go.Task;
+                return (await LoginAsync(clients[i], email, password)).Status;
+            })).ToArray();
+            go.SetResult();
+            return await Task.WhenAll(sends);
+        }
+        finally
+        {
+            DisposeAll(clients);
+        }
     }
 
     private async Task<HttpStatusCode[]> SendPinEnrolmentsTogetherAsync(string token, string[] passwords)
     {
-        var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sends = passwords.Select(password => Task.Run(async () =>
+        var clients = CreateClients(passwords.Length);
+        try
         {
-            await go.Task;
-            using var response = await EnrolPinAsync(token, password);
-            return response.StatusCode;
-        })).ToArray();
-        go.SetResult();
-        return await Task.WhenAll(sends);
+            var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var sends = passwords.Select((password, i) => Task.Run(async () =>
+            {
+                await go.Task;
+                using var response = await EnrolPinAsync(clients[i], token, password);
+                return response.StatusCode;
+            })).ToArray();
+            go.SetResult();
+            return await Task.WhenAll(sends);
+        }
+        finally
+        {
+            DisposeAll(clients);
+        }
+    }
+
+    /// <summary>
+    /// Made one after another on the test's thread, never inside the burst: the factory adds every
+    /// client it makes to a list without a lock, and two adds at once can leave in it a null that the
+    /// factory's <c>Dispose</c> throws on, after every assertion has passed.
+    /// </summary>
+    private HttpClient[] CreateClients(int count) => [.. Enumerable.Range(0, count).Select(_ => _host!.CreateClient())];
+
+    private static void DisposeAll(HttpClient[] clients)
+    {
+        foreach (var client in clients)
+        {
+            client.Dispose();
+        }
     }
 
     private async Task<HttpResponseMessage> EnrolPinAsync(string token, string password)
     {
         using var client = _host!.CreateClient();
+        return await EnrolPinAsync(client, token, password);
+    }
+
+    private static async Task<HttpResponseMessage> EnrolPinAsync(HttpClient client, string token, string password)
+    {
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await client.PostAsJsonAsync(
             "/api/auth/pin", new SetPinRequest { Pin = "424242", Password = password }, Json);
