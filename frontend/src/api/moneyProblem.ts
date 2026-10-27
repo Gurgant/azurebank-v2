@@ -230,19 +230,14 @@ export function classifyMoneyProblem(
     members, the classifier copy … and derives `remaining` there as `limit − used`". Rendering the
     server's sentence would leave all four members typed and unread.
 
-    Descriptive, not prescriptive: "lower the amount" would be false at remaining exactly 0, which
-    A3.3 measured (used 5000.0 of limit 5000). The CEILING is deliberately not named — it is not
-    actionable, and one fewer figure is one fewer copy decision taken away from U8 (#165/#166), which
-    may reshape this string entirely. `limit - used` here is the refusal saying what it refused; it
-    is NOT a persistent "remaining today" surface, which D8 assigns to U8 along with the unbuilt
-    GET /api/transactions/allowance.
+    Positive headroom says this amount is too high and names what can still be sent. Once the day
+    is exhausted, the sentence names the ceiling and says when sending can resume. `limit - used`
+    here is the refusal saying what it refused; it is NOT a persistent "remaining today" surface,
+    which D8 assigns to U8 along with the unbuilt GET /api/transactions/allowance.
 
     Scope 'input' on EVERY leg, decided by this module's own reviewer test above: the refusal names
     the amount, the amount is editable on the form step, and only an 'input' message survives
-    `goToStep`'s keepInputErrors rule through `toReview()`/`toForm()` to the screen where the amount
-    lives. Today this code falls through to the tail's `problem.detail || opts.fallback` at 'attempt'
-    scope, so the message is wiped by exactly the transition that takes the user to where they can
-    fix it — a second defect this branch closes.
+    `goToStep`'s keepInputErrors rule through `toForm()` to the screen where the amount lives.
 
     Unreachable from InternalTransferPage: ADR-0050 D2 excludes internal transfers from the
     aggregate, and A5.1 measured an internal transfer of 100 answering 201 with the day exhausted.
@@ -258,17 +253,20 @@ export function classifyMoneyProblem(
     }
     // NOT named `remaining`: ADR-0050 D7 uses that word for the NUMBER `limit - used`, and a
     // reader arriving from the record would misread a sentence bound to it.
-    const headroomSentence = `Daily transfer limit reached — ${formatCurrency(limit - used)} left today.`;
-    return {
-      kind: 'message',
-      scope: 'input',
-      // `resetsAt` is a UTC instant and `formatDateTime` renders it in the VIEWER's zone. That is
-      // correct for an instant; it is also why any test asserting this half must pin TZ.
-      text:
-        typeof resetsAt === 'string'
-          ? `${headroomSentence} The limit resets on ${formatDateTime(resetsAt)}.`
-          : headroomSentence,
-    };
+    // `resetsAt` is a UTC instant and `formatDateTime` renders it in the VIEWER's zone. That is
+    // correct for an instant; it is also why a test pinning the rendered date must pin TZ.
+    // A string that is not a date is treated as absent: `formatDateTime` throws on it.
+    const resetDate =
+      typeof resetsAt === 'string' && !Number.isNaN(new Date(resetsAt).getTime())
+        ? formatDateTime(resetsAt)
+        : null;
+    const refusal =
+      limit - used > 0
+        ? `That's more than you can send today. You can send up to ${formatCurrency(limit - used)} more ` +
+          (resetDate ? `before the limit resets on ${resetDate}.` : 'today.')
+        : `You've reached today's transfer limit of ${formatCurrency(limit)}.` +
+          (resetDate ? ` You can send again after it resets on ${resetDate}.` : '');
+    return { kind: 'message', scope: 'input', text: refusal };
   }
   if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
     return { kind: 'message', text: 'Insufficient funds for this transfer.', scope: 'input' };

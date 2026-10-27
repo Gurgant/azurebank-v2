@@ -199,14 +199,21 @@ describe('the client mints an authorisation and presents it', () => {
 
     // (a) The client's composed sentence, not the server's. The reset instant is left out of the
     // assertion because `formatDateTime` renders a UTC instant in the viewer's LOCAL zone.
-    expect(await screen.findByText(/Daily transfer limit reached/)).toHaveTextContent(
-      '€100.00 left today',
+    expect(await screen.findByText(/That's more than you can send today\./)).toHaveTextContent(
+      'You can send up to €100.00 more',
     );
 
-    // (b) The boxes are EMPTIED and NOT red. Emptied boxes are the only thing that distinguishes
-    // this arm from the generic fall-through; the absence of the error state is A1's
-    // "PinAccessFailedCount 0 -> 0" rendered — the API charges no attempt, so neither may the UI
-    // suggest the lockout came closer.
+    // (b) The amount is what must change, so the form takes focus and the PIN boxes disappear.
+    // Once the page has left the PIN step, the refusal's own clean-up of the boxes cannot be seen:
+    // Continue clears and remounts them (`onReviewed`). The tail below checks that the way back
+    // to the PIN step still starts empty and unmarked, not the refusal's clean-up.
+    const amount = await screen.findByLabelText('Transfer amount');
+    await waitFor(() => expect(amount).toHaveFocus());
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+    expect(screen.getByText('A. Friend')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    expect(await screen.findByText('€50.00')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await waitFor(() => {
       expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     });
