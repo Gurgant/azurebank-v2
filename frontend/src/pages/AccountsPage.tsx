@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -423,27 +423,48 @@ export function AccountsPage() {
   const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
   // One sentence for the last action that finished. The next action clears it as it starts.
   const [sentence, setSentence] = useState<string | null>(null);
+  // A dialog's sentence, held until the dialog has gone and said in a task after that commit's.
+  // Written in the commit that removes the dialog, the status is still under the aria-hidden that
+  // tabster lifts from the page only after that commit, and it is shown with the page, not said
+  // as a change.
+  const [heldSentence, setHeldSentence] = useState<string | null>(null);
   // The account the last action deleted, by id: two accounts may share a name.
   const [deletedId, setDeletedId] = useState<string | null>(null);
   // Counts the actions started, so that an answer which arrives after another action began says
   // nothing over it.
   const actionsStarted = useRef(0);
   // The action count when the Create or Rename dialog opened: its answer is said only while that
-  // is still the latest action, as set-primary's is.
+  // is still the latest action, as set-primary's is. Closing either dialog counts as an action,
+  // so that an answer which arrives after a Cancel says nothing; on a save the sentence is held
+  // before the dialog closes.
   const [createOpenedAt, setCreateOpenedAt] = useState(0);
   const [renameOpenedAt, setRenameOpenedAt] = useState(0);
 
   const startAction = () => {
     actionsStarted.current += 1;
     setSentence(null);
+    setHeldSentence(null);
     setDeletedId(null);
   };
 
+  const dialogOpen = isCreateOpen || renameTarget !== null || deleteTarget !== null;
+  useEffect(() => {
+    if (heldSentence === null || dialogOpen) return;
+    const timer = setTimeout(() => {
+      setSentence(heldSentence);
+      setHeldSentence(null);
+    });
+    return () => clearTimeout(timer);
+  }, [heldSentence, dialogOpen]);
+
   // As the dialog unmounts, useReturnFocus gives focus back to the card's menu button, still in
   // the page until the list read answers. Focus falls to body when the card leaves, and that is
-  // the moment to land on the heading. The deletion on its own is earlier than that.
+  // the moment to land on the heading. The deletion on its own is earlier than that. A list read
+  // that fails takes every card away for its error bar, while the list kept from before still
+  // holds the account.
   const headingRef = useFocusWhenLost<HTMLHeadingElement>(
-    deletedId !== null && !accounts.some((account) => account.id === deletedId),
+    deletedId !== null &&
+      (problem !== undefined || !accounts.some((account) => account.id === deletedId)),
   );
 
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
@@ -718,10 +739,13 @@ export function AccountsPage() {
           open
           onDone={(name) => {
             if (actionsStarted.current === createOpenedAt) {
-              setSentence(`Your new account "${name}" is open.`);
+              setHeldSentence(`Your new account "${name}" is open.`);
             }
           }}
-          onClose={() => setIsCreateOpen(false)}
+          onClose={() => {
+            actionsStarted.current += 1;
+            setIsCreateOpen(false);
+          }}
         />
       )}
 
@@ -730,10 +754,13 @@ export function AccountsPage() {
           account={{ id: renameTarget.id, name: renameTarget.name }}
           onDone={(name) => {
             if (actionsStarted.current === renameOpenedAt) {
-              setSentence(`"${renameTarget.name}" is now called "${name}".`);
+              setHeldSentence(`"${renameTarget.name}" is now called "${name}".`);
             }
           }}
-          onClose={() => setRenameTarget(null)}
+          onClose={() => {
+            actionsStarted.current += 1;
+            setRenameTarget(null);
+          }}
         />
       )}
 
@@ -745,8 +772,9 @@ export function AccountsPage() {
           account={{ id: deleteTarget.id, name: deleteTarget.name }}
           onDeleted={(name) => {
             setDeletedId(deleteTarget.id);
-            setSentence(`"${name}" was deleted.`);
+            setHeldSentence(`"${name}" was deleted.`);
           }}
+          onAlreadyClosed={() => setDeletedId(deleteTarget.id)}
           onClose={() => setDeleteTarget(null)}
         />
       )}

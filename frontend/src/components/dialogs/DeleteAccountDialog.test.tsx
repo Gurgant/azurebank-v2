@@ -59,17 +59,25 @@ function seedTempFund() {
 function renderDialog(account = TEMP_FUND, store: TestStore = makeTestStore()) {
   const onClose = vi.fn();
   const onDeleted = vi.fn();
+  const onAlreadyClosed = vi.fn();
   const { router } = renderWithProviders(
     <Routes>
       <Route
         path="/"
-        element={<DeleteAccountDialog account={account} onClose={onClose} onDeleted={onDeleted} />}
+        element={
+          <DeleteAccountDialog
+            account={account}
+            onClose={onClose}
+            onDeleted={onDeleted}
+            onAlreadyClosed={onAlreadyClosed}
+          />
+        }
       />
       <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'], store },
   );
-  return { onClose, onDeleted, store, router };
+  return { onClose, onDeleted, onAlreadyClosed, store, router };
 }
 
 /** Count every GET /api/accounts the store makes from now on — a list-tag invalidation refetches. */
@@ -495,7 +503,7 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('ACCOUNT_NOT_FOUND on the DELETE closes and refetches the list', async () => {
+  it('ACCOUNT_NOT_FOUND on the DELETE closes, says the account was closed already, and refetches the list', async () => {
     /*
       Measured: 404 ACCOUNT_NOT_FOUND once the account is gone. The dialog treats it as
       already closed, and the mutation invalidates the LIST tag on that answer. Observed through
@@ -516,13 +524,13 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
         }),
       ),
     );
-    const { onClose, onDeleted } = renderDialog(TEMP_FUND, store);
+    const { onClose, onDeleted, onAlreadyClosed } = renderDialog(TEMP_FUND, store);
     await reachPinStep();
     await enterPin();
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(onDeleted).toHaveBeenCalledTimes(1);
-    expect(onDeleted).toHaveBeenCalledWith(TEMP_FUND.name);
+    expect(onAlreadyClosed).toHaveBeenCalledTimes(1);
+    expect(onDeleted).not.toHaveBeenCalled();
     await waitFor(() => expect(gets.lists).toBe(1)); // the refetch of the refusal's own tag
   });
 

@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
 import { mockState, seedMockSession } from '../mocks/state';
@@ -8,6 +8,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth/StepUpModal';
 import { AccountsPage } from './AccountsPage';
 import { REVEAL_TIMEOUT_MS } from '../components/AccountNumberField';
+import { installFakeClock } from '../test/outage';
 
 // AccountsPage does not render the root step-up modal (App does), so pair them here: the reveal
 // call rides baseQueryWithStepUp into this shared modal exactly as in production.
@@ -50,6 +51,19 @@ beforeEach(() => {
 */
 beforeEach(() => {
   seedMockSession();
+});
+
+/*
+  The copy tests put a clipboard of their own on the page, and the files of a worker share that
+  page: what was there before each test goes back after it, or nothing when nothing was.
+*/
+let pageClipboard: PropertyDescriptor | undefined;
+beforeEach(() => {
+  pageClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+});
+afterEach(() => {
+  if (pageClipboard) Object.defineProperty(navigator, 'clipboard', pageClipboard);
+  else Reflect.deleteProperty(navigator, 'clipboard');
 });
 
 describe('account number reveal (ADR-0020)', () => {
@@ -191,7 +205,7 @@ describe('account number reveal (ADR-0020)', () => {
   });
 
   it('a copy that finishes after the number was hidden again does not say Copied', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    installFakeClock();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     let finishCopy = () => {};
     const writeText = vi.fn(
