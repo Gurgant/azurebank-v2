@@ -75,7 +75,7 @@ await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () => { /* 
 
 ## Frontend test infrastructure
 
-**The frontend type gate is `npm run build` (`tsc -b`), not `tsc --noEmit`.** The root tsconfig
+**The frontend type gate is `npm run build` (the native compiler's `tsc -b`), not `tsc --noEmit`.** The root tsconfig
 is solution-style, so `--noEmit` skips the project references and misses errors the build
 catches.
 
@@ -112,7 +112,7 @@ and when anything looks hung, check the network tab and the DOM before calling i
 ## MSW mocks
 
 - **A block comment cannot quote the glob `*` + `/api/*`.** The `*` followed by `/` closes the
-  comment, and what follows becomes code. It compiled, built and passed every test: only eslint's
+  comment, and what follows becomes code. It compiled, built and passed every test: only lint's
   `no-unused-expressions` noticed. Describe the glob in prose, or put it in a `//` line comment.
 - **A catch-all that returns `undefined` disables `onUnhandledRequest`.** `sessionActivity` is
   registered over every `/api` path and returns `undefined` to fall through to the real handler.

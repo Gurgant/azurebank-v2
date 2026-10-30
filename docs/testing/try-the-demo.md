@@ -5,7 +5,7 @@ For a person who wants to try everything. You need no knowledge of the code.
 Everything below was done on 2026-10-06, on the demo as this repository's two compose files
 run it on one machine, in a Chromium browser, in two walks: the first on one copy, the second,
 which followed this page, on two more. Where a line says **not seen**, the words come from the
-code and neither walk reached them. Five lines describe screens that changed after the walks,
+code and neither walk reached them. Thirteen lines describe screens that changed after the walks,
 and tests hold them. [The last section](#where-these-facts-come-from) names the files.
 
 ## What the demo is, and is not
@@ -119,10 +119,9 @@ it is the one a screen reader reads.
    transaction number that starts with `TXN-`, the date and time, the description and "Balance
    after". Press **Back**: it leads to History, not back to the home page.
 6. The menu on the left has **Transfer**, Home, Accounts, History, Contact and Settings, and
-   **Sign out** at the bottom. The menu is as tall as the page, so on a long page "Sign out" is
-   below the window: scroll to the bottom of the page to reach it. On the second walk's home
-   page it was about 1,600 pixels down, in a window 720 high. "Contact" opens "About this
-   project".
+   **Sign out** at the bottom. The menu stays in view while the page scrolls, so "Sign out" does
+   too; in a window shorter than the menu, the menu scrolls by itself. "Contact" opens the page
+   "Contact": a card about the author and a card "About this project".
 
 ### 2. Show a full account number
 
@@ -207,8 +206,10 @@ A deposit asks for no PIN.
    line of three sums: "Income", "Expenses", "Net".
 2. Press **Deposits**, **Withdrawals**, **Transfers**, then **All**. You should see only entries
    of that kind. "Transfers" shows money sent, money received and moves between your own
-   accounts. The three sums stay as they are: they add up every entry loaded so far, of every
-   kind. They moved when "Load more" added entries.
+   accounts. The three sums follow: they add up the rows shown, and a line under them says which,
+   for example "Totals of the 20 transactions shown below." Failed and reversed rows are not
+   counted, and the line then says so. The sums change again when "Load more" adds entries, and
+   when **Show less**, which then appears, hides them.
 3. Press **Load more** at the bottom. You should see older entries added under the first twenty.
    The second walk's copy held 27 entries by then: one press showed them all, and the button
    went.
@@ -318,9 +319,8 @@ and all it holds is invented money.
 
 ## Sign out
 
-Press **Sign out** at the bottom of the menu: on a long page, scroll down to it (journey 1,
-step 6). You should see the sign-in page, offering the copy your browser remembers. Signing
-out does not forget the copy.
+Press **Sign out** at the bottom of the menu. You should see the sign-in page, offering the copy
+your browser remembers. Signing out does not forget the copy.
 
 On a phone the same button is under **More**, and Settings has **Sign out** too. The walk
 pressed the first of the three.
@@ -391,8 +391,10 @@ after the lock. A right PIN is also meant to start the count of wrong ones again
 seen**). One wrong PIN does no harm: the second walk typed one on a payment and then the right
 one in the same boxes, and the payment went through. It did not lock a PIN.
 
-**F. Five wrong passwords.** "Too many failed sign-in attempts — your account is temporarily
-locked.", with a clock. **Not seen.**
+**F. Five wrong passwords.** The form answers every try past the fifth as it answers a wrong
+password, "Invalid email or password. After 5 failed attempts, sign-in is paused for 15
+minutes.", whatever password is typed, and with no clock: no answer says that a lock stands.
+**Not seen.**
 
 **G. Ten a minute.** Signing in, getting a copy and changing your handle share ten tries a
 minute. Past them the sign-in page says "Too many attempts from your connection." and counts
@@ -407,9 +409,11 @@ page shows then was not looked at.
 
 **J. €5,000.00 a day.** It counts money sent to other people in one day, by the clock in UTC.
 Moves between your own accounts, deposits and withdrawals do not count. A payment that would
-pass it is refused after the PIN, and no money moves: "Daily transfer limit reached — €4,974.00
-left today. The limit resets on October 7, 2026 · 2:00 AM." The time is midnight UTC in your
-own time zone. Your copy's history can already hold a payment dated today: the walk's held one
+pass it is refused after the PIN, and no money moves. The page goes back to the form, with the
+cursor in the amount, and says "That's more than you can send today. You can send up to
+€4,974.00 more before the limit resets on October 7, 2026 · 2:00 AM." With nothing left to send
+it says "You've reached today's transfer limit of €5,000.00. You can send again after it resets
+on October 7, 2026 · 2:00 AM." The time is midnight UTC in your own time zone. Your copy's history can already hold a payment dated today: the walk's held one
 of €25.00.
 
 **K. Signed in.** See [Sign out](#sign-out).
@@ -486,7 +490,7 @@ Leave out:
 `compose.demo.yaml`, at `http://localhost:5000`. A Chromium browser without a window, driven by
 a script, 1280 by 720 pixels and 390 by 844, the light theme and the dark. Every "you should
 see" above was on the screen then, except the lines marked **not seen**, the lines the second
-walk corrected and the three named below. No other browser was tried. The stack was already
+walk corrected and the thirteen named below. No other browser was tried. The stack was already
 running, and the walk did not check which commit it was built from; the code was read at commit
 `a3de523a`.
 
@@ -500,7 +504,7 @@ not keep the copy. What it corrected it also read in the code:
 [`WithdrawDialog.tsx`](../../frontend/src/components/dialogs/WithdrawDialog.tsx) for the line
 under a withdrawal's amount.
 
-**After the walks.** Five lines describe screens that changed after both walks, and neither saw
+**After the walks.** Thirteen lines describe screens that changed after both walks, and neither saw
 them. The repository's tests hold them: the sign-in page's title
 ([`LoginPage.test.tsx`](../../frontend/src/pages/LoginPage.test.tsx)), the sentence of the
 dialog in journey 2
@@ -509,12 +513,24 @@ step of journey 11, at 375 pixels on the home page and on History
 ([`deposit.spec.ts`](../../frontend/e2e/deposit.spec.ts)), and the panel's two sentences about
 the copy's end, the longer one in the browser that keeps the copy and the shorter one of a
 second browser
-([`DemoCopyPanel.test.tsx`](../../frontend/src/features/demo/DemoCopyPanel.test.tsx)).
+([`DemoCopyPanel.test.tsx`](../../frontend/src/features/demo/DemoCopyPanel.test.tsx)), the menu
+that stays in view in journey 1 and the first line of "Sign out"
+([`sidebar.test.tsx`](../../frontend/src/components/layout/sidebar.test.tsx)), the page
+"Contact" in journey 1
+([`SectionTitle.test.tsx`](../../frontend/src/components/shared/SectionTitle.test.tsx)), the
+three sums in journey 7 ([`history.test.tsx`](../../frontend/src/pages/history.test.tsx)), the
+Session group in journey 9
+([`settings.test.tsx`](../../frontend/src/pages/settings.test.tsx)), the answer to a wrong pair
+under "Coming back" and limit F
+([`LoginPage.test.tsx`](../../frontend/src/pages/LoginPage.test.tsx)), and limit J, whose
+sentences are in [`moneyProblem.ts`](../../frontend/src/api/moneyProblem.ts)
+([`transfer-behaviour.test.tsx`](../../frontend/src/pages/transfer-behaviour.test.tsx)).
 
 **The words not seen** are typed as they stand in
 [`frontend/src/features/demo/demoWords.ts`](../../frontend/src/features/demo/demoWords.ts),
 [`frontend/src/pages/LoginPage.tsx`](../../frontend/src/pages/LoginPage.tsx),
-[`frontend/src/pages/TransferPage.tsx`](../../frontend/src/pages/TransferPage.tsx) and
+[`frontend/src/pages/TransferPage.tsx`](../../frontend/src/pages/TransferPage.tsx),
+[`frontend/src/api/problemMessages.ts`](../../frontend/src/api/problemMessages.ts) and
 [`DemoRefusalException.cs`](../../backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs).
 The other lines marked not seen are read from
 [`PinService.cs`](../../backend/src/AzureBank.Api/Services/Implementations/PinService.cs) (a
