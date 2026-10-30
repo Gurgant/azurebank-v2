@@ -222,6 +222,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     error={invalidField === 'current'}
                     autoFocus={focusField === 'current'}
                     ariaLabel="Current PIN"
+                    revealLabel="current PIN"
                     ariaDescribedBy={describedBy('current')}
                   />
                 </div>
@@ -233,6 +234,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     length={PIN_LENGTH}
                     disabled={isLoading || locked}
                     ariaLabel="New PIN"
+                    revealLabel="new PIN"
                     purpose="new"
                   />
                 </div>
@@ -247,6 +249,7 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
                     error={invalidField === 'confirm'}
                     autoFocus={focusField === 'confirm'}
                     ariaLabel="Confirm new PIN"
+                    revealLabel="confirmed PIN"
                     ariaDescribedBy={describedBy('confirm')}
                     purpose="new"
                   />
