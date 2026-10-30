@@ -402,6 +402,11 @@ export function HistoryPage() {
 
   const totalsCaption = shownTotalsCaption(activeFilter, filteredTransactions);
 
+  const hasRows = filteredTransactions.length > 0;
+  const moreRowsExist = hasNextPage || visiblePages < loadedPages;
+  // The API has no type filter, so a filter can say none exist only once it has seen every row.
+  const noneInRowsSoFar = activeFilter !== 'all' && moreRowsExist;
+
   /*
     Under the rows, or under the empty state when the loaded pages hold none: the words of a slow
     next page or of the whole list read again, and the alert for a failure of either. In the page
@@ -495,9 +500,14 @@ export function HistoryPage() {
               )}
             </div>
 
-            {/* Transaction List */}
-            {filteredTransactions.length > 0 ? (
-              <div className={styles.transactionList}>
+            {/* Transaction List, or the empty state in its place. One box with the buttons and the
+                feedback at the same place in it, so that they are the same nodes when rows take the
+                empty state's place: a press that shows a hidden page keeps its focus, and a slow
+                wait's hint can still say "Loaded.", which a hint drawn anew with the rows could
+                not. A press that fetches a page disables the button, so focus falls to the page,
+                as it does under the rows. */}
+            <div className={hasRows ? styles.transactionList : styles.emptyState}>
+              {hasRows ? (
                 <TransactionTable>
                   <TransactionHead />
                   <TransactionBody>
@@ -515,14 +525,36 @@ export function HistoryPage() {
                     ))}
                   </TransactionBody>
                 </TransactionTable>
+              ) : (
+                <>
+                  <div className={styles.emptyIcon}>
+                    <History24Filled style={{ width: '32px', height: '32px' }} />
+                  </div>
+                  {/* The filter has seen only some of the rows, so "No Transactions" would be
+                      untrue: these words stand in for both lines, once. */}
+                  <Text className={styles.emptyTitle}>
+                    {noneInRowsSoFar ? 'None in the rows loaded so far.' : 'No Transactions'}
+                  </Text>
+                  {!noneInRowsSoFar && (
+                    <Text className={styles.emptySubtitle}>
+                      {activeFilter === 'all'
+                        ? 'Your transactions will appear here.'
+                        : 'No transactions found for the selected filter.'}
+                    </Text>
+                  )}
+                </>
+              )}
 
-                {/* Expanding used to be one-way: every press added a page and nothing took one
-                    away, so a long history left you with hundreds of rows and only a reload to get
-                    back. "Show less" hides pages rather than dropping them — the cache keeps them,
-                    so re-expanding costs nothing and no request is repeated. */}
-                <div className={styles.loadMoreContainer}>
+              {/* Expanding used to be one-way: every press added a page and nothing took one
+                  away, so a long history left you with hundreds of rows and only a reload to get
+                  back. "Show less" hides pages rather than dropping them — the cache keeps them,
+                  so re-expanding costs nothing and no request is repeated. */}
+              <div className={hasRows ? styles.loadMoreContainer : styles.afterWait}>
+                {/* Under the rows the row of buttons is always there; in the empty state a box with
+                    nothing in it would still take the column's gap. */}
+                {(hasRows || moreRowsExist || visiblePages > 1) && (
                   <div className={styles.loadMoreButtons}>
-                    {(hasNextPage || visiblePages < loadedPages) && (
+                    {moreRowsExist && (
                       <Button
                         appearance="secondary"
                         disabled={isFetchingNextPage}
@@ -537,25 +569,12 @@ export function HistoryPage() {
                       </Button>
                     )}
                   </div>
-                  {/* No "Stop waiting" here: the rows already loaded stay readable while the next
-                      page or the list is asked for again. */}
-                  {rowsFeedback}
-                </div>
-              </div>
-            ) : (
-              <div className={styles.emptyState}>
-                <div className={styles.emptyIcon}>
-                  <History24Filled style={{ width: '32px', height: '32px' }} />
-                </div>
-                <Text className={styles.emptyTitle}>No Transactions</Text>
-                <Text className={styles.emptySubtitle}>
-                  {activeFilter === 'all'
-                    ? 'Your transactions will appear here.'
-                    : 'No transactions found for the selected filter.'}
-                </Text>
+                )}
+                {/* No "Stop waiting" here: the rows already loaded stay readable while the next
+                    page or the list is asked for again. */}
                 {rowsFeedback}
               </div>
-            )}
+            </div>
           </>
         )}
       </div>
