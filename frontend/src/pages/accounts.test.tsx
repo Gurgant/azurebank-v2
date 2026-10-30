@@ -116,6 +116,11 @@ describe('create account (A4)', () => {
     // Success closes the dialog; the new account arrives ONLY through the
     // {Account,'LIST'} invalidation refetch — the page never hand-patches the cache.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(
+      screen
+        .getByText('Your new account "Holiday Fund" is open.', { exact: true })
+        .closest('[role="status"]'),
+    ).not.toBeNull();
     expect(await screen.findByText('Holiday Fund')).toBeInTheDocument();
     /*
       The server-assigned (already-masked) number renders as bullets like every other. DERIVED

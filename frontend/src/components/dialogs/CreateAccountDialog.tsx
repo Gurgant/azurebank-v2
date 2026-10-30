@@ -42,6 +42,8 @@ const ACCOUNT_TYPES: AccountType[] = ['Checking', 'Savings', 'Investment'];
 export interface CreateAccountDialogProps {
   open: boolean;
   onClose: () => void;
+  /** The saved account's name, just before the dialog closes. Never on a refusal. */
+  onDone?: (name: string) => void;
 }
 
 /**
@@ -60,7 +62,7 @@ const isOurField = (key: string) => {
   return field === 'name' || field === 'type';
 };
 
-export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps) {
+export function CreateAccountDialog({ open, onClose, onDone }: CreateAccountDialogProps) {
   useReturnFocus();
   const dispatch = useDispatch();
   const [createAccount, { isLoading, error, reset: resetMutation }] = useCreateAccountMutation();
@@ -110,7 +112,8 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
 
   const onSubmit = async (data: CreateAccountFormData) => {
     try {
-      await createAccount({ name: data.name, type: data.type }).unwrap();
+      const saved = await createAccount({ name: data.name, type: data.type }).unwrap();
+      onDone?.(saved.name);
       close();
     } catch (caught) {
       const rejected = caught as ApiProblem;

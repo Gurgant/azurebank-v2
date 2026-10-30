@@ -1,3 +1,4 @@
+import { createRef } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -82,6 +83,20 @@ describe('PageHeader', () => {
     renderHeader(<PageHeader />, '/history');
     const bar = screen.getByText('History').parentElement as HTMLElement;
     expect(bar).toHaveStyle({ height: '56px' });
+  });
+
+  it('takes a ref on the heading, and only then a tab stop of -1', () => {
+    const headingRef = createRef<HTMLHeadingElement>();
+    const withRef = renderHeader(<PageHeader title="Accounts" headingRef={headingRef} />);
+    const heading = screen.getByRole('heading', { level: 1, name: 'Accounts' });
+    expect(headingRef.current).toBe(heading);
+    expect(heading).toHaveAttribute('tabindex', '-1');
+    withRef.unmount();
+
+    renderHeader(<PageHeader title="Accounts" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Accounts' })).not.toHaveAttribute(
+      'tabindex',
+    );
   });
 
   it('puts the title in the heading tree, exactly once', () => {
