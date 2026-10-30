@@ -261,6 +261,84 @@ public sealed class BffSignInAndPinOverApiTests
     }
 
     [Fact]
+    public async Task APinSetInAnotherBrowser_IsLearntFromTheApisRefusal()
+    {
+        using var api = new CustomWebApplicationFactory();
+        var apiClient = api.CreateClient();
+        using var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
+        var browserA = Browser(bffHost);
+        var browserB = Browser(bffHost);
+        var email = await RegisterAsync(apiClient);
+        var sessionA = await SignInAsync(bffHost, browserA, email);
+        var sessionB = await SignInAsync(bffHost, browserB, email);
+
+        var set = await browserA.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/set-pin", sessionA, new { pin = Pin, password = Password }));
+        set.StatusCode.Should().Be(HttpStatusCode.OK, "ARRANGE: browser A sets the account's PIN");
+        (await HasPinAccordingToMeAsync(bffHost, browserB, sessionB)).Should().BeFalse(
+            "ARRANGE: browser B has not learnt of the PIN set elsewhere");
+
+        var refused = await browserB.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/set-pin", sessionB, new { pin = "135790", password = Password }));
+        var body = await refused.Content.ReadFromJsonAsync<JsonElement>();
+
+        refused.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        body.GetProperty("errorCode").GetString().Should().Be("PIN_REQUIRED");
+        (await HasPinAccordingToMeAsync(bffHost, browserB, sessionB)).Should().BeTrue(
+            "the refusal proves a PIN exists");
+    }
+
+    [Fact]
+    public async Task AWrongPinOnAnElevatedSession_KeepsItsLevel()
+    {
+        using var api = new CustomWebApplicationFactory();
+        var apiClient = api.CreateClient();
+        using var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
+        var browser = Browser(bffHost);
+        var email = await RegisterAsync(apiClient);
+        var session = await SignInAsync(bffHost, browser, email);
+        var set = await browser.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/set-pin", session, new { pin = Pin, password = Password }));
+        set.StatusCode.Should().Be(HttpStatusCode.OK, "ARRANGE: the account has a PIN");
+        var elevate = await browser.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/verify-pin", session, new { pin = Pin }));
+        elevate.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await elevate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").GetProperty("authLevel")
+            .GetInt32().Should().Be(2, "ARRANGE: the session is elevated");
+
+        var response = await browser.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/verify-pin", session, new { pin = "135790" }));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var held = bffHost.Services.GetRequiredService<BffSessions>().GetSession(session)!;
+
+        using var all = new AssertionScope();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var data = body.GetProperty("data");
+        data.GetProperty("verified").GetBoolean().Should().BeFalse();
+        data.GetProperty("authLevel").GetInt32().Should().Be(2);
+        held.AuthLevel.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ARefusalThatProvesNoPin_LeavesHasPinFalse()
+    {
+        using var api = new CustomWebApplicationFactory();
+        var apiClient = api.CreateClient();
+        using var bffHost = new BffOverApiFactory(api, CustomWebApplicationFactory.ServiceCredentialKey);
+        var browser = Browser(bffHost);
+        var email = await RegisterAsync(apiClient);
+        var session = await SignInAsync(bffHost, browser, email);
+
+        var refused = await browser.SendAsync(WithSession(
+            bffHost, HttpMethod.Post, "/bff/auth/set-pin", session, new { pin = Pin }));
+        var body = await refused.Content.ReadFromJsonAsync<JsonElement>();
+
+        refused.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        body.GetProperty("errorCode").GetString().Should().Be("PASSWORD_REQUIRED");
+        (await HasPinAccordingToMeAsync(bffHost, browser, session)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task AChangeOfPinWithTheWrongCurrentOne_IsTheApisRefusal_AndTheOldPinStillVerifies()
     {
         // The API answers a wrong current PIN with 401 INVALID_PIN, counted against the same
