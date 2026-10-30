@@ -247,15 +247,16 @@ describe('external transfer (PR-11)', () => {
       (ADR-0014) and rejects with 429 + Retry-After — so the failure a user is most likely to
       provoke, by tapping Verify repeatedly, told them to check a connection that was fine.
 
-      Asserted on STATUS, not on an errorCode: the BFF's rejection body is a bare ProblemDetails
-      with no errorCode, so the client synthesises HTTP_429 and there is nothing to match on.
+      Asserted on STATUS, as the page branches: any 429 here gets the same sentence.
     */
     server.use(
       http.get('*/api/users/:azureTag', () =>
-        HttpResponse.json(
-          { type: 'https://httpstatuses.com/429', title: 'Too Many Requests', status: 429 },
-          { status: 429, headers: { 'Retry-After': '90' } },
-        ),
+        problem({
+          status: 429,
+          errorCode: 'RATE_LIMIT_EXCEEDED',
+          detail: 'Too many requests. Please retry later.',
+          headers: { 'Retry-After': '90' },
+        }),
       ),
     );
     renderTransfer();
@@ -381,6 +382,47 @@ describe('external transfer (PR-11)', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Recipient with identifier/)).not.toBeInTheDocument();
   });
+
+  const NO_ACCOUNT_SENTENCE =
+    "That recipient can't receive money right now. Choose another recipient.";
+
+  it.each([
+    ['mint', '*/api/transfers/authorizations'],
+    ['send', '*/api/transfers'],
+  ])(
+    'a payee with no open account refused at the %s reads our sentence, and it survives to the form',
+    async (_phase, path) => {
+      // The API's answer, held by TransferOrWithdrawalOnClosedAccountSqlServerTests.
+      server.use(
+        http.post(path, () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+
+      expect(await screen.findByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+      expect(screen.queryByText(/does not have an active account/)).not.toBeInTheDocument();
+
+      // PIN step to review, review to form: the two Backs a visitor needs to change the payee.
+      const pinBacks = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(pinBacks[pinBacks.length - 1]);
+      const reviewBacks = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(reviewBacks[reviewBacks.length - 1]);
+
+      expect(await screen.findByLabelText('Recipient handle')).toBeInTheDocument();
+      expect(screen.getByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+    },
+  );
 
   /*
     The visitor's own source account, closed in another tab or session while this page shows it.
