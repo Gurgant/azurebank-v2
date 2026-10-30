@@ -174,8 +174,12 @@ them in a minute.
   `/bff/auth/me`, never as a cookie the page can parse.
 - **No client-side "encryption" of secrets.** Obfuscating a value the browser must also decrypt
   adds no security and hides the fact that the value should not be there.
-- **No personal data in URLs.** Not in paths, not in query strings — URLs land in browser history,
-  server logs and referrer headers. Identifiers in paths are opaque UUIDs, never emails or handles.
+- **No personal data in URLs, but for one route.** Not in paths, not in query strings — URLs land in
+  browser history, server logs and referrer headers. Identifiers in paths are opaque UUIDs, never
+  emails. The one exception is the recipient lookup, `GET /api/users/{azureTag}` (ADR-0014): its path
+  holds the handle being confirmed. The SPA calls it with a fetch, so the handle reaches neither the
+  address bar nor a referrer; the application's logs leave the path out (ADR-0017), and the trace
+  spans still carry it.
 - **No `dangerouslySetInnerHTML`,** and no equivalent raw-HTML injection. Server strings render as
   text.
 - **No unsubmitted financial intent survives a session boundary** (ADR-0019). A draft transfer is

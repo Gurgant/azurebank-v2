@@ -123,8 +123,8 @@ A request passes two layers, and it matters which one answers (ADR-0007).
 So layer 2 answers only where a validator is stricter than every annotation on that property.
 Among those places: the money scale, which `[MoneyRange]` does not check; the same-account rule of
 an internal transfer; and an empty password on `POST /api/auth/pin`, where `SetPinRequest.Password`
-carries no annotation. A request DTO with no validator, such as `RefreshRequest`, `RevokeRequest`
-or `UpdateAzureTagRequest`, can only produce the layer-1 answer.
+carries only a maximum length. A request DTO with no validator, such as `RefreshRequest`,
+`RevokeRequest` or `UpdateAzureTagRequest`, can only produce the layer-1 answer.
 
 An enum is read from one of its names, in any letter case, and from nothing else. A number, the
 same number written as text (`"type": "1"`), a list of names and a name with white space around it

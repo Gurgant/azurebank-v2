@@ -54,8 +54,8 @@ from the DTOs, and able to express conditions and comparisons between two proper
 - Most validators restate their annotations, so layer 2 is reached only where a validator is
   stricter. Among those places: `[MoneyRange]` checks magnitude and not scale, so
   `.ValidMoneyScale()` still bites; "transfer to the same account" is cross-field;
-  `SetPinRequest.Password` carries no annotation, so an empty password on `POST /api/auth/pin`
-  reaches its validator.
+  `SetPinRequest.Password` carries only a maximum length, so an empty password on
+  `POST /api/auth/pin` reaches its validator.
 - Layer 2 on the wire: `POST /api/transactions/deposit {"accountId":"…","amount":10.001}`, with an
   account of the caller and an `Idempotency-Key`, answers
   `"errors": {"amount": ["Amount cannot have more than 2 decimal places."]}`.

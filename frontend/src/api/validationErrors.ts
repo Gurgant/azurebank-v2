@@ -60,8 +60,8 @@
  *   where a validator is STRICTER than every annotation on that property. Among those gaps:
  *   `[MoneyRange]` checks magnitude but not scale, so `10.001` reaches `.ValidMoneyScale()` (the
  *   response above); "transfer to the same account" is cross-field, which DataAnnotations on
- *   these DTOs cannot express; and `SetPinRequest.Password` carries no annotation, so an empty
- *   password reaches the validator (measured 2026-10-13):
+ *   these DTOs cannot express; and `SetPinRequest.Password` carries only a maximum length, so an
+ *   empty password reaches the validator (measured 2026-10-13):
  *       POST /api/auth/pin {"pin":"123456","password":""}
  *       -> {"title":"Validation Failed","instance":"/api/auth/pin",
  *           "errors":{"password":["Password is required."]}}
