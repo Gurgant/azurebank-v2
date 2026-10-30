@@ -439,7 +439,7 @@ const DIALOG_OPENERS: {
   {
     name: 'the handle dialog',
     path: '/settings',
-    opener: (page) => page.getByRole('button', { name: 'Change', exact: true }),
+    opener: (page) => page.getByRole('button', { name: 'Change public handle', exact: true }),
     dialog: /change your handle/i,
   },
   {
@@ -503,10 +503,12 @@ test('at phone width the buttons of Settings keep their label on one line', asyn
   await page.goto('/settings');
   await heading(1)(page);
   const main = page.getByRole('main');
-  const oneLine = await main.getByRole('button', { name: 'Change', exact: true }).boundingBox();
+  const oneLine = await main
+    .getByRole('button', { name: 'Change public handle', exact: true })
+    .boundingBox();
   if (oneLine === null) throw new Error('the Change button is not drawn');
 
-  for (const name of [/^Change PIN$/, /^(Log|Sign) out$/]) {
+  for (const name of [/^Change PIN$/, /^Sign out$/]) {
     const box = await main.getByRole('button', { name }).boundingBox();
     expect(box?.height, `${name}: the button is not one line tall`).toBe(oneLine.height);
   }
@@ -592,7 +594,7 @@ const FAINT_WORDS: { name: string; reach: (page: Page) => Promise<Locator> }[] =
     name: 'the label of the button that signs out, on Settings',
     reach: async (page) => {
       await page.goto('/settings');
-      return page.getByRole('main').getByRole('button', { name: /^(Log|Sign) out$/ });
+      return page.getByRole('main').getByRole('button', { name: /^Sign out$/ });
     },
   },
 ];

@@ -147,6 +147,23 @@ describe('ChangePinDialog', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
+  it('names each of its three toggles for the PIN it shows, in both states', async () => {
+    await renderSettings();
+    const dialog = within(await openDialog());
+    const toggles = () =>
+      dialog
+        .getAllByRole('button', { name: /^(Show|Hide) / })
+        .map((toggle) => toggle.getAttribute('aria-label'));
+
+    expect(toggles()).toStrictEqual(['Show current PIN', 'Show new PIN', 'Show confirmed PIN']);
+
+    await userEvent.click(dialog.getByRole('button', { name: 'Show new PIN' }));
+
+    expect(toggles()).toStrictEqual(['Show current PIN', 'Hide new PIN', 'Show confirmed PIN']);
+    expect(boxes('New PIN')[0]).toHaveAttribute('type', 'text');
+    expect(boxes('Current PIN')[0]).toHaveAttribute('type', 'password');
+  });
+
   it('waits for all three PINs before it will send', async () => {
     await renderSettings();
     const sent = observeSetPin();
