@@ -212,7 +212,7 @@ A deposit asks for no PIN.
    when **Show less**, which then appears, hides them.
 3. Press **Load more** at the bottom. You should see older entries added under the first twenty.
    The second walk's copy held 27 entries by then: one press showed them all, and the button
-   went.
+   became **Show less**.
 4. Press an entry. You should see its "Transaction Details". **Back** returns to History.
 
 What you just did is at the top: the walk's deposit, withdrawal and transfers were the first
