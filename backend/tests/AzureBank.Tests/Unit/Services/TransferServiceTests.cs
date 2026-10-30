@@ -470,24 +470,13 @@ public class TransferServiceTests : IDisposable
             sender.Id, StepUpOperation.Transfer,
             new StepUpBinding(senderAccount.Id, null, recipient.Id, 100m));
 
-        // Act - Should not throw InsufficientFundsException
-        // Note: May fail due to transaction handling in InMemory, but the funds check passes
+        // Act
         var act = () => _sut.TransferAsync(sender.Id, request, authorization);
 
-        // Assert - Either succeeds or fails for transaction reasons, not insufficient funds
-        try
-        {
-            await act();
-        }
-        catch (InsufficientFundsException)
-        {
-            // Should NOT throw this
-            Assert.Fail("Should not throw InsufficientFundsException when balance equals amount");
-        }
-        catch
-        {
-            // Other exceptions are acceptable (InMemory transaction issues)
-        }
+        // Assert: the InMemory host refuses the transaction, which comes after the funds check, so
+        // no other exception may end this test.
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*TransactionIgnoredWarning*");
     }
 
     #endregion
@@ -686,8 +675,8 @@ public class TransferServiceTests : IDisposable
     [Fact]
     public async Task TransferAsync_AtExactlyTheLimit_IsNotRefusedForTheDay()
     {
-        // Same posture as TransferAsync_ExactBalance above: the InMemory host cannot open the
-        // transaction the delegate needs, so only the refusal that must NOT happen is asserted.
+        // The InMemory host cannot open the transaction the delegate needs, so the transfer must
+        // get as far as that refusal, which comes after the day's ceiling.
         var (sender, senderAccount, recipient, _) = await SetupTransferScenarioAsync();
         await SpentTodayAsync(senderAccount, 4_900m);
 
@@ -695,23 +684,18 @@ public class TransferServiceTests : IDisposable
             sender.Id, StepUpOperation.Transfer,
             new StepUpBinding(senderAccount.Id, null, recipient.Id, 100m));
 
-        try
+        // Act
+        var act = () => _sut.TransferAsync(sender.Id, new TransferRequest
         {
-            await _sut.TransferAsync(sender.Id, new TransferRequest
-            {
-                FromAccountId = senderAccount.Id,
-                RecipientAzureTag = recipient.AzureTag,
-                Amount = 100m
-            }, authorization);
-        }
-        catch (DailyLimitExceededException)
-        {
-            Assert.Fail("used + requested == limit must pass: the bound is inclusive");
-        }
-        catch
-        {
-            // Other exceptions are acceptable (InMemory transaction issues), as above.
-        }
+            FromAccountId = senderAccount.Id,
+            RecipientAzureTag = recipient.AzureTag,
+            Amount = 100m
+        }, authorization);
+
+        // Assert: the InMemory host refuses the transaction, which comes after the funds check, so
+        // no other exception may end this test.
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*TransactionIgnoredWarning*");
     }
 
     #endregion
