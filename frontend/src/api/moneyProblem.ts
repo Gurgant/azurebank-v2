@@ -85,11 +85,22 @@ export function isProvenCommit(problem: ApiProblem | null | undefined): boolean 
   return problem?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' && problem.applied === true;
 }
 
+// These refusals precede idempotency: they settle no earlier send under this key.
+// HTTP_429 is a JSON 429 whose error code could not be read.
+export function isLimiterRefusal(problem: ApiProblem): boolean {
+  return (
+    problem.errorCode === 'RATE_LIMIT_EXCEEDED' ||
+    problem.errorCode === 'HTTP_429' ||
+    problem.errorCode === 'DEMO_COPY_LIMIT'
+  );
+}
+
 /**
  * A SEND's rejection after which the money may have moved, so the idempotency hook drops the key
- * and latches the check instead of letting a new key go out. Written once because it has four
- * readers that must agree — the hook, the classifier below and the two money dialogs — and a
- * reader that missed one of the three would say "failed, try again" over a latched check:
+ * and latches the check instead of letting a new key go out. The hook and the two money dialogs
+ * must agree; a dialog that missed a case would say "failed, try again" over a latched check.
+ * The classifier below shares the cases that need no held-key context; its transfer pages return
+ * the hook's check view before any banner.
  *
  *  - no HTTP status: `problemBaseQuery` gives every answer and every transport failure a status,
  *    so what is left is a 2xx whose body failed its schema — the server acted — or an abort;
@@ -98,15 +109,18 @@ export function isProvenCommit(problem: ApiProblem | null | undefined): boolean 
  *    not trusted at all, so this is what an unreadable `IDEMPOTENCY_IN_FLIGHT` or
  *    `IDEMPOTENCY_RESULT_UNKNOWN` looks like, and each money send declares no other 409. The code
  *    is derived from the status, not sent by the server; it is used in the safe direction only,
- *    towards a check and never towards a retry.
+ *    towards a check and never towards a retry;
+ *  - a limiter refusal when a key was held before this send: it settles no earlier send under
+ *    that key. A first-send refusal leaves no earlier outcome to check.
  *
  * Only for a send: a mint holds no key and moves no money.
  */
-export function isUnconfirmedSend(problem: ApiProblem): boolean {
+export function isUnconfirmedSend(problem: ApiProblem, hadRetainedKey = false): boolean {
   return (
     (problem as Partial<ApiProblem> | undefined)?.status === undefined ||
     problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
-    problem.errorCode === 'HTTP_409'
+    problem.errorCode === 'HTTP_409' ||
+    (hadRetainedKey && isLimiterRefusal(problem))
   );
 }
 
