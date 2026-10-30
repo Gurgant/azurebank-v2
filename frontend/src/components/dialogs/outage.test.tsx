@@ -16,6 +16,7 @@ import {
   hintRegion,
   hintShownAt,
   never,
+  neverUntilAborted,
   installFakeClock,
   reloadAsksFirst,
 } from '../../test/outage';
@@ -121,9 +122,9 @@ describe('withdraw during an outage', () => {
   it('a send with no answer ends at 65 s with the same words', async () => {
     let sentAt = 0;
     server.use(
-      http.post('*/api/transactions/withdraw', () => {
+      http.post('*/api/transactions/withdraw', ({ request }) => {
         sentAt = Date.now();
-        return never();
+        return neverUntilAborted(request);
       }),
     );
     renderWithdraw();
@@ -200,9 +201,9 @@ describe('deposit during an outage', () => {
   it('a send with no answer ends at 65 s with the same words', async () => {
     let sentAt = 0;
     server.use(
-      http.post('*/api/transactions/deposit', () => {
+      http.post('*/api/transactions/deposit', ({ request }) => {
         sentAt = Date.now();
-        return never();
+        return neverUntilAborted(request);
       }),
     );
     renderDeposit();
@@ -593,9 +594,9 @@ describe('a change with no key, during an outage', () => {
   it('creating an account with no answer ends at 65 s with the same words', async () => {
     let sentAt = 0;
     server.use(
-      http.post('*/api/accounts', () => {
+      http.post('*/api/accounts', ({ request }) => {
         sentAt = Date.now();
-        return never();
+        return neverUntilAborted(request);
       }),
     );
     await createHolidayFund();
@@ -699,9 +700,9 @@ describe('a change with no key, during an outage', () => {
   it('changing the PIN with no answer ends at 65 s with the same words, not "check your connection"', async () => {
     let sentAt = 0;
     server.use(
-      http.post('*/bff/auth/set-pin', () => {
+      http.post('*/bff/auth/set-pin', ({ request }) => {
         sentAt = Date.now();
-        return never();
+        return neverUntilAborted(request);
       }),
     );
     await fillPins();
