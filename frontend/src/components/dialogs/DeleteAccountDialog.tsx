@@ -17,7 +17,7 @@ import {
   useAuthoriseAccountDeletionMutation,
   useDeleteAccountMutation,
 } from '../../features/api/apiSlice';
-import { RetryCountdown, WaitHint, retryDeadline } from '../feedback';
+import { RetryCountdown, WaitHint, retryDeadline, useAccountClosedToast } from '../feedback';
 import { PinInput } from '../PinInput';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
@@ -66,6 +66,10 @@ const usePinStyles = makeStyles({
 export interface DeleteAccountDialogProps {
   account: { id: string; name: string };
   onClose: () => void;
+  /** The account's name, just before the dialog closes because it is gone. Never on a refusal. */
+  onDeleted?: (name: string) => void;
+  /** Just before the dialog closes because the account was closed already, not by this deletion. */
+  onAlreadyClosed?: () => void;
 }
 
 /**
@@ -88,12 +92,18 @@ export interface DeleteAccountDialogProps {
  * cannot be undone, and it must not look like Deposit's blue. No success screen: the dialog
  * closes and the list refetches through the mutation's own tags.
  */
-export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogProps) {
+export function DeleteAccountDialog({
+  account,
+  onClose,
+  onDeleted,
+  onAlreadyClosed,
+}: DeleteAccountDialogProps) {
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
   const dangerButton = useDangerButtonStyles();
   const navigate = useNavigate();
   const errorId = useId();
+  const sayAccountClosed = useAccountClosedToast();
 
   const [authoriseAccountDeletion, { isLoading: isMinting }] =
     useAuthoriseAccountDeletionMutation();
@@ -169,10 +179,13 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
     } else if (code === 'ACCOUNT_NOT_FOUND') {
       /*
         Already closed (on the mint, and on the DELETE: 404 once the account is gone,
-        spent header or none alike). Treat it as done. The list is read again by the mutation's
-        own tags on this answer, the mint's and the DELETE's alike (apiSlice.ts), so the card
-        leaves the page behind the dialog.
+        spent header or none alike). The deletion did not close it, so the app's closed-account
+        sentence is said in the root toaster, not the page's deletion sentence. The list is read
+        again by the mutation's own tags on this answer, the mint's and the DELETE's alike
+        (apiSlice.ts), so the card leaves the page behind the dialog.
       */
+      sayAccountClosed();
+      onAlreadyClosed?.();
       onClose();
     } else if (isServiceOutage(problem)) {
       /*
@@ -219,7 +232,9 @@ export function DeleteAccountDialog({ account, onClose }: DeleteAccountDialogPro
         id: account.id,
         stepUpAuthorizationId: minted.authorizationId,
       }).unwrap();
-      // The mutation's own invalidatesTags refreshes the list; nothing to show here.
+      // The mutation's own invalidatesTags refreshes the list. The page is told the name, then
+      // the dialog closes.
+      onDeleted?.(account.name);
       onClose();
     } catch (caught) {
       handleRefusal(caught as ApiProblem);

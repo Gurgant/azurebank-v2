@@ -1,6 +1,6 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
 import { mockState, seedMockSession } from '../mocks/state';
@@ -8,6 +8,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth/StepUpModal';
 import { AccountsPage } from './AccountsPage';
 import { REVEAL_TIMEOUT_MS } from '../components/AccountNumberField';
+import { installFakeClock } from '../test/outage';
 
 // AccountsPage does not render the root step-up modal (App does), so pair them here: the reveal
 // call rides baseQueryWithStepUp into this shared modal exactly as in production.
@@ -26,6 +27,13 @@ const FULL_MAIN = 'AB-1234-5678-90';
 
 const revealName = `Reveal full account number for ${MAIN}`;
 
+/** The number's own row: the button, then the box of buttons, then the row. */
+function numberRow(buttonName: string) {
+  const row = screen.getByRole('button', { name: buttonName }).parentElement?.parentElement;
+  if (!row) throw new Error(`no row for ${buttonName}`);
+  return row;
+}
+
 beforeEach(() => {
   // Every scenario starts un-elevated (level 1); the elevated cases opt in explicitly. Pinning it
   // here keeps each test independent of ordering and of the global reset's timing.
@@ -43,6 +51,19 @@ beforeEach(() => {
 */
 beforeEach(() => {
   seedMockSession();
+});
+
+/*
+  The copy tests put a clipboard of their own on the page, and the files of a worker share that
+  page: what was there before each test goes back after it, or nothing when nothing was.
+*/
+let pageClipboard: PropertyDescriptor | undefined;
+beforeEach(() => {
+  pageClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+});
+afterEach(() => {
+  if (pageClipboard) Object.defineProperty(navigator, 'clipboard', pageClipboard);
+  else Reflect.deleteProperty(navigator, 'clipboard');
 });
 
 describe('account number reveal (ADR-0020)', () => {
@@ -144,10 +165,15 @@ describe('account number reveal (ADR-0020)', () => {
     await user.click(await screen.findByRole('button', { name: revealName }));
     await screen.findByText(FULL_MAIN);
 
+    const field = numberRow(`Hide account number for ${MAIN}`);
+    const beforeCopy = within(field).getByRole('status');
+    expect(beforeCopy).toBeEmptyDOMElement();
+    expect(getComputedStyle(beforeCopy).position).toBe('absolute');
+
     await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
 
     expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
-    expect(await screen.findByRole('status')).toHaveTextContent('Copied');
+    expect(within(field).getByRole('status')).toHaveTextContent('Copied');
   });
 
   it('auto-rehides the number after the reveal timeout', async () => {
@@ -165,6 +191,50 @@ describe('account number reveal (ADR-0020)', () => {
 
     await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
+    expect(within(numberRow(revealName)).getByRole('status')).toHaveTextContent(
+      'Account number hidden again.',
+    );
+
+    await user.click(screen.getByRole('button', { name: revealName }));
+    expect(await screen.findByText(FULL_MAIN)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Hide account number for ${MAIN}` }));
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    expect(within(numberRow(revealName)).getByRole('status')).not.toHaveTextContent(
+      'Account number hidden again.',
+    );
+  });
+
+  it('a copy that finishes after the number was hidden again does not say Copied', async () => {
+    installFakeClock();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let finishCopy = () => {};
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    mockState.authLevel = 2;
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
+    expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
+
+    await act(async () => {
+      vi.advanceTimersByTime(REVEAL_TIMEOUT_MS);
+    });
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    const status = within(numberRow(revealName)).getByRole('status');
+    expect(status).toHaveTextContent('Account number hidden again.');
+
+    await act(async () => {
+      finishCopy();
+    });
+    expect(status).toHaveTextContent('Account number hidden again.');
+    expect(status).not.toHaveTextContent('Copied');
   });
 
   it('the PIN modal says what the PIN is asked for, and no transfer', async () => {
@@ -215,5 +285,69 @@ describe('account number reveal (ADR-0020)', () => {
     await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
     expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument();
     expect(screen.queryByText(FULL_MAIN)).not.toBeInTheDocument();
+  });
+});
+
+describe("the number's buttons count as actions on the page", () => {
+  const primarySentence = (name: string) => `"${name}" is now your primary account.`;
+
+  async function setPrimary(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(screen.getByRole('button', { name: `Account actions for ${name}` }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Set as primary' }));
+  }
+
+  it("Reveal, Copy and Hide each clear the page's sentence", async () => {
+    mockState.authLevel = 2;
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    await setPrimary(user, 'Rainy Day');
+    await screen.findByText(primarySentence('Rainy Day'), { exact: true });
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
+
+    await setPrimary(user, MAIN);
+    await screen.findByText(primarySentence(MAIN), { exact: true });
+    await user.click(screen.getByRole('button', { name: `Copy account number for ${MAIN}` }));
+    expect(writeText).toHaveBeenCalledWith(FULL_MAIN);
+    expect(screen.queryByText(primarySentence(MAIN), { exact: true })).toBeNull();
+
+    await setPrimary(user, 'Rainy Day');
+    await screen.findByText(primarySentence('Rainy Day'), { exact: true });
+    await user.click(screen.getByRole('button', { name: `Hide account number for ${MAIN}` }));
+    expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument();
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
+  });
+
+  it('says nothing for a new primary whose answer arrives after a Reveal', async () => {
+    mockState.authLevel = 2;
+    const user = userEvent.setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.patch('*/api/accounts/:id/set-primary', async () => {
+        await held;
+      }),
+    );
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+
+    await setPrimary(user, 'Rainy Day');
+    await user.click(screen.getByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+
+    release();
+    // The answer has arrived once the list it refreshes puts Rainy Day first.
+    await waitFor(() => {
+      const names = screen.getAllByText(/^(Main Account|Rainy Day)$/).map((el) => el.textContent);
+      expect(names[0]).toBe('Rainy Day');
+    });
+    expect(screen.queryByText(primarySentence('Rainy Day'), { exact: true })).toBeNull();
   });
 });

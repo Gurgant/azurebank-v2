@@ -1,6 +1,8 @@
+import { type Ref } from 'react';
 import { useLocation } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { ChevronLeft24Regular, Dismiss24Regular } from '@fluentui/react-icons';
+import { landingRing } from '../../theme/landingRing';
 import { colors, componentSizes, surfaces, transitions } from '../../theme/tokens';
 import { findActiveNavPlace } from './navItems';
 
@@ -113,6 +115,12 @@ const useStyles = makeStyles({
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
+
+  // The ring the app draws on a container that was given focus. `:focus-visible` draws it after
+  // keys and not after a click. Only a heading that can take focus carries it.
+  landing: {
+    ...landingRing,
+  },
 });
 
 export interface PageHeaderProps {
@@ -129,6 +137,11 @@ export interface PageHeaderProps {
   onClose?: () => void;
   closeDisabled?: boolean;
   closeLabel?: string;
+  /**
+   * The heading, when a page lands focus on it. Without one the heading renders as it does
+   * today: no tab stop, and no ring.
+   */
+  headingRef?: Ref<HTMLHeadingElement>;
 }
 
 export function PageHeader({
@@ -139,6 +152,7 @@ export function PageHeader({
   onClose,
   closeDisabled = false,
   closeLabel = 'Close',
+  headingRef,
 }: PageHeaderProps) {
   const styles = useStyles();
   const { pathname } = useLocation();
@@ -172,7 +186,12 @@ export function PageHeader({
         History, whose path always matches a nav place), which is exactly why it would rot silently.
       */}
       {heading && (
-        <Text as="h1" className={styles.title}>
+        <Text
+          as="h1"
+          ref={headingRef}
+          tabIndex={headingRef ? -1 : undefined}
+          className={headingRef ? mergeClasses(styles.title, styles.landing) : styles.title}
+        >
           {heading}
         </Text>
       )}

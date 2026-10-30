@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -9,6 +9,8 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  MessageBar,
+  MessageBarBody,
   Spinner,
   Text,
   tokens,
@@ -31,6 +33,7 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
 import type { AccountResponse } from '../features/api/apiSlice';
 import { useGetAccountsQuery, useSetPrimaryAccountMutation } from '../features/api/apiSlice';
+import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { usePageRead } from '../hooks/usePageRead';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { AccountNumberField } from '../components/AccountNumberField';
@@ -41,7 +44,13 @@ import {
   RenameAccountDialog,
   WithdrawDialog,
 } from '../components';
-import { AlertSlot, ReadErrorBar, useProblemToast, WaitHint } from '../components/feedback';
+import {
+  AlertSlot,
+  ReadErrorBar,
+  StatusSlot,
+  useProblemToast,
+  WaitHint,
+} from '../components/feedback';
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -412,6 +421,53 @@ export function AccountsPage() {
   const [selectedAccount, setSelectedAccount] = useState<LegacyDialogAccount | null>(null);
   const [renameTarget, setRenameTarget] = useState<AccountResponse | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
+  // One sentence for the last action that finished. The next action clears it as it starts.
+  const [sentence, setSentence] = useState<string | null>(null);
+  // A dialog's sentence, held until the dialog has gone and said in a task after that commit's.
+  // Written in the commit that removes the dialog, the status is still under the aria-hidden that
+  // tabster lifts from the page only after that commit, and it is shown with the page, not said
+  // as a change.
+  const [heldSentence, setHeldSentence] = useState<string | null>(null);
+  // The account the last action deleted, by id: two accounts may share a name.
+  const [deletedId, setDeletedId] = useState<string | null>(null);
+  // Counts the actions started, so that an answer which arrives after another action began says
+  // nothing over it.
+  const actionsStarted = useRef(0);
+  // The action count when the Create or Rename dialog opened: its answer is said only while that
+  // is still the latest action, as set-primary's is. Closing either dialog counts as an action,
+  // so that an answer which arrives after a Cancel says nothing; on a save the sentence is held
+  // before the dialog closes. A dialog cancelled while its request was out still closes itself
+  // when the answer comes, after it has gone: that close counts only while its dialog is still
+  // the latest action, or it would silence an action started after the Cancel.
+  const [createOpenedAt, setCreateOpenedAt] = useState(0);
+  const [renameOpenedAt, setRenameOpenedAt] = useState(0);
+
+  const startAction = () => {
+    actionsStarted.current += 1;
+    setSentence(null);
+    setHeldSentence(null);
+    setDeletedId(null);
+  };
+
+  const dialogOpen = isCreateOpen || renameTarget !== null || deleteTarget !== null;
+  useEffect(() => {
+    if (heldSentence === null || dialogOpen) return;
+    const timer = setTimeout(() => {
+      setSentence(heldSentence);
+      setHeldSentence(null);
+    });
+    return () => clearTimeout(timer);
+  }, [heldSentence, dialogOpen]);
+
+  // As the dialog unmounts, useReturnFocus gives focus back to the card's menu button, still in
+  // the page until the list read answers. Focus falls to body when the card leaves, and that is
+  // the moment to land on the heading. The deletion on its own is earlier than that. A list read
+  // that fails takes every card away for its error bar, while the list kept from before still
+  // holds the account.
+  const headingRef = useFocusWhenLost<HTMLHeadingElement>(
+    deletedId !== null &&
+      (problem !== undefined || !accounts.some((account) => account.id === deletedId)),
+  );
 
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
   // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
@@ -430,12 +486,14 @@ export function AccountsPage() {
 
   const handleDeposit = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    startAction();
     setSelectedAccount(toLegacy(account));
     setIsDepositOpen(true);
   };
 
   const handleWithdraw = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    startAction();
     setSelectedAccount(toLegacy(account));
     setIsWithdrawOpen(true);
   };
@@ -444,10 +502,13 @@ export function AccountsPage() {
   // would reach the browser's history, the server's logs and wherever the link is pasted.
   const handleTransfer = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
+    startAction();
     navigate('/transfer', { state: { fromAccountId: account.id } });
   };
 
   const handleAddAccount = () => {
+    startAction();
+    setCreateOpenedAt(actionsStarted.current);
     setIsCreateOpen(true);
   };
 
@@ -467,8 +528,15 @@ export function AccountsPage() {
   // (two rows flip, so the whole tag family refetches). Failures have no owning
   // surface here — they go through the problem-toast pipeline.
   const handleSetPrimary = (account: AccountResponse) => {
+    startAction();
+    const thisAction = actionsStarted.current;
     setPrimaryAccount(account.id)
       .unwrap()
+      .then(() => {
+        if (actionsStarted.current === thisAction) {
+          setSentence(`"${account.name}" is now your primary account.`);
+        }
+      })
       .catch((caught) => showProblem(caught as ApiProblem));
   };
 
@@ -498,7 +566,7 @@ export function AccountsPage() {
         block was also the last page-sized brand fill left in the signed-in app; the shell paints the
         canvas now, and the dashboard's hero is a white card.
       */}
-      <PageHeader />
+      <PageHeader headingRef={headingRef} />
 
       {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainContent}>
@@ -536,6 +604,14 @@ export function AccountsPage() {
           )}
         </AlertSlot>
 
+        <StatusSlot>
+          {sentence && (
+            <MessageBar intent="success">
+              <MessageBarBody>{sentence}</MessageBarBody>
+            </MessageBar>
+          )}
+        </StatusSlot>
+
         {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
             exists yet (it previously bounced off the catch-all); management flows come later. */}
         {!waiting && !problem && (
@@ -549,7 +625,7 @@ export function AccountsPage() {
                   <div className={styles.accountInfo}>
                     {/* A level-2 heading: the page's `<h1>` is the one heading above it. */}
                     <SectionTitle>{account.name}</SectionTitle>
-                    <AccountNumberField account={account} />
+                    <AccountNumberField account={account} onActionStart={startAction} />
                   </div>
                   <Menu>
                     <MenuTrigger disableButtonEnhancement>
@@ -561,7 +637,15 @@ export function AccountsPage() {
                     </MenuTrigger>
                     <MenuPopover>
                       <MenuList>
-                        <MenuItem onClick={() => setRenameTarget(account)}>Rename</MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            startAction();
+                            setRenameOpenedAt(actionsStarted.current);
+                            setRenameTarget(account);
+                          }}
+                        >
+                          Rename
+                        </MenuItem>
                         {!account.isPrimary && (
                           <MenuItem onClick={() => handleSetPrimary(account)}>
                             Set as primary
@@ -570,7 +654,10 @@ export function AccountsPage() {
                         <MenuDivider />
                         <MenuItem
                           className={styles.deleteMenuItem}
-                          onClick={() => setDeleteTarget(account)}
+                          onClick={() => {
+                            startAction();
+                            setDeleteTarget(account);
+                          }}
                         >
                           Delete
                         </MenuItem>
@@ -649,12 +736,33 @@ export function AccountsPage() {
           under load (the surface never re-mounts — seen as a CI-only flake); a
           fresh instance per open has virgin presence state and starts clean by
           construction. */}
-      {isCreateOpen && <CreateAccountDialog open onClose={() => setIsCreateOpen(false)} />}
+      {isCreateOpen && (
+        <CreateAccountDialog
+          open
+          onDone={(name) => {
+            if (actionsStarted.current === createOpenedAt) {
+              setHeldSentence(`Your new account "${name}" is open.`);
+            }
+          }}
+          onClose={() => {
+            if (actionsStarted.current === createOpenedAt) actionsStarted.current += 1;
+            setIsCreateOpen(false);
+          }}
+        />
+      )}
 
       {renameTarget && (
         <RenameAccountDialog
           account={{ id: renameTarget.id, name: renameTarget.name }}
-          onClose={() => setRenameTarget(null)}
+          onDone={(name) => {
+            if (actionsStarted.current === renameOpenedAt) {
+              setHeldSentence(`"${renameTarget.name}" is now called "${name}".`);
+            }
+          }}
+          onClose={() => {
+            if (actionsStarted.current === renameOpenedAt) actionsStarted.current += 1;
+            setRenameTarget(null);
+          }}
         />
       )}
 
@@ -664,6 +772,11 @@ export function AccountsPage() {
       {deleteTarget && (
         <DeleteAccountDialog
           account={{ id: deleteTarget.id, name: deleteTarget.name }}
+          onDeleted={(name) => {
+            setDeletedId(deleteTarget.id);
+            setHeldSentence(`"${name}" was deleted.`);
+          }}
+          onAlreadyClosed={() => setDeletedId(deleteTarget.id)}
           onClose={() => setDeleteTarget(null)}
         />
       )}

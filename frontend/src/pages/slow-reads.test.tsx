@@ -505,7 +505,7 @@ describe('a read that said it was slow says when it has loaded', () => {
     await advanceUntil(seen[0], 4_100);
     await screen.findByText('Main Account');
 
-    expect(screen.queryAllByRole('status')).toHaveLength(0);
+    for (const status of screen.getAllByRole('status')) expect(status).toBeEmptyDOMElement();
     expect(screen.queryByText(COPY.loaded)).not.toBeInTheDocument();
   });
 
