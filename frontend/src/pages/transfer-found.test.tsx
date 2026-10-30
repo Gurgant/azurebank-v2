@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState } from '../mocks/state';
@@ -36,6 +36,24 @@ afterEach(() => {
   stopFocusFixup();
 });
 
+/*
+  Vitest gives up on a test at its timeout but cannot stop the body, which goes on pressing and
+  querying. Measured: a body abandoned early landed on the next test's page, and that test
+  failed on act warnings about its own page. So the hook holds the unmount, and with it the next
+  test or the next file of the worker, until the body has ended.
+*/
+let body: Promise<void> = Promise.resolve();
+afterEach(() => body);
+
+/** `it`, for a body that the hook above waits for; what it throws is still this test's failure. */
+function test(name: string, run: () => Promise<void>) {
+  it(name, () => {
+    const running = run();
+    body = running.catch(() => {});
+    return running;
+  });
+}
+
 function render(page: ReactNode) {
   return renderWithProviders(
     <Routes>
@@ -55,13 +73,18 @@ function render(page: ReactNode) {
   );
 }
 
+/*
+  The values go in whole, not key by key: each keystroke is a render and several turns of the event
+  loop, and on a starved machine they took the external test past its budget. This file is about
+  what comes after the send; TransferPage.test.tsx and InternalTransferPage.test.tsx type.
+*/
 async function sendExternal() {
   render(<TransferPage />);
   await screen.findByText('Main Account');
-  await userEvent.type(screen.getByLabelText('Recipient handle'), 'friend');
+  fireEvent.change(screen.getByLabelText('Recipient handle'), { target: { value: 'friend' } });
   await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
   await screen.findByText('A. Friend');
-  await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+  fireEvent.change(screen.getByLabelText('Transfer amount'), { target: { value: '50' } });
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
   await confirmWithPin();
 }
@@ -70,7 +93,7 @@ async function sendInternal() {
   render(<InternalTransferPage />);
   await screen.findByRole('button', { name: 'From Main Account' });
   await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
-  await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+  fireEvent.change(screen.getByLabelText('Transfer amount'), { target: { value: '50' } });
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
   await confirmWithPin();
 }
@@ -104,7 +127,7 @@ async function expectTheFoundView(row: ReturnType<typeof rowOf>, amount: string)
 }
 
 describe('a transfer whose answer was lost, found by its key', () => {
-  it('external: says the transfer went through, with the reference of the row the key wrote', async () => {
+  test('external: says the transfer went through, with the reference of the row the key wrote', async () => {
     const sentAt = loseAnswerAfterCommit('/api/transfers', () => notKnown('/api/transfers'));
     const seen = lookupsSeen();
 
@@ -120,7 +143,7 @@ describe('a transfer whose answer was lost, found by its key', () => {
     expect(await screen.findByText('HISTORY')).toBeInTheDocument();
   });
 
-  it('internal: one movement, asked about on the account the money left', async () => {
+  test('internal: one movement, asked about on the account the money left', async () => {
     const sentAt = loseAnswerAfterCommit('/api/transfers/internal', () =>
       notKnown('/api/transfers/internal'),
     );
@@ -134,7 +157,7 @@ describe('a transfer whose answer was lost, found by its key', () => {
     expect(sentAt).toHaveLength(1);
   });
 
-  it('internal: with the source closed after the lost answer, asks the destination and shows its own row', async () => {
+  test('internal: with the source closed after the lost answer, asks the destination and shows its own row', async () => {
     /*
       Both rows carry the key and were written in one transaction. The source is gone from the
       visitor's open accounts, so the listing refuses it (403), and the destination's TransferIn
