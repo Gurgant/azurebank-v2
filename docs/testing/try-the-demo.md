@@ -393,7 +393,7 @@ one in the same boxes, and the payment went through. It did not lock a PIN.
 
 **F. Five wrong passwords.** The form answers every try past the fifth as it answers a wrong
 password, "Invalid email or password. After 5 failed attempts, sign-in is paused for 15
-minutes.", whatever password is typed, and with no clock: no answer says that a lock stands.
+minutes.", whatever password is typed. There is no countdown, and nothing says that this account is locked.
 **Not seen.**
 
 **G. Ten a minute.** Signing in, getting a copy and changing your handle share ten tries a

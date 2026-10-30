@@ -175,7 +175,8 @@ tests run, which fails under a floor, and a reading of the prose for American sp
   ([Measured on Azure](infra/README.md#measured-on-azure)). An eleventh copy within 24 hours has
   not been seen refused there.
 - axe runs in CI over eleven pages and three dialogs and fails on any serious or critical finding
-  except colour contrast, which is left to the UI/UX phase; the details are in
+  except colour contrast, which it reports without failing, and Fluent's own focus sentinels,
+  which it leaves out; the details are in
   [frontend/README.md](frontend/README.md).
 - What the project deliberately does not do yet — anchoring the audit trail outside the database,
   sending the enrolment notice — is in [docs/deferred/](docs/deferred/README.md).
