@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -19,6 +20,33 @@ async function boot(store: TestStore) {
     .dispatch(apiSlice.endpoints.getMe.initiate())
     .unwrap()
     .catch(() => undefined);
+}
+
+/**
+ * A link on the entry pages is one stop for Tab and tells itself apart from its sentence by more
+ * than colour. `index.css` takes the underline off every link and Vitest loads no stylesheet, so
+ * the reset goes in here: jsdom's own underline would pass whatever the page sets.
+ */
+function expectOneUnderlinedStop(name: string) {
+  const link = screen.getByRole('link', { name });
+  const stops = [link, ...link.querySelectorAll('*')].filter((element) =>
+    element.matches('a[href], button, [tabindex]'),
+  );
+  expect(stops).toEqual([link]);
+  expect(screen.queryByRole('button', { name })).toBeNull();
+
+  const reset = /^a \{[^}]*\}/m.exec(readFileSync('src/index.css', 'utf8'));
+  expect(reset?.[0]).toContain('text-decoration: none');
+  const sheet = document.createElement('style');
+  sheet.textContent = reset![0];
+  document.head.append(sheet);
+  try {
+    expect(getComputedStyle(link).textDecorationLine).toBe('underline');
+    // Any case: jsdom lower-cases a custom property's name when it computes the style.
+    expect(getComputedStyle(link).color).toMatch(/^var\(--colorBrandForegroundLink\)$/i);
+  } finally {
+    sheet.remove();
+  }
 }
 
 describe('auth bootstrap (D6)', () => {
@@ -296,6 +324,20 @@ describe('login flow (returnTo + error branching)', () => {
   });
 });
 
+describe('the links between the entry pages', () => {
+  it('makes "Create account" on the sign-in page one underlined stop', () => {
+    renderWithProviders(<LoginPage />, { routerEntries: ['/login'] });
+
+    expectOneUnderlinedStop('Create account');
+  });
+
+  it('makes "Sign in" on the registration page one underlined stop', () => {
+    renderWithProviders(<RegisterPage />, { routerEntries: ['/register'] });
+
+    expectOneUnderlinedStop('Sign in');
+  });
+});
+
 describe('register flow (D15 dual-path + D13 rate limit)', () => {
   async function fillRegisterForm(user: ReturnType<typeof userEvent.setup>, email: string) {
     await user.type(screen.getByLabelText(/first name/i), 'Test');
@@ -317,6 +359,7 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
       expect(screen.getByText(/we couldn't create an account/i)).toBeInTheDocument(),
     );
     expect(screen.getByText(/sign in with this email/i)).toBeInTheDocument();
+    expectOneUnderlinedStop('sign in with this email');
     // Field values survive (D15) — the user edits, not retypes.
     expect(screen.getByLabelText(/^email address$/i)).toHaveValue('taken@azurebank.dev');
   });
