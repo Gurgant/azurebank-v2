@@ -237,7 +237,7 @@ export function TransferPage() {
   /*
     The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
     query has no argument on the page to name it by. Stopping it lands on Verify, which is where the
-    check starts again.
+    check starts again. Its identity also keeps an answer from writing after an edit or a new check.
   */
   const runningLookup = useRef<StartedRead | null>(null);
   const lookupLanding = useWaitLanding<HTMLButtonElement>(
@@ -538,6 +538,7 @@ export function TransferPage() {
   };
 
   const handleVerifyRecipient = async () => {
+    runningLookup.current = null;
     const tag = normalizeAzureTag(watchedTag);
     if (!tag) return;
     setRecipient(null);
@@ -554,16 +555,18 @@ export function TransferPage() {
       );
       return;
     }
+    const request = lookup(tag);
+    runningLookup.current = request;
     try {
-      const request = lookup(tag);
-      runningLookup.current = request;
       const result = await request.unwrap();
+      if (runningLookup.current !== request) return;
       if (result.exists) {
         setRecipient({ azureTag: result.azureTag, displayName: result.displayName });
       } else {
         setRecipientError(`We couldn't find @${tag}. Check the handle and try again.`);
       }
     } catch (caught) {
+      if (runningLookup.current !== request) return;
       /*
         A bare catch here told every failure the same story — "check your connection" — and this
         endpoint has a DEDICATED rate limiter: /api/users/* runs a tight per-user sliding window
@@ -1255,6 +1258,9 @@ export function TransferPage() {
                       disabled={keyLive}
                       onBlur={field.onBlur}
                       onChange={(e) => {
+                        const running = runningLookup.current;
+                        runningLookup.current = null;
+                        if (running) abortRunning(dispatch, [running]);
                         field.onChange(e.target.value);
                         setRecipient(null);
                         setRecipientError(null);

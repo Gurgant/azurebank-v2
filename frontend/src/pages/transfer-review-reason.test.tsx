@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -254,6 +254,51 @@ describe('what "Review Transfer" is still waiting for', () => {
     });
 
     expect(texts).toStrictEqual([OWN_HANDLE, '', OWN_HANDLE]);
+  });
+
+  it.each([
+    { nextHandle: 'demo_user', pressEnter: true },
+    { nextHandle: 'another_friend', pressEnter: false },
+  ])('ignores a held lookup after editing to $nextHandle', async ({ nextHandle, pressEnter }) => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let started = () => {};
+    const requested = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    server.use(
+      http.get('*/api/users/:azureTag', async () => {
+        started();
+        await held;
+        return HttpResponse.json({
+          data: { exists: true, azureTag: 'friend', displayName: 'A. Friend' },
+          message: null,
+        });
+      }),
+    );
+    const { store } = await openTheFormSignedIn();
+    fireEvent.change(amountField(), { target: { value: '50' } });
+    fireEvent.change(handleField(), { target: { value: 'friend' } });
+    await userEvent.click(verify());
+    await requested;
+    const pending = store.dispatch(apiSlice.util.getRunningQueryThunk('lookupRecipient', 'friend'));
+    expect(pending).toBeDefined();
+
+    fireEvent.change(handleField(), { target: { value: nextHandle } });
+    if (pressEnter) {
+      fireEvent.keyDown(handleField(), { key: 'Enter' });
+      await screen.findByText(OWN_HANDLE);
+    }
+    await act(async () => {
+      answer();
+      await pending;
+    });
+
+    expect(screen.queryByText('A. Friend')).not.toBeInTheDocument();
+    expect(review()).toBeDisabled();
+    if (pressEnter) expect(screen.getByText(OWN_HANDLE)).toBeInTheDocument();
   });
 
   it('a check the bank turned away is still a check to make: "Verify", not another handle', async () => {
