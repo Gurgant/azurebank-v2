@@ -82,9 +82,14 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
   site. A request the lock refuses unread, registration refusals and business validation
   (insufficient funds, the daily limit) stay log-only, because a row the caller can repeat at will
   is an unbounded write on the tail lock
-  (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`); retry collisions as health
-  signals, not acts of a principal; `RefreshRenewalRateHigh` because a renewal writes nothing
-  (ADR-0057). `AuditChainUnavailable` is log-only by necessity: its row needs the lock that failed.
+  (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`). A transfer with no step-up can
+  be repeated too, and keeps one row each time
+  (`ATransferWithoutStepUp_IsSubjectedToTheAccountTheMoneyWouldHaveLeft`): the app itself never
+  sends one, so it is worth recording, and the limits on any request bound it, the BFF's 300 a
+  minute per address and a demo copy's 200 changes (ADR-0063). Retry collisions stay log-only as
+  health signals, not acts of a principal, and `RefreshRenewalRateHigh` because a renewal writes
+  nothing (ADR-0057). `AuditChainUnavailable` is log-only by necessity: its row needs the lock
+  that failed.
 
 ## Rejected
 
@@ -120,4 +125,5 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
 
 ## Related
 
-ADR-0009, ADR-0042, ADR-0045, ADR-0047, ADR-0049, ADR-0050, ADR-0056, ADR-0057, ADR-0058, ADR-0062.
+ADR-0009, ADR-0042, ADR-0045, ADR-0047, ADR-0049, ADR-0050, ADR-0056, ADR-0057, ADR-0058, ADR-0062,
+ADR-0063.
