@@ -178,20 +178,29 @@ describe('global 401 handling (D3)', () => {
     expect(store.getState().auth.status).toBe('anonymous');
   });
 
-  it('a 401 INVALID_CREDENTIALS stays on the login form — no session expiry', async () => {
-    mockState.session = null;
+  it('a 401 INVALID_CREDENTIALS keeps the session AND the cache — a wrong password is not a dead session', async () => {
+    // Signed in on purpose: sessionMiddleware reacts to a 401 only from 'authenticated', so from
+    // 'anonymous' this could not go red whatever IN_FLOW_401_CODES held.
+    seedMockSession();
     const store = makeTestStore();
     await boot(store);
-    expect(store.getState().auth.status).toBe('anonymous');
+    expect(store.getState().auth.status).toBe('authenticated');
 
-    await store
-      .dispatch(
-        apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: 'Wrong-Pass-1!' }),
-      )
-      .unwrap()
-      .catch(() => undefined);
+    // Warm the cache, so "nothing was wiped" is an observation rather than a vacuity.
+    await store.dispatch(apiSlice.endpoints.getAccounts.initiate()).unwrap();
+    const cachedKeys = Object.keys(store.getState().api.queries);
+    expect(cachedKeys.length).toBeGreaterThan(0);
 
-    expect(store.getState().auth.status).toBe('anonymous');
+    await expect(
+      store
+        .dispatch(
+          apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: 'Wrong-Pass-1!' }),
+        )
+        .unwrap(),
+    ).rejects.toMatchObject({ status: 401, errorCode: 'INVALID_CREDENTIALS' });
+
+    expect(store.getState().auth.status).toBe('authenticated');
+    expect(Object.keys(store.getState().api.queries)).toEqual(cachedKeys);
   });
 });
 
