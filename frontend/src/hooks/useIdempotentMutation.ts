@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isProvenCommit, isUnconfirmedSend } from '../api/moneyProblem';
+import { isLimiterRefusal, isProvenCommit, isUnconfirmedSend } from '../api/moneyProblem';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
@@ -21,9 +21,12 @@ export type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
 /**
  * KEEP outcomes (ADR-0022): the server may have recorded — or may still record —
  * this key, so re-sending with a FRESH key is a client-manufactured double-spend. The
- * user-driven Retry must reuse the same key + same body bytes. Everything else DROPS.
+ * user-driven Retry must reuse the same key + same body bytes. An unconfirmed send instead
+ * drops the key and latches the check view, preserving its send record; a definitive refusal
+ * drops the key without a check.
  */
 function shouldKeepKey(problem: ApiProblem): boolean {
+  if (isLimiterRefusal(problem)) return false;
   if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') return true;
   /*
     An authorisation refusal KEEPS the key, and the server is why (ADR-0042).
@@ -111,7 +114,8 @@ function isAuthorisationRefusal(problem: ApiProblem): boolean {
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —
  * try again" action calls `resetIntent` (after the verify-transactions dialog, ADR-0022).
  * A rejection with no HTTP status, and a 409 that named no code, latch the same way (see the
- * catch below).
+ * catch below). So does a limiter refusal of a resend: it settles nothing about the earlier
+ * send, and the check view asks the listing without sending money again.
  *
  * When that 409 says `applied: true` the payment is known to have gone through (ADR-0009), and
  * `wentThrough` says so beside the latch, for the flow to say it and to offer no "it didn't go
@@ -199,6 +203,7 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
       if (verifyRequiredRef.current) {
         throw new Error('Previous result unknown — verify before submitting again.');
       }
+      const hadRetainedKey = keyRef.current !== null;
       keyRef.current ??= crypto.randomUUID();
       /*
         Every send under the key is recorded, the latest one's start above all: each could make a
@@ -246,9 +251,10 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           read, and the only 409s a money send answers are IN_FLIGHT and RESULT_UNKNOWN. It used to
           take the plain drop below, with no latch.
 
-          `isUnconfirmedSend` is those two and RESULT_UNKNOWN, in one place for every reader.
+          A limiter refusal of a resend settles no earlier send under the held key either.
+          `isUnconfirmedSend` owns these cases for the hook and the dialogs' error handling.
         */
-        if (isUnconfirmedSend(problem)) {
+        if (isUnconfirmedSend(problem, hadRetainedKey)) {
           // A proven commit needs no lookup: nothing is left behind to ask about.
           setLastSent(isProvenCommit(problem) ? null : copyOf(record));
           if (isProvenCommit(problem)) attempts.current = null;
@@ -267,7 +273,7 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           keyRef.current = null;
           setKeyRetained(false);
         }
-        // shouldKeepKey path: the key survives, so keyRetained stays true.
+        // Only KEEP outcomes leave a sendable key; the check view has a read-only record instead.
         throw error;
       }
     },
