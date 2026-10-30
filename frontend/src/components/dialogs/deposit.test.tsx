@@ -84,6 +84,17 @@ function depositSuccessBody(newBalance: number, replayed = false) {
 }
 
 describe('deposit (T3 — idempotent mutation)', () => {
+  it('uses a smaller figure for long amounts and restores the large figure', async () => {
+    renderDeposit();
+    const input = screen.getByLabelText('Deposit amount');
+    for (const amount of ['12500.50', '100000.00']) {
+      await act(async () => fireEvent.change(input, { target: { value: amount } }));
+      expect(getComputedStyle(input).fontSize).toBe('var(--fontSizeHero800)');
+    }
+    await act(async () => fireEvent.change(input, { target: { value: '100' } }));
+    expect(getComputedStyle(input).fontSize).toBe('48px');
+  });
+
   it('deposits and shows the receipt with the real new balance, then navigates to the transaction', async () => {
     renderDeposit();
 

@@ -146,7 +146,13 @@ export const useMoneyDialogStyles = makeStyles({
     borderRadius: '12px',
   },
   amountLabel: { fontSize: '14px', fontWeight: 400, color: colors.neutral[500] },
-  amountInputWrapper: { display: 'flex', alignItems: 'baseline', gap: '4px' },
+  amountInputWrapper: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    width: '100%',
+    gap: '4px',
+  },
   amountCurrency: { fontSize: '32px', fontWeight: 300, color: colors.neutral[800] },
   amountInput: {
     fontSize: '48px',
@@ -163,14 +169,20 @@ export const useMoneyDialogStyles = makeStyles({
     },
     background: 'transparent',
     textAlign: 'center',
-    width: '180px',
+    fieldSizing: 'content',
+    '@supports not (field-sizing: content)': { textAlign: 'start' },
+    width: 'auto',
+    minWidth: '1ch',
+    maxWidth: '100%',
     // The hint "0" is read, so it takes the token of the description field's hint, which follows
     // the theme: 4.74 to 1 on this ground in the light theme and 5.79 to 1 in the dark one.
     '::placeholder': { color: tokens.colorNeutralForeground4 },
   },
+  amountLong: { fontSize: tokens.fontSizeHero800 },
   newBalance: { fontSize: '13px', color: colors.neutral[500] },
   // `error.dark`, the red for words, as in `transferWizardStyles`: `error.main` measured 3.75 to
-  // 1 here in the light theme, at 13 px. The figure above keeps it: at 48 px it needs 3 to 1.
+  // 1 here in the light theme, at 13 px. The figure above keeps it: at 32 px bold or above it
+  // needs 3 to 1.
   amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.dark },
   // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
   amountInvalid: { color: colors.semantic.error.main },
@@ -325,12 +337,20 @@ export const useMoneyDialogStyles = makeStyles({
   detailRow: {
     display: 'flex',
     justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalS,
     padding: '12px 0',
     borderBottom: `1px solid ${colors.neutral[100]}`,
     ':last-child': { borderBottom: 'none' },
   },
-  detailLabel: { fontSize: '14px', color: colors.neutral[500] },
-  detailValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
+  detailLabel: { fontSize: '14px', color: colors.neutral[500], flexShrink: 0 },
+  detailValue: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: colors.neutral[800],
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+    textAlign: 'end',
+  },
   footer: {
     padding: '16px 20px 24px 20px',
     borderTop: `1px solid ${colors.neutral[200]}`,
