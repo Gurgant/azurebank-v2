@@ -2,7 +2,7 @@
 
 **Status:** Accepted · **Date:** 2026-07-25 · **Amended:** 2026-08-12, 2026-08-16 (ADR-0041,
 ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059), 2026-10-16 (ADR-0009; decisions 1 and
-4, the listing by key) · **Decision Makers:** Vladislav Aleshaev
+4, the listing by key), 2026-10-30 (decision 4, a limiter's refusal) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -41,6 +41,9 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
    key can still commit: 3 min 5 s after the latest send under it began (the 65 s abort, then the
    claim's 2-minute stale age), or at once when every authorisation presented under it was
    refused. On this code the four money mutations invalidate the tags their success invalidates.
+   A limiter's refusal of a resend (`RATE_LIMIT_EXCEEDED`, or `DEMO_COPY_LIMIT`, or a 429 whose code
+   cannot be read) takes this path too: it comes before the idempotency check, so it settles nothing
+   about the send before it. A refusal of a first send is decision 3: nothing is unknown.
    When the 409 says `applied: true` the commit is proven: the flow says the payment went through
    and offers the history, and `resetIntent` does nothing, so no new key can exist in that page or
    dialog. A movement the listing finds by the key is the same proof (`confirmWentThrough`).

@@ -64,7 +64,8 @@ for ever.
 page, one fixed sentence in the "Start over" dialog. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are
 worded by their code, in the app's sentences and never the server's, with no countdown. Nothing
 is built for a fourth code, `DEMO_COPY_LIMIT` (ADR-0063, decision 11): each surface shows the
-fallback it has.
+fallback it has, but for a money resend under a held key, which goes to the check (ADR-0022,
+decision 4).
 
 **One place acts for good on an instant the server gave, against the browser's clock:** the
 sign-in page removes a kept demo copy whose `expiresAt` has passed when the page opens. A clock
