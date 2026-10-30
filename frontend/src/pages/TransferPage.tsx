@@ -631,7 +631,7 @@ export function TransferPage() {
             : nobodyHasTheHandle
               ? 'Change the handle to continue.'
               : 'Press Verify to check the handle.'
-          : amountNumber <= 0
+          : watch('amount').trim() === ''
             ? 'Enter an amount to continue.'
             : !amountCanBeSent
               ? 'Change the amount to continue.'
