@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   makeStyles,
+  mergeClasses,
   Text,
   Button,
   Spinner,
@@ -292,7 +293,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     void trigger('amount');
   }, [availableBalance, trigger]);
 
-  const amountNumber = parseAmountInput(watch('amount'));
+  const amount = watch('amount');
+  const amountNumber = parseAmountInput(amount);
   const selectedAccount = selectedForBalance;
 
   // A body-affecting edit (amount/account/description) rotates the key WHEN NO KEY IS HELD: the
@@ -350,6 +352,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const handleQuickAmount = (value: number) => {
     setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
+    onBodyEdit();
+  };
+
+  const handleUseMax = () => {
+    setValue('amount', availableBalance.toFixed(2), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
@@ -874,7 +881,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               classNames={{
                 wrapper: styles.amountInputWrapper,
                 currency: styles.amountCurrency,
-                input: styles.amountInput,
+                input: mergeClasses(styles.amountInput, amount.length > 6 && styles.amountLong),
                 hint: styles.amountHint,
                 invalid: styles.amountInvalid,
               }}
@@ -894,7 +901,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                   <button
                     type="button"
                     className={styles.useMaxBtn}
-                    onClick={() => handleQuickAmount(availableBalance)}
+                    onClick={handleUseMax}
                     disabled={availableBalance <= 0}
                     aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
                   >

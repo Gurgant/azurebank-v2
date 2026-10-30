@@ -124,6 +124,20 @@ async function goToPinStep(amountLabel = '€100') {
 }
 
 describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056)', () => {
+  it('keeps long invalid amounts small and red, then restores the large figure', async () => {
+    renderWithdraw();
+    const input = screen.getByLabelText('Withdraw amount');
+    for (const amount of ['12500.50', '100000.00']) {
+      await act(async () => fireEvent.change(input, { target: { value: amount } }));
+      expect(getComputedStyle(input).fontSize).toBe('var(--fontSizeHero800)');
+      await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'));
+      expect(getComputedStyle(input).color).toBe('var(--ab-colors-semantic-error-main)');
+    }
+    await act(async () => fireEvent.change(input, { target: { value: '100' } }));
+    expect(getComputedStyle(input).fontSize).toBe('48px');
+    await waitFor(() => expect(input).not.toHaveAttribute('aria-invalid'));
+  });
+
   const MINTED = '019f7b3f-0000-7000-8000-0000000a0001';
   const MINTED_SECOND = '019f7b3f-0000-7000-8000-0000000a0002';
 
@@ -618,6 +632,35 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     // NOT a trap: latching drops the key, so the dialog can be left.
     expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
     // And the second intent was never sent. One request, one key.
+    expect(keys).toHaveLength(1);
+  });
+
+  it('Use max on a retained key counts as a body edit and opens the verify view', async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_IN_FLIGHT',
+          detail: 'Still processing.',
+        });
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await screen.findByText(/Still processing/);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Back/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use maximum, €1,250.50' }));
+
+    expect(await screen.findByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.getByText(/may or may not have gone through/i)).toBeInTheDocument();
+    expect(await screen.findByText(COPY.movementNotYet)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
     expect(keys).toHaveLength(1);
   });
 

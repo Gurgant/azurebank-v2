@@ -1,6 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
+import {
+  Text,
+  Button,
+  Spinner,
+  MessageBar,
+  MessageBarBody,
+  mergeClasses,
+} from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
   CheckmarkCircle24Filled,
@@ -181,7 +188,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const sentValues = useRef<DepositFormValues | null>(null);
 
   const accountId = watch('accountId');
-  const amountNumber = parseAmountInput(watch('amount'));
+  const amount = watch('amount');
+  const amountNumber = parseAmountInput(amount);
   const selectedAccount = accounts.find((account) => account.id === accountId) ?? null;
 
   /*
@@ -516,7 +524,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               classNames={{
                 wrapper: styles.amountInputWrapper,
                 currency: styles.amountCurrency,
-                input: styles.amountInput,
+                input: mergeClasses(styles.amountInput, amount.length > 6 && styles.amountLong),
                 hint: styles.amountHint,
               }}
               belowSlot={
