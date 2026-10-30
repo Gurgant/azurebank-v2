@@ -1,7 +1,8 @@
 # ADR-0017: PII-safe telemetry and the CodeQL log-forging barrier
 
 **Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-11 (the log-identifier rule),
-2026-09-14 (the rule applied to the request log) · **Decision Makers:** Vladislav Aleshaev
+2026-09-14 (the rule applied to the request log), 2026-10-30 (the code of a refused client's
+address) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -61,7 +62,9 @@ read against the rest. So every placeholder in a log template has exactly one cl
 
 1. **Surrogate keys** (user, account, transaction, authorisation, token-row and notice ids) are
    logged in clear: not credentials, and they name nobody without the database. An id that
-   leads to a person is still pseudonymous personal data, and D4 applies to it.
+   leads to a person is still pseudonymous personal data, and D4 applies to it. The code of a
+   client's address on a rate-limit refusal (`ClientAddress.CodeOf`) is in this class: it names
+   nobody without the BFF's service key, and D4 applies to it too.
 2. **Secrets** appear only as their first eight characters, through one helper, `SecretPrefix.Of`;
    the BFF's session id is the one secret any line names.
 3. **Direct identifiers** (a handle, a name, anything a person chose to be known by) never appear.
@@ -79,7 +82,8 @@ its template says.
 - Rejected: the full pipeline (`[LogProperties]`, classified attributes, `EnableRedaction`),
   because it would kill the log pillar (D2).
 - Rejected: `HmacRedactor` (correlatable hashes), because the opaque user id already is the
-  correlation key.
+  correlation key. The limiter counts a client by its address, before any sign-in, where no such
+  id can stand in, so that one value is a keyed code.
 - Rejected: advanced CodeQL setup with query filters, because its only extra lever, excluding
   queries, would silence true positives; the model pack works under default setup.
 
