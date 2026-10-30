@@ -90,6 +90,6 @@ public sealed class DemoHostTests
         DemoOf(plainBff.Services).Enabled.Should().BeFalse("this BFF was not asked");
         DemoOf(demoBff.Services).Enabled.Should().BeTrue();
         DemoOf(demoBff.Services).ClientKeySecret.Should().BeNull(
-            "the BFF hashes no address: only the API holds the secret");
+            "only the API holds this secret");
     }
 }

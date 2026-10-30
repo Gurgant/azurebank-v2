@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -37,6 +39,33 @@ public class ClientAddressTests : IClassFixture<WebApplicationFactory<Program>>
         context.Connection.RemoteIpAddress = remote is null ? null : IPAddress.Parse(remote);
 
         ClientAddress.Of(context).Should().Be(expected);
+    }
+
+    [Fact]
+    public void TheCode_IsAKeyedHashOfTheAddress_UnderItsOwnLabel_CutTo8Bytes()
+    {
+        const string key = "a-key-of-at-least-32-characters-for-this-test";
+        const string address = "203.0.113.9";
+
+        var whole = HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(key), Encoding.UTF8.GetBytes("rate-limit-log:" + address));
+
+        ClientAddress.CodeOf(key, address).Should().Be(Convert.ToHexStringLower(whole)[..16]);
+        ClientAddress.CodeOf(key + "x", address).Should().NotBe(
+            ClientAddress.CodeOf(key, address), "without the key the code cannot be made from a list of addresses");
+    }
+
+    [Theory]
+    [InlineData(null, "203.0.113.9")]
+    [InlineData("", "203.0.113.9")]
+    [InlineData("  ", "203.0.113.9")]
+    [InlineData("a-key", null)]
+    [InlineData("a-key", "")]
+    public void TheCode_IsRefused_WithoutAKeyOrAnAddress(string? key, string? address)
+    {
+        var make = () => ClientAddress.CodeOf(key!, address!);
+
+        make.Should().Throw<ArgumentException>();
     }
 
     [Fact]
