@@ -114,6 +114,47 @@ public class SetPinLockForwardingTests : IClassFixture<WebApplicationFactory<Pro
         }
     }
 
+    [Fact]
+    public async Task AnOverLongPassword_IsRefusedHere_AndNeverReachesTheApi()
+    {
+        var pinCalls = 0;
+        var host = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    new FakeBackendApiHandler(request =>
+                    {
+                        var path = request.RequestUri!.AbsolutePath;
+                        if (path == "/api/auth/login")
+                        {
+                            return Json(HttpStatusCode.OK, LoginSuccessJson);
+                        }
+                        if (path == "/api/auth/pin")
+                        {
+                            pinCalls++;
+                            return Json(HttpStatusCode.Unauthorized,
+                                """{"errorCode":"INVALID_CREDENTIALS"}""", "application/problem+json");
+                        }
+                        return Json(HttpStatusCode.OK, """{"message":"ok"}""");
+                    }))));
+
+        var client = host.CreateClient();
+        var signIn = await client.PostAsJsonAsync(
+            "/bff/auth/login", new { email = "lockeduser@azurebank.dev", password = "Password123!" });
+        signIn.StatusCode.Should().Be(HttpStatusCode.OK);
+        // CreateClient() keeps no cookies, so the session's is carried by hand.
+        client.DefaultRequestHeaders.Add("Cookie", signIn.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
+
+        using var response = await client.PostAsJsonAsync(
+            "/bff/auth/set-pin", new { pin = "424242", password = new string('a', ValidationRules.PasswordMaxLength + 1) });
+
+        var text = await response.Content.ReadAsStringAsync();
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest, text);
+            pinCalls.Should().Be(0, "the BFF refuses it before it asks the API");
+        }
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode status, string body, string mediaType = "application/json") =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, mediaType) };
 }

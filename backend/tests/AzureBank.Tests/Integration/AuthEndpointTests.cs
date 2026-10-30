@@ -11,6 +11,7 @@ using AzureBank.Shared.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using FluentAssertions;
+using FluentAssertions.Execution;
 
 namespace AzureBank.Tests.Integration;
 
@@ -607,6 +608,52 @@ public class AuthEndpointTests : IntegrationTestBase
         var lockedWrong = await Client.PostAsJsonAsync("/api/auth/pin", wrong, JsonOptions);
         lockedWrong.StatusCode.Should().Be(HttpStatusCode.TooManyRequests, "a wrong password meets the same lock");
         (await lockedWrong.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+    }
+
+    /// <summary>
+    /// As at sign-in: longer than any account's password can be, so it is refused before the
+    /// action, nothing is compared and nothing is counted.
+    /// </summary>
+    [Theory]
+    [InlineData(ValidationRules.PasswordMaxLength + 1)]
+    [InlineData(1_048_576)]
+    public async Task SetPin_Enrolling_WithAPasswordLongerThanAnyAccountHolds_IsTheFrameworks400_AndIsNotCounted(int length)
+    {
+        var email = $"rule{Guid.NewGuid():N}@example.com";
+        var (token, _) = await RegisterAndGetTokensAsync(email);
+        SetAuthHeader(token);
+
+        var response = await Client.PostAsJsonAsync("/api/auth/pin",
+            new SetPinRequest { Pin = "424242", Password = new string('a', length) }, JsonOptions);
+        ClearAuthHeader();
+
+        var text = await response.Content.ReadAsStringAsync();
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var failed = (await db.Users.AsNoTracking().SingleAsync(u => u.Email == email)).AccessFailedCount;
+
+        using (new AssertionScope())
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest, text);
+            failed.Should().Be(0, "a request refused before the action reaches no counter");
+        }
+        using var body = JsonDocument.Parse(text);
+        ComparableText.Of(body.RootElement.GetProperty("errors").GetRawText()).Should().Be(ComparableText.Of(
+            """{"Password":["The field Password must be a string or array type with a maximum length of '128'."]}"""));
+    }
+
+    [Fact]
+    public async Task SetPin_Enrolling_WithAWrongPasswordOfTheLongestLength_StillReachesTheCheck()
+    {
+        var email = $"rule{Guid.NewGuid():N}@example.com";
+        var (token, _) = await RegisterAndGetTokensAsync(email);
+        SetAuthHeader(token);
+
+        var response = await Client.PostAsJsonAsync("/api/auth/pin",
+            new SetPinRequest { Pin = "424242", Password = new string('a', ValidationRules.PasswordMaxLength) }, JsonOptions);
+        ClearAuthHeader();
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
