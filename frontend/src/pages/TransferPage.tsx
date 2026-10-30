@@ -260,6 +260,8 @@ export function TransferPage() {
       SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
       ACCOUNT_NOT_FOUND: ACCOUNT_CLOSED,
       RECIPIENT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+      RECIPIENT_NO_ACCOUNT:
+        "That recipient can't receive money right now. Choose another recipient.",
     },
     fallback: 'Transfer failed. Please try again.',
   });
@@ -573,9 +575,8 @@ export function TransferPage() {
         (ADR-0014) and rejects with 429 + Retry-After. So the one failure a user is most likely to
         provoke, by tapping Verify repeatedly, sent them to check a connection that was fine.
 
-        Branching on STATUS rather than errorCode is deliberate: the BFF's rejection body is a bare
-        ProblemDetails with no errorCode, so the client synthesises HTTP_429 and there is no code to
-        match on. `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
+        Branching on STATUS rather than on the code: any 429 here gets the same sentence.
+        `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
       */
       const problem = caught as ApiProblem;
       if (problem.status === 429) {
