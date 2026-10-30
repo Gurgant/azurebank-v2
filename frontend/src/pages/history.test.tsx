@@ -206,6 +206,234 @@ describe('history feed (T1)', () => {
     }
   });
 
+  describe('a filter with no match in the rows on screen', () => {
+    const NONE_LOADED = 'None in the rows loaded so far.';
+
+    /** Twenty €10 deposits, which is what the page asks for at a time, with no withdrawal. */
+    const twentyDeposits = (page: number) => {
+      const base = mockState.transactions.find((t) => t.type === 'Deposit');
+      if (!base) throw new Error('the mock has no deposit');
+      return Array.from({ length: 20 }, (_, i) => ({
+        ...base,
+        id: `019f7b3f-0000-7000-8000-0000000d${String(page * 100 + i).padStart(4, '0')}`,
+        status: 'Completed' as const,
+        amount: 10,
+        description: `Deposit ${page}.${i + 1}`,
+      }));
+    };
+
+    const aWithdrawal = () => {
+      const base = mockState.transactions.find((t) => t.type === 'Withdrawal');
+      if (!base) throw new Error('the mock has no withdrawal');
+      return [
+        {
+          ...base,
+          id: '019f7b3f-0000-7000-8000-0000000d9999',
+          status: 'Completed' as const,
+          amount: 40,
+          description: 'Older cash',
+        },
+      ];
+    };
+
+    /** Answers the feed from these pages, and notes each page it is asked for. */
+    const serveFeed = (pages: ReturnType<typeof twentyDeposits>[]) => {
+      const asked: number[] = [];
+      server.use(
+        http.get('*/api/transactions', ({ request }) => {
+          const page = Number(new URL(request.url).searchParams.get('Page') ?? '1');
+          asked.push(page);
+          return HttpResponse.json({
+            data: pages[page - 1].map(toWire),
+            pagination: {
+              page,
+              pageSize: 20,
+              totalItems: pages.flat().length,
+              totalPages: pages.length,
+              hasNextPage: page < pages.length,
+              hasPreviousPage: page > 1,
+            },
+          });
+        }),
+      );
+      return asked;
+    };
+
+    it('says none are in the rows loaded so far, and Load more reaches the older match', async () => {
+      serveFeed([twentyDeposits(1), aWithdrawal()]);
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Deposit 1.1');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
+
+      // More rows exist, so neither line may say that there are none: the words are drawn once.
+      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.queryByText('No Transactions')).not.toBeInTheDocument();
+      expect(
+        screen.queryByText('No transactions found for the selected filter.'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+
+      expect(await screen.findByText('Older cash')).toBeInTheDocument();
+      expect(screen.queryByText(NONE_LOADED)).not.toBeInTheDocument();
+      expect(screen.getByText('Totals of the 1 withdrawal shown below.')).toBeInTheDocument();
+      // The row, the expenses and the net.
+      expect(screen.getAllByText('-€40.00')).toHaveLength(3);
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument(),
+      );
+    });
+
+    it('stays on the new words while a next page holds no match either, then says none exist', async () => {
+      serveFeed([twentyDeposits(1), twentyDeposits(2), twentyDeposits(3)]);
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Deposit 1.1');
+      await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      expect(await screen.findByRole('button', { name: 'Show less' })).toBeInTheDocument();
+      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument(),
+      );
+
+      // Everything is loaded and shown: the old words, and the way back.
+      expect(screen.getByText('No Transactions')).toBeInTheDocument();
+      expect(
+        screen.getByText('No transactions found for the selected filter.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(NONE_LOADED)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
+    });
+
+    it('after Show less hides the only match, Load more shows it again with no request', async () => {
+      const asked = serveFeed([twentyDeposits(1), aWithdrawal()]);
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Deposit 1.1');
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      await screen.findByText('Older cash');
+      await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
+
+      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+      expect(asked).toEqual([1, 2]);
+
+      const loadMore = screen.getByRole('button', { name: 'Load more' });
+      loadMore.focus();
+      await userEvent.keyboard('{Enter}');
+
+      expect(await screen.findByText('Older cash')).toBeInTheDocument();
+      expect(screen.getByText('Totals of the 1 withdrawal shown below.')).toBeInTheDocument();
+      expect(asked).toEqual([1, 2]);
+      expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
+
+      // Show less from the rows brings the same view back, with the match hidden again.
+      await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
+    });
+
+    it('keeps the pressed button when a hidden page brings rows and more pages remain', async () => {
+      // The rows take the empty state's place, and the button is the same node under them: focus
+      // stays on it, as it does when the rows were already there.
+      serveFeed([twentyDeposits(1), aWithdrawal(), twentyDeposits(3)]);
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Deposit 1.1');
+      await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      await screen.findByText('Older cash');
+      await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
+
+      const loadMore = screen.getByRole('button', { name: 'Load more' });
+      loadMore.focus();
+      await userEvent.keyboard('{Enter}');
+
+      expect(await screen.findByText('Older cash')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Load more' })).toBe(loadMore);
+      expect(document.activeElement).toBe(loadMore);
+    });
+
+    it('a FAILED Load more from the empty state is said under it, and focus lands on its Retry', async () => {
+      const stopFixup = emulateFocusFixup();
+      try {
+        serveFeed([twentyDeposits(1), aWithdrawal()]);
+        renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+        await screen.findByText('Deposit 1.1');
+        await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
+        const loadMore = screen.getByRole('button', { name: 'Load more' });
+        const [pageSlot, listSlot] = screen.getAllByRole('alert');
+
+        // Held until the button shows its wait: disabled, it hands focus to the page.
+        let fail = () => {};
+        const failing = new Promise<void>((resolve) => (fail = resolve));
+        server.use(
+          http.get('*/api/transactions', async () => {
+            await failing;
+            return problem({
+              status: 500,
+              errorCode: 'INTERNAL_ERROR',
+              detail: 'Page two exploded.',
+            });
+          }),
+        );
+        await userEvent.click(loadMore);
+        await waitFor(() => expect(loadMore).toBeDisabled());
+        fail();
+        await waitFor(() => expect(listSlot).toHaveTextContent('Page two exploded.'));
+
+        expect(pageSlot).toBeEmptyDOMElement();
+        expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+        const retry = within(listSlot).getByRole('button', { name: 'Retry' });
+        await waitFor(() => expect(document.activeElement).toBe(retry));
+
+        server.resetHandlers();
+        serveFeed([twentyDeposits(1), aWithdrawal()]);
+        await userEvent.click(retry);
+        expect(await screen.findByText('Older cash')).toBeInTheDocument();
+        expect(listSlot).toBeEmptyDOMElement();
+      } finally {
+        stopFixup();
+      }
+    });
+
+    it('a slow Load more from the empty state says "Loaded." in the same region when rows come', async () => {
+      // The hint's region has to outlive the empty state: one drawn anew with the rows has never
+      // waited, and would say nothing.
+      serveFeed([twentyDeposits(1), aWithdrawal()]);
+      renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+      await screen.findByText('Deposit 1.1');
+
+      const nextPage: number[] = [];
+      server.use(
+        http.get('*/api/transactions', async ({ request }) => {
+          if (new URL(request.url).searchParams.get('Page') !== '2') return undefined;
+          nextPage.push(Date.now());
+          await sleep(6_000);
+          return undefined;
+        }),
+      );
+      installFakeClock();
+      const user = fakeClockUser();
+      await user.click(screen.getByRole('button', { name: 'Withdrawals' }));
+      await user.click(screen.getByRole('button', { name: 'Load more' }));
+      await waitFor(() => expect(nextPage).toHaveLength(1));
+
+      await advanceUntil(nextPage[0], 5_000);
+      const region = hintRegion(COPY.slow);
+
+      await advanceUntil(nextPage[0], 6_100);
+
+      expect(await screen.findByText('Older cash')).toBeInTheDocument();
+      await waitFor(() => expect(region).toHaveTextContent(COPY.loaded));
+      expect(region.textContent).toBe(COPY.loaded);
+    });
+  });
+
   it('announces which filter is selected, not just colours it', async () => {
     // The inline version was four bare buttons: no aria-pressed, no group, no name for the group.
     // Which one was active was carried by background colour ALONE, so a screen reader announced
@@ -625,5 +853,7 @@ describe('history feed (T1)', () => {
     expect(screen.queryByText(/Totals of the/)).not.toBeInTheDocument();
     expect(screen.getAllByText('+€0.00')).toHaveLength(2);
     expect(screen.getByText('-€0.00')).toBeInTheDocument();
+    // Nothing to press, so no row of buttons: an empty box would still take the column's gap.
+    expect(screen.getAllByRole('alert')[1].previousElementSibling).toBeNull();
   });
 });
