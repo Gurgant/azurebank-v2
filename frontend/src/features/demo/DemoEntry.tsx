@@ -96,6 +96,11 @@ interface DemoEntryProps {
   disabled: boolean;
   /** "Forget this copy" was pressed on this page. It is said once the page offers no copy. */
   forgotten: boolean;
+  /**
+   * The press of this block the page last saw refused, `null` for none: a new object for each
+   * refusal. It is drawn with the answer, so the block's buttons are as the answer left them.
+   */
+  refusal: object | null;
   /** "Try the demo" was pressed. */
   onTry: () => void;
   /** "Continue with my copy" was pressed. */
@@ -147,6 +152,7 @@ export function DemoEntry({
   pending,
   disabled,
   forgotten,
+  refusal,
   onTry,
   onContinue,
   onGetNew,
@@ -154,7 +160,8 @@ export function DemoEntry({
 }: DemoEntryProps) {
   const styles = useStyles();
   const noticeFirstId = useId();
-  const tryTheDemo = useRef<HTMLButtonElement>(null);
+  // "Continue with my copy" when the block offers a copy, "Try the demo" when it offers none.
+  const firstButton = useRef<HTMLButtonElement>(null);
 
   // The wait this block's own button started: a claim with no copy, a sign-in with one.
   const waiting = copy ? pending === 'continue' : pending === 'claim';
@@ -164,8 +171,17 @@ export function DemoEntry({
   // "Forget this copy" goes from the page under its own press, and the focus it had would fall to
   // the page with it. It goes to the button that took the block's place.
   useEffect(() => {
-    if (saysForgotten) tryTheDemo.current?.focus();
+    if (saysForgotten) firstButton.current?.focus();
   }, [saysForgotten]);
+
+  // A refused press leaves focus on `body`: its button was disabled for the wait. The first button
+  // is the one pressed, or, when the answer took that one away, the one that took its place. The
+  // test of "lost" is useFocusWhenLost's. A focus call on a disabled button does nothing, which is
+  // the limiter's case, and the page then puts focus on the form (src/pages/LoginPage.tsx).
+  useEffect(() => {
+    const landing = firstButton.current;
+    if (refusal && landing && document.activeElement?.contains(landing)) landing.focus();
+  }, [refusal]);
 
   return (
     <div className={styles.block}>
@@ -175,6 +191,7 @@ export function DemoEntry({
             {rememberedCopy(formatDateTime(copy.expiresAt))}
           </Text>
           <Button
+            ref={firstButton}
             appearance="primary"
             size="large"
             className={styles.button}
@@ -196,7 +213,7 @@ export function DemoEntry({
         </>
       ) : (
         <Button
-          ref={tryTheDemo}
+          ref={firstButton}
           appearance="primary"
           size="large"
           className={styles.button}

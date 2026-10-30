@@ -2,7 +2,7 @@ import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppToaster } from '../components/feedback';
 import { apiSlice } from '../features/api/apiSlice';
 import { AuthBootstrap } from '../features/auth';
@@ -109,7 +109,7 @@ const A_FAR_END = '2031-07-15T12:30:00.000Z';
 /** An address nobody has an account under, on the demo or off it. */
 const NOBODY = 'visitor@azurebank.example';
 
-type Answer = () => Response | Promise<Response> | undefined;
+type Answer = () => Response | Promise<Response | undefined> | undefined;
 
 /**
  * Locks `email` in the mock for fifteen minutes from now, as five wrong passwords would
@@ -2113,4 +2113,225 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     // A read the browser refused is not a copy that could not be read: the key is as it was.
     expect(keptAddress()).toBe(FIRST_COPY);
   });
+});
+
+/*
+  A press on a button that a request disables leaves focus on `body`, and the next Tab would start
+  from the top of the page. `emulateFocusFixup` does here what a browser does, or the lost focus
+  these tests are about would never be lost.
+*/
+describe('where focus goes after a refused press', () => {
+  let stopEmulating: () => void;
+  beforeEach(() => {
+    stopEmulating = emulateFocusFixup();
+  });
+  afterEach(() => stopEmulating());
+
+  /** Where focus is: a field or a control by its name, or `the page` when it is on `body`. */
+  function focusOn(): string | null | undefined {
+    const focused = document.activeElement as HTMLInputElement | null;
+    if (focused === document.body) return 'the page';
+    return (
+      focused?.getAttribute('aria-label') ??
+      focused?.labels?.[0]?.textContent ??
+      focused?.textContent
+    );
+  }
+
+  /**
+   * An answer that waits for `release`, then is `then`'s, or the mock's when there is none. Without
+   * the wait the button is enabled again before the emulated fixup looks at it, and no focus is lost.
+   */
+  function heldBack(then?: Answer) {
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { answer: () => released.then(() => then?.()), release };
+  }
+
+  /** "Pressed by keyboard": Enter on the control. `duringTheWait` runs once focus has been lost. */
+  async function pressByKeyboard(control: HTMLElement, duringTheWait: () => void) {
+    control.focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(focusOn()).toBe('the page'));
+    duringTheWait();
+  }
+
+  /**
+   * The page says `said`, and the press has had its end: the sentence is drawn from the store,
+   * and the page hears of the refusal in the press's own `catch`, a moment after.
+   */
+  async function refusedWith(said: string) {
+    await waitFor(() => expect(alerts()).toStrictEqual([said]));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve));
+    });
+  }
+
+  const outage = () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/login' });
+  const spendTheLimiter = () => {
+    mockState.authCallTimes = Array.from({ length: 10 }, () => Date.now());
+  };
+
+  it.each([
+    ['a wrong password', undefined, WORDS.wrongPassword],
+    ['a 503', outage, COPY.unavailable],
+  ])(
+    'the form refused by %s: focus on the password, and Tab goes on in the form',
+    async (...row) => {
+      const [, then, said] = row;
+      const { answer, release } = heldBack(then);
+      await openSignInPage({ demo: false, signIn: answer });
+      await fillTheForm(MOCK_USER.email, 'Wrong-Pass-1!');
+
+      await pressByKeyboard(signInButton(), release);
+
+      await refusedWith(said);
+      const atTheRefusal = focusOn();
+      await userEvent.tab();
+      expect({ atTheRefusal, nextTab: focusOn() }).toStrictEqual({
+        atTheRefusal: 'Password',
+        nextTab: 'Show password',
+      });
+    },
+  );
+
+  it.each([
+    ['off the demo', false],
+    ['on the demo', true],
+  ])(
+    'the form refused by the limiter %s: focus on the password, which does not wait',
+    async (_, demo) => {
+      const { answer, release } = heldBack();
+      await openSignInPage({ demo, signIn: answer });
+      spendTheLimiter();
+      await fillTheForm(NOBODY, 'Wrong-Pass-1!');
+
+      await pressByKeyboard(signInButton(), release);
+
+      await refusedWith(WORDS.tooManyAttempts);
+      expect({ focus: focusOn(), signInDisabled: signInButton().disabled }).toStrictEqual({
+        focus: 'Password',
+        signInDisabled: true,
+      });
+    },
+  );
+
+  it.each(['Email address', 'Password'])(
+    'Enter in the field "%s": focus stays in that field',
+    async (label) => {
+      await openSignInPage({ demo: false });
+      await fillTheForm(MOCK_USER.email, 'Wrong-Pass-1!');
+
+      screen.getByLabelText(label).focus();
+      await userEvent.keyboard('{Enter}');
+
+      await refusedWith(WORDS.wrongPassword);
+      expect(focusOn()).toBe(label);
+    },
+  );
+
+  it("a visitor who moved focus during the form's wait keeps it", async () => {
+    const { answer, release } = heldBack();
+    await openSignInPage({ demo: false, signIn: answer });
+    await fillTheForm(MOCK_USER.email, 'Wrong-Pass-1!');
+
+    await pressByKeyboard(signInButton(), () => {
+      screen.getByRole('button', { name: 'Show password' }).focus();
+      release();
+    });
+
+    await refusedWith(WORDS.wrongPassword);
+    expect(focusOn()).toBe('Show password');
+  });
+
+  it("a visitor who moved focus during the demo's wait keeps it", async () => {
+    const { answer, release } = heldBack(poolEmpty);
+    await openSignInPage({ claim: answer });
+
+    await pressByKeyboard(tryTheDemo(), () => {
+      screen.getByRole('button', { name: 'Show password' }).focus();
+      release();
+    });
+
+    await refusedWith(WORDS.poolEmpty);
+    expect(focusOn()).toBe('Show password');
+  });
+
+  it('"Try the demo" refused: focus back on it', async () => {
+    const { answer, release } = heldBack(poolEmpty);
+    await openSignInPage({ claim: answer });
+
+    await pressByKeyboard(tryTheDemo(), release);
+
+    await refusedWith(WORDS.poolEmpty);
+    expect(focusOn()).toBe(WORDS.tryTheDemo);
+  });
+
+  it('"Continue with my copy" refused: focus back on it', async () => {
+    rememberAClaimedCopy();
+    const { answer, release } = heldBack(outage);
+    await openSignInPage({ signIn: answer });
+
+    await pressByKeyboard(continueButton(), release);
+
+    await refusedWith(COPY.unavailable);
+    expect(focusOn()).toBe(WORDS.continue);
+  });
+
+  it('"Continue with my copy" gone under the refusal: focus on what took its place', async () => {
+    rememberAClaimedCopy({ password: 'Wrong-Pass-1!', expiresAt: halfAMinuteFromNow() });
+    const { answer, release } = heldBack();
+    await openSignInPage({ signIn: answer });
+    await letTheEndPass();
+
+    continueButton().focus();
+    await fakeClockUser().keyboard('{Enter}');
+    await waitFor(() => expect(focusOn()).toBe('the page'));
+    release();
+
+    await refusedWith(WORDS.copyGone);
+    expect({ continue: buttonsNamed(WORDS.continue).length, focus: focusOn() }).toStrictEqual({
+      continue: 0,
+      focus: WORDS.tryTheDemo,
+    });
+  });
+
+  it('"Try the demo" gone under the refusal, for a copy another tab claimed: focus on what took its place', async () => {
+    const { answer, release } = heldBack(() => {
+      rememberAClaimedCopy();
+      return poolEmpty();
+    });
+    await openSignInPage({ claim: answer });
+
+    await pressByKeyboard(tryTheDemo(), release);
+
+    await refusedWith(WORDS.poolEmpty);
+    expect({ tryTheDemo: buttonsNamed(WORDS.tryTheDemo).length, focus: focusOn() }).toStrictEqual({
+      tryTheDemo: 0,
+      focus: WORDS.continue,
+    });
+  });
+
+  it.each([
+    ['"Try the demo"', false, tryTheDemo],
+    ['"Continue with my copy"', true, continueButton],
+  ])(
+    '%s refused by the limiter: every button waits, so focus ends on the email field',
+    async (_, keeps, control) => {
+      if (keeps) rememberAClaimedCopy();
+      const { answer, release } = heldBack();
+      await openSignInPage(keeps ? { signIn: answer } : { claim: answer });
+      spendTheLimiter();
+
+      await pressByKeyboard(control(), release);
+
+      await refusedWith(WORDS.tooManyAttempts);
+      expect({ disabled: control().disabled, focus: focusOn() }).toStrictEqual({
+        disabled: true,
+        focus: 'Email address',
+      });
+    },
+  );
 });
