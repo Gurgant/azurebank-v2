@@ -13,10 +13,12 @@ import { problem, serviceUnavailable } from '../mocks/problem';
 import {
   COPY,
   advanceUntil,
+  emulateFocusFixup,
   fakeClockUser,
   hintRegion,
   hintShownAt,
   installFakeClock,
+  loseAnswerAfterCommit,
   never,
 } from '../test/outage';
 import { CONNECTION_FAILED } from '../api/problemMessages';
@@ -376,6 +378,55 @@ describe('PIN setup during an outage', () => {
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
     const boxes = screen.getByRole('group', { name: 'Confirm your PIN' });
     expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('a PIN saved while the answer was lost is found, and the page says it is set', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () =>
+      serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('when the session cannot be read either, typing the PIN again finds it', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () =>
+      serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+    );
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
+
+    server.resetHandlers();
+    await pasteDigits('123456');
+
+    expect(await screen.findByRole('heading', { name: 'PIN Setup Complete!' })).toBeInTheDocument();
+    expect(screen.queryByText('The current PIN is required to change it.')).toBeNull();
+  });
+
+  it('after a 503 focus goes back to the first box', async () => {
+    const stop = emulateFocusFixup();
+    try {
+      server.use(
+        http.post('*/bff/auth/set-pin', () =>
+          serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+        ),
+      );
+      await toTheConfirmation();
+      await pasteDigits('123456');
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus());
+    } finally {
+      stop();
+    }
   });
 });
 
@@ -846,5 +897,43 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
       { pin: '123456', password: MOCK_PASSWORD },
       { pin: '123456', password: MOCK_PASSWORD },
     ]);
+  });
+
+  it('a mismatch pressed from "Set PIN" puts focus on the first box', async () => {
+    const stop = emulateFocusFixup();
+    try {
+      await toTheConfirmation();
+      await pasteDigits('654321');
+      await typePassword();
+      await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
+
+      expect(await screen.findByText('PINs do not match. Please try again.')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus());
+    } finally {
+      stop();
+    }
+  });
+
+  it('a PIN the session did not know about leaves for returnTo', async () => {
+    await toTheConfirmation();
+    mockState.session!.hasPin = true;
+    await typePassword();
+    await pasteDigits('123456');
+
+    expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+
+  it('says the account already has a PIN when the session cannot be read', async () => {
+    await toTheConfirmation();
+    mockState.session!.hasPin = true;
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+    await typePassword();
+    await pasteDigits('123456');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
   });
 });
