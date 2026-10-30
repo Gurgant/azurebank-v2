@@ -519,9 +519,17 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             "a session that never got a refresh token still dies when its access token expires");
         api.RefreshCalls.Should().Be(0, "there is nothing to refresh with");
 
-        // Ended through the same path as every other session, but with no grant there is nothing to revoke.
-        await Task.Delay(200);
-        api.RevokeCalls.Should().Be(0);
+        // Ended through the same path as every other session, but with no grant there is nothing to
+        // revoke. The control ends after it, so its grant at the API says the workers have read past
+        // the tokenless session.
+        var (control, cookieName) = NewSession(factory, Fresh, "rt-control");
+        var response = await factory.CreateClient().SendAsync(
+            Proxied(HttpMethod.Post, "/bff/auth/logout", cookieName, control));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await Eventually(() => api.RevokedGrants.Contains("rt-control"))).Should().BeTrue(
+            "the grant of a session ended afterwards reaches the API");
+        api.RevokedGrants.Should().Equal(["rt-control"], "the session with no grant queued nothing");
     }
 
     // ── T6 ─────────────────────────────────────────────────────────────────────
