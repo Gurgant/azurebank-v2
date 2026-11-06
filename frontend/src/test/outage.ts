@@ -133,6 +133,21 @@ export const fakeClockUser = () => userEvent.setup({ advanceTimers: vi.advanceTi
 /** A handler answer that never comes: the request stays pending until something aborts it. */
 export const never = () => new Promise<Response>(() => {});
 
+const awaitingAbort = new Set<Request>();
+
+/**
+ * `never`, for a test that waits for that abort: the handler's `request` is held until it comes.
+ * Nothing else holds a request nobody answers. undici's Request follows the caller's signal through
+ * a WeakRef (`undici/lib/web/fetch/request.js`), so a garbage collection during the wait loses the
+ * abort, the fetch never settles and the page never hears of it. Measured: one forced collection
+ * after the send, and no alert 5 s after the 65 s timeout, in 3 runs of 3 for four tests.
+ */
+export const neverUntilAborted = (request: Request) =>
+  new Promise<Response>(() => {
+    awaitingAbort.add(request);
+    request.signal.addEventListener('abort', () => awaitingAbort.delete(request), { once: true });
+  });
+
 /** A pause on the fake clock, for a handler that answers late. */
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 

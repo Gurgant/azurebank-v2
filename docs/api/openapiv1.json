@@ -5006,6 +5006,7 @@
             "description": "PIN must be exactly 6 digits."
           },
           "password": {
+            "maxLength": 128,
             "type": [
               "null",
               "string"

@@ -17,7 +17,7 @@ import {
   Globe24Regular,
   Link24Regular,
 } from '@fluentui/react-icons';
-import { colors, shadows, gradients } from '../theme/tokens';
+import { colors, shadows, gradients, surfaces } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { SIGN_OUT_FAILED } from '../api/problemMessages';
 import { useAppSelector } from '../app/hooks';
@@ -157,58 +157,50 @@ const useStyles = makeStyles({
     overflowWrap: 'anywhere',
   },
 
-  // ===== Read-only identity grid =====
-  fieldGrid: {
+  // ===== Handle row (editable) =====
+  // A summary list of one row, and a grid because a list's children have to be its terms and its
+  // values: no box may wrap the text to set it beside the button. The first column may shrink
+  // below its content, so that a long handle wraps and never pushes the button off the card.
+  handleRow: {
+    margin: 0,
+    paddingTop: '16px',
+    borderTop: `1px solid ${surfaces.border}`,
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '16px',
-    '@media (max-width: 599px)': {
-      gridTemplateColumns: '1fr',
-    },
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    columnGap: '16px',
+    rowGap: '4px',
+    alignItems: 'center',
   },
 
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-
-  fieldLabel: {
+  handleTerm: {
+    gridColumn: 1,
     fontSize: '13px',
     fontWeight: 500,
     color: colors.neutral[500],
   },
 
-  fieldValue: {
-    minHeight: '44px',
-    backgroundColor: colors.neutral[50],
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '8px',
-    padding: '0 14px',
-    display: 'flex',
-    alignItems: 'center',
+  handleValue: {
+    gridColumn: 1,
+    margin: 0,
+    fontFamily: 'Consolas, "Courier New", monospace',
     fontSize: '15px',
     color: colors.neutral[800],
-    // The email is shown here too, and under 375 px it ran out of this box as it did above.
     overflowWrap: 'anywhere',
   },
 
-  // ===== Handle row (editable) =====
-  handleRow: {
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: '16px',
-  },
-
-  handleValue: {
-    fontFamily: 'Consolas, "Courier New", monospace',
-  },
-
   handleHint: {
+    gridColumn: 1,
+    margin: 0,
     fontSize: '13px',
     fontWeight: 400,
     color: colors.neutral[500],
+  },
+
+  // Across the row's three lines, so the button sits level with the handle it changes.
+  handleAction: {
+    gridColumn: 2,
+    gridRow: '1 / span 3',
+    margin: 0,
   },
 
   // ===== Coming-soon rows =====
@@ -378,40 +370,22 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className={styles.fieldGrid}>
-            <div className={styles.field}>
-              <Text className={styles.fieldLabel}>First name</Text>
-              <div className={styles.fieldValue}>{user?.firstName ?? ''}</div>
-            </div>
-            <div className={styles.field}>
-              <Text className={styles.fieldLabel}>Last name</Text>
-              <div className={styles.fieldValue}>{user?.lastName ?? ''}</div>
-            </div>
-          </div>
-
-          <div className={styles.field}>
-            <Text className={styles.fieldLabel}>Email address</Text>
-            <div className={styles.fieldValue}>
-              {/* One element, so that the box, a flex row, has one item to lay out and not two. */}
-              <span>
-                <BreakableEmail address={displayEmail} />
-              </span>
-            </div>
-          </div>
-
           {/* The one editable field: the public payment handle. */}
-          <div className={styles.handleRow}>
-            <div className={styles.field} style={{ flex: 1 }}>
-              <Text className={styles.fieldLabel}>Public handle</Text>
-              <div className={`${styles.fieldValue} ${styles.handleValue}`}>
-                {`@${user?.azureTag ?? ''}`}
-              </div>
-              <Text className={styles.handleHint}>How other people find you to send money.</Text>
-            </div>
-            <Button appearance="secondary" onClick={() => setRenameOpen(true)} disabled={!user}>
-              Change
-            </Button>
-          </div>
+          <dl className={styles.handleRow}>
+            <dt className={styles.handleTerm}>Public handle</dt>
+            <dd className={styles.handleValue}>{`@${user?.azureTag ?? ''}`}</dd>
+            <dd className={styles.handleHint}>How other people find you to send money.</dd>
+            <dd className={styles.handleAction}>
+              <Button
+                appearance="secondary"
+                aria-label="Change public handle"
+                onClick={() => setRenameOpen(true)}
+                disabled={!user}
+              >
+                Change
+              </Button>
+            </dd>
+          </dl>
         </div>
       </section>
 

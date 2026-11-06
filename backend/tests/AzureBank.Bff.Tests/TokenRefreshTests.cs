@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using AzureBank.Bff.Http;
 using AzureBank.Bff.Options;
+using AzureBank.Bff.Services;
 using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.Constants;
@@ -519,9 +520,25 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
             "a session that never got a refresh token still dies when its access token expires");
         api.RefreshCalls.Should().Be(0, "there is nothing to refresh with");
 
-        // Ended through the same path as every other session, but with no grant there is nothing to revoke.
-        await Task.Delay(200);
-        api.RevokeCalls.Should().Be(0);
+        // Ended through the same path as every other session, but with no grant there is nothing to
+        // revoke. The control ends after it, so its grant at the API says the workers have read past
+        // the tokenless session.
+        var (control, cookieName) = NewSession(factory, Fresh, "rt-control");
+        var response = await factory.CreateClient().SendAsync(
+            Proxied(HttpMethod.Post, "/bff/auth/logout", cookieName, control));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await Eventually(() => api.RevokedGrants.Contains("rt-control"))).Should().BeTrue(
+            "the grant of a session ended afterwards reaches the API");
+
+        // The wait above ends when rt-control arrives, not when the other workers are done: a
+        // revoke queued before it can still be on its way. Stopping drains what is queued and in
+        // progress; the factory stays undisposed so that FakeApi can be read.
+        var revoker = factory.Services.GetRequiredService<GrantRevoker>();
+        using var stopBudget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await revoker.StopAsync(stopBudget.Token);
+
+        api.RevokedGrants.Should().Equal(["rt-control"], "the session with no grant queued nothing");
     }
 
     // ── T6 ─────────────────────────────────────────────────────────────────────
