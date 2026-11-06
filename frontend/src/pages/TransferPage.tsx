@@ -76,6 +76,8 @@ import {
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 
 const PIN_LENGTH = 6;
+const NO_ACCOUNT_SENTENCE =
+  "That recipient can't receive money right now. Choose another recipient.";
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 interface Recipient {
@@ -260,6 +262,7 @@ export function TransferPage() {
       SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
       ACCOUNT_NOT_FOUND: ACCOUNT_CLOSED,
       RECIPIENT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+      RECIPIENT_NO_ACCOUNT: NO_ACCOUNT_SENTENCE,
     },
     fallback: 'Transfer failed. Please try again.',
   });
@@ -463,6 +466,8 @@ export function TransferPage() {
     counts, and a failed reload keeps the last one received.
   */
   const [sourceRefused, setSourceRefused] = useState(false);
+  // The payee's refusal under a held key (the RECIPIENT_NO_ACCOUNT arm), said again on the form.
+  const [payeeRefused, setPayeeRefused] = useState(false);
   const sourceGone =
     watchedAccountId !== '' &&
     (sourceRefused ||
@@ -525,6 +530,14 @@ export function TransferPage() {
     wizard.fail(ACCOUNT_CLOSED);
   }, [sourceGone, exitLocked, success, verifyRequired, setValue, wizard]);
 
+  // "Start over" clears the failure with the intent; the payee's refusal is said again, once, on
+  // the form. The visitor's next change of recipient clears it like any input failure.
+  useEffect(() => {
+    if (!payeeRefused || exitLocked || success || verifyRequired) return;
+    setPayeeRefused(false);
+    wizard.fail(NO_ACCOUNT_SENTENCE);
+  }, [payeeRefused, exitLocked, success, verifyRequired, wizard]);
+
   const handleSelectAccount = (account: AccountResponse) => {
     if (keyLive) return;
     setValue('fromAccountId', account.id, { shouldValidate: true });
@@ -573,9 +586,8 @@ export function TransferPage() {
         (ADR-0014) and rejects with 429 + Retry-After. So the one failure a user is most likely to
         provoke, by tapping Verify repeatedly, sent them to check a connection that was fine.
 
-        Branching on STATUS rather than errorCode is deliberate: the BFF's rejection body is a bare
-        ProblemDetails with no errorCode, so the client synthesises HTTP_429 and there is no code to
-        match on. `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
+        Branching on STATUS rather than on the code: any 429 here gets the same sentence.
+        `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
       */
       const problem = caught as ApiProblem;
       if (problem.status === 429) {
@@ -931,6 +943,19 @@ export function TransferPage() {
         was applied, which is why the view says to check the transactions first.
       */
       if (phase === 'mint' && keyLive) wizard.requireVerify();
+    } else if (refusal?.errorCode === 'RECIPIENT_NO_ACCOUNT') {
+      // A mint under a held key drops no key, so Back and Close would stay disabled with the PIN
+      // step in front: the closed-account arm above says why and what the check view does. Its
+      // sentence is already shown; "start over" clears it, so the effect on `payeeRefused` says
+      // it again on the form. With no key held the answer is as it was.
+      if (phase === 'mint' && keyLive) {
+        setPin('');
+        enteredPin.current = '';
+        lastAuthorization.current = null;
+        setAuthorizationHeld(false);
+        setPayeeRefused(true);
+        wizard.requireVerify();
+      }
     } else if (refusal?.errorCode === 'PIN_REQUIRED') {
       // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
       // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
