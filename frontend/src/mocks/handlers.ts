@@ -3832,7 +3832,9 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  const pin = authBody.body.pin as string | undefined;
+  // The BFF binds `Pin` whatever its spelling, so {"PIN":"123456"} reaches the session gate;
+  // a case in authGuards.contract.test.ts holds this against the real BFF.
+  const pin = boundMember(authBody.body, 'pin') as string | undefined;
   // Model validation runs before the action, so a malformed PIN is a 400 even for an anonymous
   // caller — and WHICH 400 depends on how it is malformed. See `pinPayloadProblem`.
   if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
