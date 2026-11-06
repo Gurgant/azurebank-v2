@@ -83,7 +83,9 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
   (insufficient funds, the daily limit) stay log-only, because a row the caller can repeat at will
   is an unbounded write on the tail lock
   (`AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision`). A transfer, a withdrawal or a
-  closure with no step-up can be repeated too, and keeps one row each time
+  closure with no step-up can be repeated too, and each one that passes the checks made before
+  the step-up check (the account is the caller's, a withdrawal has the funds, a closure is
+  allowed) keeps one row
   (`ATransferWithoutStepUp_IsSubjectedToTheAccountTheMoneyWouldHaveLeft`): the app itself never
   sends one, so it is worth recording, and the limits on any request bound it, the BFF's 300 a
   minute per address and a demo copy's 200 changes (ADR-0063). Retry collisions stay log-only as
