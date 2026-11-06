@@ -245,7 +245,9 @@ Three limiters, set by the `RateLimiting` section; no limit is hard-coded.
 | `lookup` | `/api/users/{**catch-all}` | 20 | 60 s, sliding, 6 segments | Signed-in user; the client address with no session (ADR-0014, decision 2) |
 
 - The client address is `ClientAddress.Of`: an IPv4 address as it is, an IPv6 address by its /64
-  prefix, and `unknown` for a connection with no address.
+  prefix, and `unknown` for a connection with no address. A refusal's log line names it only by
+  `ClientAddress.CodeOf`, a one-way code keyed with `ServiceCredential:BffKey`: the same client
+  gives the same code until that key is rotated.
 - A refusal is **429** with `Retry-After`, `Cache-Control: no-store` and the API's ProblemDetails
   shape (`errorCode: RATE_LIMIT_EXCEEDED`). Nothing queues. The sliding policies name no retry
   time of their own, so `RateLimiting:AuthWindowSeconds` is sent.
@@ -322,7 +324,7 @@ a failing code.
 
 | Key | Default | What it does |
 |-----|---------|--------------|
-| `ServiceCredential:BffKey` | None: required | The key the API knows this host by, sent on every call to it (ADR-0055) |
+| `ServiceCredential:BffKey` | None: required | The key the API knows this host by, sent on every call to it (ADR-0055). It also keys the one-way code in a rate limit refusal's log line |
 | `BackendApi:BaseUrl` | `https://localhost:7215` | The API, for the BFF's own client. It and every proxy destination must be https, or http on loopback, or the host refuses to start (ADR-0055 D5) |
 | `BackendApi:TimeoutSeconds` | 55 | How long the BFF waits on the API: its own client and, through `BackendTimeoutConfigFilter`, every proxy cluster that sets no timeout of its own. Above the API's 40 s request deadline plus what the API may still need after it, so any answer the API gives before a commit arrives first (ADR-0058, `TimeoutChainTests`) |
 | `ReverseProxy` | Four routes, one cluster at `https://localhost:7215` | YARP's routes and clusters; a route changes with no code change |

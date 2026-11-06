@@ -37,7 +37,7 @@ describe('settings page', () => {
       `${MOCK_USER.firstName.charAt(0)}${MOCK_USER.lastName.charAt(0)}`.toUpperCase();
 
     expect(screen.getByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`)).toBeInTheDocument();
-    expect(screen.getAllByText(MOCK_USER.email)).toHaveLength(2); // profile header + email field
+    expect(screen.getByText(MOCK_USER.email)).toBeInTheDocument();
     expect(screen.getByText(initials)).toBeInTheDocument();
     expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument();
 
@@ -45,6 +45,33 @@ describe('settings page', () => {
     expect(screen.queryByText(/\+1 \(555\)/)).not.toBeInTheDocument();
     expect(screen.queryByText(/United States/)).not.toBeInTheDocument();
     expect(screen.queryByText(/March 15, 1990/)).not.toBeInTheDocument();
+  });
+
+  it('says the name and the email once, and draws the handle as one row with its Change', async () => {
+    await renderSettings();
+    const profile = within(screen.getByRole('region', { name: 'Profile' }));
+
+    expect({
+      boxes: ['First name', 'Last name', 'Email address'].filter(
+        (label) => profile.queryByText(label) !== null,
+      ),
+      names: profile.getAllByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`).length,
+      emails: profile.getAllByText(MOCK_USER.email).length,
+      terms: profile.getAllByRole('term').map((term) => term.textContent),
+      definitions: profile.getAllByRole('definition').map((value) => value.textContent),
+      buttons: profile.getAllByRole('button').length,
+    }).toStrictEqual({
+      boxes: [],
+      names: 1,
+      emails: 1,
+      terms: ['Public handle'],
+      definitions: [`@${MOCK_USER.azureTag}`, 'How other people find you to send money.', 'Change'],
+      buttons: 1,
+    });
+    // WCAG 2.5.3: the word a visitor sees is the start of the name a voice command is matched to.
+    expect(profile.getByRole('button', { name: 'Change public handle' })).toHaveTextContent(
+      /^Change$/,
+    );
   });
 
   it("titles each card with a level-2 heading under the page's <h1>, and names the card so", async () => {
@@ -107,7 +134,7 @@ describe('settings page', () => {
     const { store } = await renderSettings();
 
     expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.click(screen.getByRole('button', { name: 'Change public handle' }));
 
     const input = await screen.findByRole('textbox');
     /*
@@ -140,7 +167,7 @@ describe('settings page', () => {
     const user = userEvent.setup();
     await renderSettings();
 
-    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.click(screen.getByRole('button', { name: 'Change public handle' }));
     const input = await screen.findByRole('textbox');
     await user.click(input); // focus first, as above
     fireEvent.change(input, { target: { value: 'friend' } }); // a seeded recipient → 409
@@ -223,7 +250,7 @@ describe('settings page: the handle dialog and what the server refuses', () => {
   }
 
   async function openAndType(user: ReturnType<typeof userEvent.setup>, handle: string) {
-    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.click(screen.getByRole('button', { name: 'Change public handle' }));
     const input = await screen.findByRole('textbox');
     await user.click(input); // focus first, as above
     fireEvent.change(input, { target: { value: handle } });

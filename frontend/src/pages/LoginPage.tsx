@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
@@ -261,6 +261,7 @@ export function LoginPage() {
   const {
     register,
     handleSubmit,
+    setFocus,
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -270,6 +271,30 @@ export function LoginPage() {
     },
   });
 
+  /*
+    WHERE FOCUS GOES AFTER A REFUSAL. A press on "Sign in", "Try the demo" or "Continue with my
+    copy" disables that button for the wait, and the browser hands its focus to `body`: the next
+    Tab would start from the top of the page. Each refusal records a new object here, so that the
+    effects below run once for it, on the render that has drawn the answer: the buttons are
+    enabled again by then, or a button that is gone has been replaced.
+
+    "Lost" is the test of useFocusWhenLost: focus on `body`, or on a container that holds the
+    landing. A visitor who moved focus during the wait keeps it, and Enter in a field leaves focus
+    in that field, the email field included.
+
+    The demo's block goes first, because a child's effects run before its parent's: it takes lost
+    focus on its first button. This one takes what is still lost: the password after the form's
+    press, the email when the limiter has every button of the block waiting. Neither field is ever
+    disabled.
+  */
+  const [refusal, setRefusal] = useState<{ control: LoginControl } | null>(null);
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (refusal && document.activeElement?.contains(form.current)) {
+      setFocus(refusal.control === 'form' ? 'password' : 'email');
+    }
+  }, [refusal, setFocus]);
+
   const onSubmit = async (data: LoginFormData) => {
     setControl('form');
     try {
@@ -278,6 +303,7 @@ export function LoginPage() {
       navigate(navState.from?.pathname ?? '/dashboard', { replace: true });
     } catch {
       // Surfaced through the mutation's error state below.
+      setRefusal({ control: 'form' });
     }
   };
 
@@ -315,6 +341,7 @@ export function LoginPage() {
     } catch {
       // Surfaced through the mutation's error state below. The page is the one to press again.
       setClaimSent(false);
+      setRefusal({ control: 'claim' });
     }
   };
 
@@ -363,6 +390,7 @@ export function LoginPage() {
         setCopyEnded(ended);
         if (ended) forgetDemoCopy();
       }
+      setRefusal({ control: 'continue' });
     }
   };
 
@@ -473,6 +501,7 @@ export function LoginPage() {
             pending={claimSent || claiming ? 'claim' : continuing ? 'continue' : null}
             disabled={busy || rateLimited || claimSent}
             forgotten={forgotten}
+            refusal={refusal?.control === 'form' ? null : refusal}
             onTry={() => void tryTheDemo()}
             onContinue={() => void continueWithMyCopy()}
             onGetNew={() => setStartingOver(true)}
@@ -487,7 +516,7 @@ export function LoginPage() {
 
       {/* noValidate: the browser's own check would hide the sentence this form gives for a
           value that is not an email address. */}
-      <form className={styles.form} noValidate onSubmit={handleSubmit(onSubmit)}>
+      <form ref={form} className={styles.form} noValidate onSubmit={handleSubmit(onSubmit)}>
         <Field
           label="Email address"
           validationState={errors.email ? 'error' : 'none'}
@@ -500,6 +529,10 @@ export function LoginPage() {
             // `username`, not `email`: this is the identifier the credential pair is keyed on, and
             // registration must agree — see RegisterPage's email field.
             autoComplete="username"
+            // Fluent's Input keeps a value of its own, starting from this. Without it, the value
+            // the form writes on the node when it registers it is wiped at the next commit, and
+            // the field shows nothing while the form still holds and sends the handed-over email.
+            defaultValue={navState.prefillEmail ?? ''}
             {...register('email')}
             aria-invalid={errors.email ? 'true' : 'false'}
           />

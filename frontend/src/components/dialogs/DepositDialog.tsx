@@ -1,6 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
+import {
+  Text,
+  Button,
+  Spinner,
+  MessageBar,
+  MessageBarBody,
+  mergeClasses,
+} from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
   CheckmarkCircle24Filled,
@@ -181,7 +188,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const sentValues = useRef<DepositFormValues | null>(null);
 
   const accountId = watch('accountId');
-  const amountNumber = parseAmountInput(watch('amount'));
+  const amount = watch('amount');
+  const amountNumber = parseAmountInput(amount);
   const selectedAccount = accounts.find((account) => account.id === accountId) ?? null;
 
   /*
@@ -270,9 +278,10 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       // ADR-0022 decision 5: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
       // handled by the hook (latches verifyRequired) — we just render that view. So are a
       // rejection with no HTTP status (an answer whose body failed its schema) and a 409 that
-      // named no code: the deposit may have landed, and "Deposit failed" under the verify view
-      // would say it had not. The hook's own test, so the two cannot disagree.
-      if (isUnconfirmedSend(problem)) {
+      // named no code, or a limiter refusal of a resend: the deposit may have landed, and
+      // "Deposit failed" under the verify view would say it had not. The hook's own test,
+      // using whether a key was held before this send, so the two cannot disagree.
+      if (isUnconfirmedSend(problem, keyRetained)) {
         // hook set verifyRequired, and wentThrough when the server said it was committed; the
         // went-through view or the verify view renders below.
       } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
@@ -516,7 +525,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               classNames={{
                 wrapper: styles.amountInputWrapper,
                 currency: styles.amountCurrency,
-                input: styles.amountInput,
+                input: mergeClasses(styles.amountInput, amount.length > 6 && styles.amountLong),
                 hint: styles.amountHint,
               }}
               belowSlot={

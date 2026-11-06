@@ -7,6 +7,7 @@ using AzureBank.Bff.Models;
 using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
@@ -722,7 +723,7 @@ public class BffAuthController : ControllerBase
                 Data = new BffPinVerificationResponse
                 {
                     Verified = false,
-                    AuthLevel = 1,
+                    AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
                     PinExpiresAt = null
                 },
                 Message = "Invalid PIN"
@@ -765,6 +766,12 @@ public class BffAuthController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
+                if ((int)response.StatusCode == StatusCodes.Status422UnprocessableEntity && IsPinRequired(content))
+                {
+                    // This refusal proves a PIN exists; another session may have set it.
+                    _sessionService.UpdateUserInfo(session.SessionId, userInfo => userInfo.HasPin = true);
+                }
+
                 return ForwardUpstreamError(response, content);
             }
 
@@ -1013,6 +1020,22 @@ public class BffAuthController : ControllerBase
     private static T ReadData<T>(string content) where T : class =>
         JsonSerializer.Deserialize<ApiResponse<T>>(content, JsonOptions)?.Data
         ?? throw new JsonException($"The API answered a success with no {typeof(T).Name} in it.");
+
+    private static bool IsPinRequired(string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("errorCode", out var code)
+                && code.ValueKind == JsonValueKind.String
+                && code.GetString() == ErrorCodes.PinRequired;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>A 503 in the API's own shape, with <c>Retry-After</c>: the session is kept.</summary>
     private ObjectResult ServiceUnavailableResult(string detail, int retryAfterSeconds) =>
