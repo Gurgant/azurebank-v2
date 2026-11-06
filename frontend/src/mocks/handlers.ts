@@ -3413,9 +3413,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     NO AUTHORISATION PRESENTED, at the rung the in-band PIN check used to occupy (ADR-0042).
 
     `TransferService.RequireAuthorization` sits after the ownership 404 and BEFORE the payee is
-    resolved, exactly where `VerifyPinOrThrowAsync` sat, and the placement carries the same
-    property: a caller with no second factor cannot use this endpoint to ask which handles exist.
-    Answering here rather than at `validateAuthorization` below is what reproduces that.
+    resolved, exactly where `VerifyPinOrThrowAsync` sat, so a request that presents no
+    authorisation learns nothing about the payee. Answering here rather than at
+    `validateAuthorization` below is what reproduces that. It stops no other request: a made-up
+    reference reaches the payee checks below, which answer before the reference is examined, as
+    the API's do.
   */
   if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
@@ -3443,12 +3445,12 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     Spend the authorisation, if one was presented (ADR-0042).
 
     POSITION IS THE CONTRACT, and it is not where the first draft put it. `TransferAsync` runs
-    ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the payee is
-    resolved BEFORE the authorisation is examined: an unknown handle answers 404 RECIPIENT_NOT_FOUND
-    even when the presented authorisation is also wrong. The mock validated first, which turned that
-    404 into a 401 — a client debugging a typo'd handle would have been told its confirmation was
-    invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves
-    nothing.
+    ownership → presence check → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the
+    payee is resolved BEFORE the authorisation is examined: an unknown handle answers 404
+    RECIPIENT_NOT_FOUND even when the presented authorisation is also wrong. The mock validated
+    first, which turned that 404 into a 401 — a client debugging a typo'd handle would have been
+    told its confirmation was invalid. Still before any money moves: a refusal costs nothing and
+    moves nothing.
 
     A request with no header never reaches here: the rung above answers AUTHORIZATION_REQUIRED,
     which is what ADR-0042's flip made of the fall-through this line used to describe.

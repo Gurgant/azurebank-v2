@@ -105,10 +105,12 @@ public class TransferService : ITransferService
     /// <para>
     /// THE RUNG IS THE POINT, not the check. It runs after the source account's ownership 404 and
     /// BEFORE the payee is resolved, which is exactly where <c>VerifyPinOrThrowAsync</c> ran. Keep
-    /// it there: below the payee resolution, a caller holding no second factor could ask this
-    /// endpoint which handles exist and which of them can receive money, one 404 or 422 at a time.
-    /// The PIN check was providing that property silently; deleting it without putting something in
-    /// its place would have removed it silently too.
+    /// it there: below the payee resolution, a request presenting no reference at all would be told
+    /// which handles exist and which of them can receive money, one 404 or 422 at a time. The rung
+    /// stops that request and no other: a well-formed reference that names nothing passes it and
+    /// reaches the payee resolution, which answers 404 or 422 for a handle that cannot be paid
+    /// before <see cref="IStepUpAuthorizationService.ValidateAsync"/> answers 401 for one that can.
+    /// The mint answers the same before the PIN, and ADR-0014 says what limits both.
     /// </para>
     /// <para>
     /// Split from <see cref="IStepUpAuthorizationService.ValidateAsync"/> deliberately, because the
@@ -483,12 +485,12 @@ public class TransferService : ITransferService
 
           Below the payee resolution so the mint refuses in the transfer's order — payee 404/422,
           then the day's 422, then the PIN — the order ADR-0050's rung table records. What this does
-          NOT claim: the enumeration argument at the top of this file is the TRANSFER's
-          (RequireAuthorization sits above its payee resolution) and the mint has no counterpart —
-          it answers 404/422 on a handle here, before the PIN below, to any JWT holder, bounded only
-          by the BFF's per-IP global limiter (ADR-0014's per-user `lookup` policy covers
-          /api/users/* only). Pre-existing since ADR-0042; this check neither widens nor narrows
-          it, because it answers nothing about the payee.
+          NOT claim: the mint answers 404/422 on a handle here, before the PIN below, to any JWT
+          holder, bounded only by the BFF's per-IP global limiter (ADR-0014's per-user `lookup`
+          policy covers /api/users/* only). The transfer answers the same to a made-up
+          authorisation reference, because RequireAuthorization refuses only a request that
+          presents none. Pre-existing since ADR-0042; this check neither widens nor narrows it,
+          because it answers nothing about the payee.
         */
         await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 
@@ -906,10 +908,11 @@ public class TransferService : ITransferService
 
           It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the reason the two
           differ is what the check upstream of it reveals. On the external path that is SOMEONE
-          ELSE's handle, so answering it to a caller holding no second factor would turn the
-          endpoint into a directory. Here both accounts are the caller's OWN: `GetAccountWithOwner-
-          shipCheckAsync` tells them only what `GET /api/accounts` already does, so there is nothing
-          to withhold and the more specific refusal is the more useful one.
+          ELSE's handle, so the presence check refuses a request that presents no authorisation
+          before the payee is looked up (a made-up reference still reaches the payee, as
+          RequireAuthorization's remarks say). Here both accounts are the caller's OWN:
+          `GetAccountWithOwnershipCheckAsync` tells them only what `GET /api/accounts` already does,
+          so there is nothing to withhold and the more specific refusal is the more useful one.
         */
         /*
           RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the

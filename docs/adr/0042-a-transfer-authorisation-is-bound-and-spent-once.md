@@ -44,9 +44,13 @@ and no change invalidated it (d).
 8. **The header is required, and no transfer body carries a PIN** (the flip, this record's second
    half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
    are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN
-   check occupied, after the source account's ownership 404 and before the payee is resolved, so a
-   caller with no second factor cannot ask this endpoint which handles exist.
-   `StepUpAuthorizationOperationTransformer` publishes the header as required.
+   check occupied, after the source account's ownership 404 and before the payee is resolved. One
+   presenting a well-formed reference that names nothing is answered about the payee first:
+   `404 RECIPIENT_NOT_FOUND` for a handle nobody holds, `422 RECIPIENT_NO_ACCOUNT` for one with no
+   open account, and `401 AUTHORIZATION_INVALID` only for one that can be paid. So a caller with no
+   second factor can still ask this endpoint which handles exist, as it can ask the mint before the
+   PIN, under the limit ADR-0014 states. `StepUpAuthorizationOperationTransformer` publishes the
+   header as required.
 
 ### Error codes
 
@@ -54,7 +58,7 @@ and no change invalidated it (d).
 | --- | --- | --- |
 | `AUTHORIZATION_REQUIRED` | 401 | none presented: the header is absent or empty |
 | `AUTHORIZATION_EXPIRED` | 401 | valid, window passed: re-prompt the PIN, keep the form |
-| `AUTHORIZATION_INVALID` | 401 | uniform across unknown, not-yours, already-spent, wrong binding |
+| `AUTHORIZATION_INVALID` | 401 | uniform across unknown, not-yours, already-spent, wrong binding, and one whose window passed between the check and the spend |
 
 The specific reason is logged and never sent, so the endpoint is no oracle for which references
 exist or whose they are. A header value that is not a UUID is refused `400` by model binding, with
