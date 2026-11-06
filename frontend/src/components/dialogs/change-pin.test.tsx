@@ -262,7 +262,7 @@ describe('ChangePinDialog', () => {
     leaves the dialog open, and only Tab and a second Escape close it. So each view that follows
     a send takes the focus that was lost.
   */
-  it('after a change, puts focus on Done, and one Escape closes the dialog', async () => {
+  it('after a change, puts focus on its sentence, read once, and one Escape from there closes the dialog', async () => {
     await renderSettings();
     const opener = screen.getByRole('button', { name: 'Change PIN' });
     const dialog = await openDialog();
@@ -272,11 +272,22 @@ describe('ChangePinDialog', () => {
     try {
       await userEvent.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
 
-      expect(await within(dialog).findByText('Your PIN has been changed.')).toBeInTheDocument();
-      await waitFor(() =>
-        expect(within(dialog).getByRole('button', { name: 'Done' })).toHaveFocus(),
-      );
+      const sentence = await within(dialog).findByText('Your PIN has been changed.');
+      await waitFor(() => expect(sentence).toHaveFocus());
+      // A paragraph that takes focus without joining the Tab order, in no live region and named by
+      // no button's description: focus is what reads it, and only once.
+      expect(sentence.tagName).toBe('P');
+      expect(sentence).toHaveAttribute('tabindex', '-1');
+      expect(sentence.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull();
+      const done = within(dialog).getByRole('button', { name: 'Done' });
+      expect(done).not.toHaveAttribute('aria-describedby');
 
+      await userEvent.tab();
+      expect(done).toHaveFocus();
+
+      // Back on the sentence, where the send left focus: from there one Escape is enough.
+      sentence.focus();
+      expect(sentence).toHaveFocus();
       await userEvent.keyboard('{Escape}');
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
       // useReturnFocus still gives focus back to the row that opened the dialog.
