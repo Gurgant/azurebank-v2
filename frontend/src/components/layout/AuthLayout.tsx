@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Link as FluentLink, makeStyles, Text, tokens } from '@fluentui/react-components';
-import { Link } from 'react-router-dom';
+import { makeStyles, Text, tokens } from '@fluentui/react-components';
+import { Link, type LinkProps } from 'react-router-dom';
 import { atMedia } from '../../theme/breakpoints';
 import { safeArea } from '../../theme/tokens';
 import { Logo } from '../shared/Logo';
@@ -144,6 +144,16 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
   },
 
+  // Underlined because the reset in `index.css` takes that off every link and the colour alone is
+  // not enough inside a sentence (WCAG 1.4.1). The focus ring is drawn here because the anchor is
+  // the only element of the link, with nothing from Fluent's own link to draw one.
+  inlineLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'underline',
+    ':hover': { color: tokens.colorBrandForegroundLinkHover },
+    ':focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+
   // ===== The divider between the form and its cross-link =====
   divider: {
     display: 'flex',
@@ -238,6 +248,17 @@ export function AuthDivider({ label = 'or' }: { label?: string }) {
 }
 
 /**
+ * A link inside a sentence of an auth page. The router's anchor is the whole of it: a Fluent link
+ * nested inside renders a span with `role="button"` and `tabindex="0"`, a second Tab stop in the
+ * same box.
+ */
+export function AuthInlineLink(props: Omit<LinkProps, 'className' | 'style'>) {
+  const styles = useStyles();
+
+  return <Link {...props} className={styles.inlineLink} />;
+}
+
+/**
  * The link from one auth page to the other — "Don't have an account? Create account".
  *
  * Its two style keys were byte-identical in both pages, which is the same shape this module exists
@@ -258,10 +279,7 @@ export function AuthCrossLink({
   // second copy of the class was doing nothing but claiming otherwise.
   return (
     <div className={styles.crossLink}>
-      {prompt}{' '}
-      <Link to={to} style={{ color: 'inherit' }}>
-        <FluentLink as="span">{label}</FluentLink>
-      </Link>
+      {prompt} <AuthInlineLink to={to}>{label}</AuthInlineLink>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
@@ -9,7 +9,6 @@ import {
   MessageBar,
   MessageBarBody,
   Field,
-  Link as FluentLink,
 } from '@fluentui/react-components';
 import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
@@ -22,6 +21,7 @@ import {
   AuthCrossLink,
   AuthDemoNote,
   AuthDivider,
+  AuthInlineLink,
   AuthLayout,
 } from '../components/layout/AuthLayout';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
@@ -239,13 +239,9 @@ export function RegisterPage() {
         <MessageBar intent="error" className={styles.errorMessage} ref={bannerRef} tabIndex={-1}>
           <MessageBarBody>
             We couldn't create an account with these details. If you already have an account,{' '}
-            <Link
-              to="/login"
-              state={{ prefillEmail: getValues('email') }}
-              style={{ color: 'inherit' }}
-            >
-              <FluentLink as="span">sign in with this email</FluentLink>
-            </Link>{' '}
+            <AuthInlineLink to="/login" state={{ prefillEmail: getValues('email') }}>
+              sign in with this email
+            </AuthInlineLink>{' '}
             — or try a different AzureTag.
           </MessageBarBody>
         </MessageBar>
