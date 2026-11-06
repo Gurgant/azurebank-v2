@@ -313,7 +313,7 @@ export function HistoryPage() {
     },
     { endpoint: 'getTransactionHistory', arg: HISTORY_ARG },
   );
-  // Both said under the rows, or under the empty state when the loaded pages hold none, each with
+  // Both said under the rows, or under the empty state when the rows shown hold none, each with
   // its own Retry: the next page, or the whole list again.
   const nextPageFailed = isFetchNextPageError && !isFetching;
   const listFailed = pagesLoaded && error !== undefined && !isFetchNextPageError && !isFetching;
@@ -408,7 +408,7 @@ export function HistoryPage() {
   const noneInRowsSoFar = activeFilter !== 'all' && moreRowsExist;
 
   /*
-    Under the rows, or under the empty state when the loaded pages hold none: the words of a slow
+    Under the rows, or under the empty state when the rows shown hold none: the words of a slow
     next page or of the whole list read again, and the alert for a failure of either. In the page
     from the first render of the rows, so that its bar is announced.
   */
@@ -533,7 +533,7 @@ export function HistoryPage() {
                   {/* The filter has seen only some of the rows, so "No Transactions" would be
                       untrue: these words stand in for both lines, once. */}
                   <Text className={styles.emptyTitle}>
-                    {noneInRowsSoFar ? 'None in the rows loaded so far.' : 'No Transactions'}
+                    {noneInRowsSoFar ? 'None in the rows shown so far.' : 'No Transactions'}
                   </Text>
                   {!noneInRowsSoFar && (
                     <Text className={styles.emptySubtitle}>

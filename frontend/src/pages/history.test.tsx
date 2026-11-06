@@ -207,7 +207,7 @@ describe('history feed (T1)', () => {
   });
 
   describe('a filter with no match in the rows on screen', () => {
-    const NONE_LOADED = 'None in the rows loaded so far.';
+    const NONE_SHOWN = 'None in the rows shown so far.';
 
     /** Twenty €10 deposits, which is what the page asks for at a time, with no withdrawal. */
     const twentyDeposits = (page: number) => {
@@ -259,7 +259,7 @@ describe('history feed (T1)', () => {
       return asked;
     };
 
-    it('says none are in the rows loaded so far, and Load more reaches the older match', async () => {
+    it('says none are in the rows shown so far, and Load more reaches the older match', async () => {
       serveFeed([twentyDeposits(1), aWithdrawal()]);
       renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
       await screen.findByText('Deposit 1.1');
@@ -267,7 +267,7 @@ describe('history feed (T1)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
 
       // More rows exist, so neither line may say that there are none: the words are drawn once.
-      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.getByText(NONE_SHOWN)).toBeInTheDocument();
       expect(screen.queryByText('No Transactions')).not.toBeInTheDocument();
       expect(
         screen.queryByText('No transactions found for the selected filter.'),
@@ -277,7 +277,7 @@ describe('history feed (T1)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
 
       expect(await screen.findByText('Older cash')).toBeInTheDocument();
-      expect(screen.queryByText(NONE_LOADED)).not.toBeInTheDocument();
+      expect(screen.queryByText(NONE_SHOWN)).not.toBeInTheDocument();
       expect(screen.getByText('Totals of the 1 withdrawal shown below.')).toBeInTheDocument();
       // The row, the expenses and the net.
       expect(screen.getAllByText('-€40.00')).toHaveLength(3);
@@ -294,7 +294,7 @@ describe('history feed (T1)', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
       expect(await screen.findByRole('button', { name: 'Show less' })).toBeInTheDocument();
-      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.getByText(NONE_SHOWN)).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
       await waitFor(() =>
@@ -306,7 +306,7 @@ describe('history feed (T1)', () => {
       expect(
         screen.getByText('No transactions found for the selected filter.'),
       ).toBeInTheDocument();
-      expect(screen.queryByText(NONE_LOADED)).not.toBeInTheDocument();
+      expect(screen.queryByText(NONE_SHOWN)).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
     });
 
@@ -319,7 +319,7 @@ describe('history feed (T1)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
       await userEvent.click(screen.getByRole('button', { name: 'Withdrawals' }));
 
-      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.getByText(NONE_SHOWN)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
       expect(asked).toEqual([1, 2]);
 
@@ -334,7 +334,7 @@ describe('history feed (T1)', () => {
 
       // Show less from the rows brings the same view back, with the match hidden again.
       await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
-      expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+      expect(screen.getByText(NONE_SHOWN)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
     });
 
@@ -387,7 +387,7 @@ describe('history feed (T1)', () => {
         await waitFor(() => expect(listSlot).toHaveTextContent('Page two exploded.'));
 
         expect(pageSlot).toBeEmptyDOMElement();
-        expect(screen.getByText(NONE_LOADED)).toBeInTheDocument();
+        expect(screen.getByText(NONE_SHOWN)).toBeInTheDocument();
         const retry = within(listSlot).getByRole('button', { name: 'Retry' });
         await waitFor(() => expect(document.activeElement).toBe(retry));
 
