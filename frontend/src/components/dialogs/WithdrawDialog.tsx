@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   makeStyles,
+  mergeClasses,
   Text,
   Button,
   Spinner,
@@ -292,7 +293,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     void trigger('amount');
   }, [availableBalance, trigger]);
 
-  const amountNumber = parseAmountInput(watch('amount'));
+  const amount = watch('amount');
+  const amountNumber = parseAmountInput(amount);
   const selectedAccount = selectedForBalance;
 
   // A body-affecting edit (amount/account/description) rotates the key WHEN NO KEY IS HELD: the
@@ -350,6 +352,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const handleQuickAmount = (value: number) => {
     setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
+    onBodyEdit();
+  };
+
+  const handleUseMax = () => {
+    setValue('amount', availableBalance.toFixed(2), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
@@ -539,14 +546,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     drift ADR-0056's own corrections spent two rounds undoing elsewhere.
 
     `phase` is which call failed, and it matters only where the two differ: a SEND with no HTTP
-    status, or answered a 409 that named no code, has latched verify-first in the hook (the
-    withdrawal may have landed), a MINT with either moved nothing and keeps the fallback sentence;
-    and an outage during the mint moved no money.
+    status, answered a 409 that named no code, or refused by a limiter on a resend has latched
+    verify-first in the hook (the withdrawal may have landed). A MINT with any of these moved
+    nothing and keeps the fallback sentence; an outage during the mint moved no money.
   */
   const handleRefusal = (problem: ApiProblem, phase: MoneyPhase) => {
     if (
       problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN' ||
-      (phase === 'send' && isUnconfirmedSend(problem))
+      (phase === 'send' && isUnconfirmedSend(problem, keyRetained))
     ) {
       // hook latched verifyRequired, and wentThrough when the server said the withdrawal was
       // committed; the went-through view or the verify view renders below.
@@ -874,7 +881,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               classNames={{
                 wrapper: styles.amountInputWrapper,
                 currency: styles.amountCurrency,
-                input: styles.amountInput,
+                input: mergeClasses(styles.amountInput, amount.length > 6 && styles.amountLong),
                 hint: styles.amountHint,
                 invalid: styles.amountInvalid,
               }}
@@ -894,7 +901,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                   <button
                     type="button"
                     className={styles.useMaxBtn}
-                    onClick={() => handleQuickAmount(availableBalance)}
+                    onClick={handleUseMax}
                     disabled={availableBalance <= 0}
                     aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
                   >

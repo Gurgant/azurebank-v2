@@ -48,6 +48,7 @@ interface BlockState {
   pending?: 'claim' | 'continue' | null;
   disabled?: boolean;
   forgotten?: boolean;
+  refusal?: object | null;
 }
 
 function renderBlock(state: BlockState) {
@@ -58,6 +59,7 @@ function renderBlock(state: BlockState) {
       pending={now.pending ?? null}
       disabled={now.disabled ?? false}
       forgotten={now.forgotten ?? false}
+      refusal={now.refusal ?? null}
       onTry={told.onTry}
       onContinue={told.onContinue}
       onGetNew={told.onGetNew}
@@ -370,5 +372,50 @@ describe('the demo block of the sign-in page, for a browser that keeps a copy', 
       said: statuses().map((region) => region.textContent),
       focusInTheBlock: control(WORDS.continue).parentElement?.contains(document.activeElement),
     }).toStrictEqual({ saidWithNoCopy: [WORDS.forgotten], said: [''], focusInTheBlock: false });
+  });
+});
+
+describe('the demo block after a refused press', () => {
+  it('lost focus comes back to the first button, whichever the block offers', () => {
+    const { control, drawAgain } = renderBlock({ copy: null });
+    drawAgain({ copy: null, refusal: {} });
+    const onTryTheDemo = document.activeElement === control(WORDS.tryTheDemo);
+    control(WORDS.tryTheDemo).blur();
+
+    // A copy another tab left in the meantime: "Try the demo" went while the claim ran.
+    drawAgain({ copy: KEPT, refusal: {} });
+
+    expect({
+      onTryTheDemo,
+      onContinue: document.activeElement === control(WORDS.continue),
+    }).toStrictEqual({ onTryTheDemo: true, onContinue: true });
+  });
+
+  it('with every control waiting there is nowhere to land in the block: focus stays lost, for the page to place', () => {
+    const { drawAgain } = renderBlock({ copy: KEPT });
+    drawAgain({ copy: KEPT, disabled: true, refusal: {} });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('a visitor who moved focus keeps it', () => {
+    const { control, drawAgain } = renderBlock({ copy: KEPT });
+    control(WORDS.getNew).focus();
+    drawAgain({ copy: KEPT, refusal: {} });
+    expect(document.activeElement).toBe(control(WORDS.getNew));
+  });
+
+  it('the same refusal drawn again takes nothing back', () => {
+    const refusal = {};
+    const { control, drawAgain } = renderBlock({ copy: KEPT });
+    drawAgain({ copy: KEPT, refusal });
+    const atTheRefusal = document.activeElement === control(WORDS.continue);
+    control(WORDS.continue).blur();
+
+    drawAgain({ copy: KEPT, refusal });
+
+    expect({ atTheRefusal, afterALaterDraw: document.activeElement }).toStrictEqual({
+      atTheRefusal: true,
+      afterALaterDraw: document.body,
+    });
   });
 });

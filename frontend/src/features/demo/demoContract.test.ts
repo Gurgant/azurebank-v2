@@ -150,9 +150,11 @@ describe("the claim's two refusals the app words", () => {
       'src/features/demo/StartOverDialog.tsx': ['DEMO_DAILY_LIMIT', 'DEMO_POOL_EMPTY'],
       // The mock, which refuses a claim from an empty pool as the API does.
       'src/mocks/handlers.ts': ['DEMO_POOL_EMPTY'],
+      'src/api/moneyProblem.ts': ['DEMO_COPY_LIMIT'],
     });
     const named = [...new Set(Object.values(namedIn).flat())].sort();
     expect(Object.fromEntries(named.map((code) => [code, backendCodes.includes(code)]))).toEqual({
+      DEMO_COPY_LIMIT: true,
       DEMO_DAILY_LIMIT: true,
       DEMO_POOL_EMPTY: true,
     });
