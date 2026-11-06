@@ -35,8 +35,11 @@ public class IdempotencyRecord
 
     /// <summary>
     /// HMAC-SHA256 (server-side key, never stored in the database) of the raw
-    /// request body bytes, lowercase hex. Keyed hashing prevents offline
-    /// brute-force of low-entropy payload fields (e.g. the withdraw PIN).
+    /// request body bytes, lowercase hex. Keyed because every money body is
+    /// low-entropy and mostly known (account ids, an amount, a recipient's
+    /// tag, a short description): a plain hash would let a reader of this
+    /// table confirm guesses about what somebody moved and to whom (ADR-0009
+    /// decision 3).
     /// </summary>
     public required string RequestHash { get; set; }
 

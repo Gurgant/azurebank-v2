@@ -97,10 +97,11 @@ public class IdempotencyServiceTests : IDisposable
     [Fact]
     public async Task ComputeRequestHash_IsKeyed_DifferentServerKeyDifferentHash()
     {
-        // The fingerprint must depend on the server-side key: a plain
-        // unkeyed hash of a body containing a 6-digit PIN would be an
-        // offline brute-force oracle (ADR-0009 / review H10).
-        var bytes = Encoding.UTF8.GetBytes("""{"pin":"123456"}""");
+        // The fingerprint must depend on the server-side key: a money body is
+        // low-entropy and mostly known, so a plain unkeyed hash of it would let
+        // a reader of the table confirm guesses about what somebody moved
+        // (ADR-0009 decision 3, review H10).
+        var bytes = Encoding.UTF8.GetBytes("""{"amount":50}""");
         var otherKey = NewOptions();
         otherKey.HashKey = "a-completely-different-server-key-9876543210";
         var otherService = CreateService(NewContext(), otherKey);
