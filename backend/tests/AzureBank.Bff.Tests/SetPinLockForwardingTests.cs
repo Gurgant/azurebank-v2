@@ -151,6 +151,9 @@ public class SetPinLockForwardingTests : IClassFixture<WebApplicationFactory<Pro
         using (new AssertionScope())
         {
             response.StatusCode.Should().Be(HttpStatusCode.BadRequest, text);
+            text.Should().Contain(
+                "\"Password\":[\"The field Password must be a string or array type with a maximum length of '128'.\"]",
+                "the frontend's mock answers with this body");
             pinCalls.Should().Be(0, "the BFF refuses it before it asks the API");
         }
     }

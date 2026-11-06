@@ -1424,6 +1424,28 @@ describe('failure modes the mock could not previously produce', () => {
     expect((await signIn.json()).errorCode).toBe('INVALID_CREDENTIALS');
   });
 
+  it("U3: a first PIN's overlong password is refused before it is counted", async () => {
+    // The BFF's binding refuses a password over 128 characters with 400 and never asks the API
+    // (`AnOverLongPassword_IsRefusedHere_AndNeverReachesTheApi`), so five of them lock nothing.
+    seedMockSession({ ...mockState.session!, hasPin: false });
+    for (let i = 0; i < 5; i++) {
+      const overlong = await fetch('/bff/auth/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '424242', password: 'a'.repeat(129) }),
+      });
+      expect(overlong.status).toBe(400);
+      expect((await overlong.json()).errors).toEqual({
+        Password: [
+          "The field Password must be a string or array type with a maximum length of '128'.",
+        ],
+      });
+    }
+    expect(mockState.loginFailures['demo@azurebank.dev']).toBeUndefined();
+    expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeUndefined();
+    expect(mockState.session?.hasPin).toBe(false);
+  });
+
   it("U3: a first PIN's right password clears the count the sign-in left", async () => {
     // Four wrong sign-ins leave four counted; the right password at the proof clears them, as a
     // right password at the sign-in does.

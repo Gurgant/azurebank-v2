@@ -3995,6 +3995,16 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     // gets the 422 below. A first draft skipped empty strings and produced 422 for both.
     return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
   }
+  // `[MaxLength(128)]` on SetPinRequest.Password: the BFF's binding refuses it with 400 and never
+  // asks the API, so no login attempt is counted
+  // (`AnOverLongPassword_IsRefusedHere_AndNeverReachesTheApi` in SetPinLockForwardingTests.cs).
+  if (typeof password === 'string' && password.length > 128) {
+    return modelStateProblem({
+      Password: [
+        "The field Password must be a string or array type with a maximum length of '128'.",
+      ],
+    });
+  }
 
   if (!mockState.session.hasPin) {
     if (typeof password !== 'string' || password.length === 0) {
