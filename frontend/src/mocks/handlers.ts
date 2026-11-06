@@ -4608,7 +4608,7 @@ const sessionActivity = http.all('*/api/*', ({ request }) => {
 // NB: never quote this glob inside a BLOCK comment. The `*` + `/` in the middle of it closes the
 // comment early, and what follows becomes code — that mistake put a live `api;` statement in this
 // file, which compiled, passed the tests, and left the docblock quoting a pattern that does not
-// exist. Only eslint's no-unused-expressions caught it.
+// exist. Only lint's `no-unused-expressions` caught it.
 const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
   const { pathname } = new URL(request.url);
   return problem({
