@@ -33,10 +33,11 @@ public class DemoOptions
     /// <summary>The key the client address is hashed with. None by default.</summary>
     /// <remarks>
     /// <see cref="DemoOptionsValidator"/> has no rule for it: a host that does not hash addresses
-    /// must start without it. A host that hashes them has to require it itself. The API is that
+    /// with it must start without it. A host that does has to require it itself. The API is that
     /// host (ADR-0063): with the demo on it refuses to start without 32 characters of it, and the
     /// row of a claimed copy holds its client's address only as a hash under this key. The BFF and
-    /// the Seeder bind this section too and hold no secret.
+    /// the Seeder bind this section too and do not hold it; the BFF's rate-limit log line hashes
+    /// under the BFF's own key (<c>ClientAddress.CodeOf</c>).
     /// </remarks>
     public string? ClientKeySecret { get; set; }
 }
