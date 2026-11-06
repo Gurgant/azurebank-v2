@@ -13,7 +13,7 @@ the cookie stays first-party and the JWT never reaches the browser (ADR-0038).
 | `src/contract/`, `src/integration/` | The contract suite, and the data layer against the running stack |
 | `src/theme/`, `src/test/` | The theme, the one place a colour is spelled out; the tests' setup and helpers |
 | `e2e/`, `e2e-demo/`, `screenshots/` | Playwright: the e2e suite, the demo's own run, the capture script |
-| `scripts/`, `public/` | The icon generator, and the icons it writes ([brand assets](../docs/brand-assets.md)) |
+| `scripts/`, `public/` | The icon generator, and the icons it writes ([brand assets](../docs/brand-assets.md)); the favicon comparison; the export of the theme to `../design-tokens/tokens.json`; the check that an e2e run skipped no spec |
 
 ## Run it
 
@@ -40,7 +40,7 @@ its own user in; after a reload it no longer knows the copy the browser kept, an
 ```bash
 npm run format:check
 npm run lint
-npm run build               # the type gate: tsc -b, then the bundle
+npm run build               # the type gate: the native compiler's tsc -b, then the bundle
 npm test                    # unit and component tests, against MSW
 npm run test:coverage       # the same run, and how much of the hand-written source it ran
 npm run test:contract:mock  # the contract suite against the mock ...
@@ -103,5 +103,6 @@ committed copies differ from what the contract generates.
 
 ## Conventions
 
-The data layer, money and formatting, the UI stack, demo mode, and the traps of testing Fluent
-under jsdom: [`CONVENTIONS.md`](CONVENTIONS.md).
+The data layer, money and formatting, the UI stack, demo mode, the traps of testing Fluent under
+jsdom, the two compilers, the two linters and what `vitest run` leaves out:
+[`CONVENTIONS.md`](CONVENTIONS.md).

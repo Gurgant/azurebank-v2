@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import {
   makeStyles,
@@ -29,7 +30,8 @@ import {
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useAppDispatch } from '../app/hooks';
+import { useAppDispatch, useAppSelector } from '../app/hooks';
+import { selectCurrentUser } from '../features/auth/authSlice';
 import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { useMovementCheck } from '../hooks/useMovementCheck';
@@ -74,6 +76,8 @@ import {
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 
 const PIN_LENGTH = 6;
+const NO_ACCOUNT_SENTENCE =
+  "That recipient can't receive money right now. Choose another recipient.";
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 interface Recipient {
@@ -230,11 +234,12 @@ export function TransferPage() {
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
 
   const dispatch = useAppDispatch();
+  const user = useAppSelector(selectCurrentUser);
 
   /*
     The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
     query has no argument on the page to name it by. Stopping it lands on Verify, which is where the
-    check starts again.
+    check starts again. Its identity also keeps an answer from writing after an edit or a new check.
   */
   const runningLookup = useRef<StartedRead | null>(null);
   const lookupLanding = useWaitLanding<HTMLButtonElement>(
@@ -257,6 +262,7 @@ export function TransferPage() {
       SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
       ACCOUNT_NOT_FOUND: ACCOUNT_CLOSED,
       RECIPIENT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+      RECIPIENT_NO_ACCOUNT: NO_ACCOUNT_SENTENCE,
     },
     fallback: 'Transfer failed. Please try again.',
   });
@@ -385,6 +391,7 @@ export function TransferPage() {
 
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [ownHandle, setOwnHandle] = useState(false);
   const [success, setSuccess] = useState<SuccessData | null>(null);
   /*
     The receipt's title takes the focus the send lost: the PIN boxes are disabled for the send, so
@@ -459,6 +466,8 @@ export function TransferPage() {
     counts, and a failed reload keeps the last one received.
   */
   const [sourceRefused, setSourceRefused] = useState(false);
+  // The payee's refusal under a held key (the RECIPIENT_NO_ACCOUNT arm), said again on the form.
+  const [payeeRefused, setPayeeRefused] = useState(false);
   const sourceGone =
     watchedAccountId !== '' &&
     (sourceRefused ||
@@ -521,6 +530,14 @@ export function TransferPage() {
     wizard.fail(ACCOUNT_CLOSED);
   }, [sourceGone, exitLocked, success, verifyRequired, setValue, wizard]);
 
+  // "Start over" clears the failure with the intent; the payee's refusal is said again, once, on
+  // the form. The visitor's next change of recipient clears it like any input failure.
+  useEffect(() => {
+    if (!payeeRefused || exitLocked || success || verifyRequired) return;
+    setPayeeRefused(false);
+    wizard.fail(NO_ACCOUNT_SENTENCE);
+  }, [payeeRefused, exitLocked, success, verifyRequired, wizard]);
+
   const handleSelectAccount = (account: AccountResponse) => {
     if (keyLive) return;
     setValue('fromAccountId', account.id, { shouldValidate: true });
@@ -534,30 +551,43 @@ export function TransferPage() {
   };
 
   const handleVerifyRecipient = async () => {
+    runningLookup.current = null;
     const tag = normalizeAzureTag(watchedTag);
     if (!tag) return;
     setRecipient(null);
     setRecipientError(null);
+    setOwnHandle(false);
     onBodyEdit();
+    if (user && tag.toLowerCase() === normalizeAzureTag(user.azureTag).toLowerCase()) {
+      // A lookup's wait commits the empty alert before its answer. Nothing waits here, and React
+      // would fold the two into one render: the same sentence again would change nothing to say.
+      flushSync(() => setRecipientError(null));
+      setOwnHandle(true);
+      setRecipientError(
+        'That\'s your own handle. To move money between your own accounts, use "Between your own accounts" below.',
+      );
+      return;
+    }
+    const request = lookup(tag);
+    runningLookup.current = request;
     try {
-      const request = lookup(tag);
-      runningLookup.current = request;
       const result = await request.unwrap();
+      if (runningLookup.current !== request) return;
       if (result.exists) {
         setRecipient({ azureTag: result.azureTag, displayName: result.displayName });
       } else {
         setRecipientError(`We couldn't find @${tag}. Check the handle and try again.`);
       }
     } catch (caught) {
+      if (runningLookup.current !== request) return;
       /*
         A bare catch here told every failure the same story — "check your connection" — and this
         endpoint has a DEDICATED rate limiter: /api/users/* runs a tight per-user sliding window
         (ADR-0014) and rejects with 429 + Retry-After. So the one failure a user is most likely to
         provoke, by tapping Verify repeatedly, sent them to check a connection that was fine.
 
-        Branching on STATUS rather than errorCode is deliberate: the BFF's rejection body is a bare
-        ProblemDetails with no errorCode, so the client synthesises HTTP_429 and there is no code to
-        match on. `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
+        Branching on STATUS rather than on the code: any 429 here gets the same sentence.
+        `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
       */
       const problem = caught as ApiProblem;
       if (problem.status === 429) {
@@ -602,6 +632,9 @@ export function TransferPage() {
 
     While the check runs "Verify" is busy and cannot be pressed, so the line does not ask for it.
 
+    The visitor's own handle is refused locally to spare a rate-limited lookup (ADR-0014).
+    Its flag asks for another handle too, without relying on an answer from the server.
+
     A handle the check found nobody for is not sent back to "Verify": the same press gets the
     same answer, so the line asks for another handle, under the check's own sentence, which
     names the one it could not find. Until a second change of 2026-10-06 it went on saying
@@ -628,7 +661,7 @@ export function TransferPage() {
         : !recipient
           ? lookupState.isFetching
             ? 'Checking the handle…'
-            : nobodyHasTheHandle
+            : ownHandle || nobodyHasTheHandle
               ? 'Change the handle to continue.'
               : 'Press Verify to check the handle.'
           : watch('amount').trim() === ''
@@ -910,6 +943,19 @@ export function TransferPage() {
         was applied, which is why the view says to check the transactions first.
       */
       if (phase === 'mint' && keyLive) wizard.requireVerify();
+    } else if (refusal?.errorCode === 'RECIPIENT_NO_ACCOUNT') {
+      // A mint under a held key drops no key, so Back and Close would stay disabled with the PIN
+      // step in front: the closed-account arm above says why and what the check view does. Its
+      // sentence is already shown; "start over" clears it, so the effect on `payeeRefused` says
+      // it again on the form. With no key held the answer is as it was.
+      if (phase === 'mint' && keyLive) {
+        setPin('');
+        enteredPin.current = '';
+        lastAuthorization.current = null;
+        setAuthorizationHeld(false);
+        setPayeeRefused(true);
+        wizard.requireVerify();
+      }
     } else if (refusal?.errorCode === 'PIN_REQUIRED') {
       // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
       // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
@@ -1237,9 +1283,13 @@ export function TransferPage() {
                       disabled={keyLive}
                       onBlur={field.onBlur}
                       onChange={(e) => {
+                        const running = runningLookup.current;
+                        runningLookup.current = null;
+                        if (running) abortRunning(dispatch, [running]);
                         field.onChange(e.target.value);
                         setRecipient(null);
                         setRecipientError(null);
+                        setOwnHandle(false);
                         onBodyEdit();
                       }}
                       onKeyDown={(e) => {

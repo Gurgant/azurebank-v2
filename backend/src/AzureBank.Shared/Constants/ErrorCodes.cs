@@ -95,9 +95,9 @@ public static class ErrorCodes
     // any non-HTTP caller — the code says so — and must NOT be deleted as dead. What must not
     // happen is a client being written to expect this code from the API.
     public const string SameAccountTransfer = "SAME_ACCOUNT_TRANSFER";
-    // The recipient exists but has no account that can receive money (all deleted). Reachable, and
-    // currently unhandled by the frontend, which falls through to the generic message — tracked for
-    // the U6 frontend work rather than papered over here.
+    // The recipient exists but has no open account. The API refuses to close a primary account, so
+    // this takes a row closed outside the API. The external transfer page words it and asks for
+    // another recipient.
     public const string RecipientNoAccount = "RECIPIENT_NO_ACCOUNT";
     // No user the payer can pay holds the handle an external transfer names: the 404 of the mint
     // and of the transfer. A code of its own, so a client tells this answer from the 404 of the

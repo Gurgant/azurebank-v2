@@ -247,15 +247,16 @@ describe('external transfer (PR-11)', () => {
       (ADR-0014) and rejects with 429 + Retry-After — so the failure a user is most likely to
       provoke, by tapping Verify repeatedly, told them to check a connection that was fine.
 
-      Asserted on STATUS, not on an errorCode: the BFF's rejection body is a bare ProblemDetails
-      with no errorCode, so the client synthesises HTTP_429 and there is nothing to match on.
+      Asserted on STATUS, as the page branches: any 429 here gets the same sentence.
     */
     server.use(
       http.get('*/api/users/:azureTag', () =>
-        HttpResponse.json(
-          { type: 'https://httpstatuses.com/429', title: 'Too Many Requests', status: 429 },
-          { status: 429, headers: { 'Retry-After': '90' } },
-        ),
+        problem({
+          status: 429,
+          errorCode: 'RATE_LIMIT_EXCEEDED',
+          detail: 'Too many requests. Please retry later.',
+          headers: { 'Retry-After': '90' },
+        }),
       ),
     );
     renderTransfer();
@@ -380,6 +381,143 @@ describe('external transfer (PR-11)', () => {
       }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Recipient with identifier/)).not.toBeInTheDocument();
+  });
+
+  const NO_ACCOUNT_SENTENCE =
+    "That recipient can't receive money right now. Choose another recipient.";
+
+  it.each([
+    ['mint', '*/api/transfers/authorizations'],
+    ['send', '*/api/transfers'],
+  ])(
+    'a payee with no open account refused at the %s reads our sentence, and it survives to the form',
+    async (_phase, path) => {
+      // The API's answer, held by TransferOrWithdrawalOnClosedAccountSqlServerTests.
+      server.use(
+        http.post(path, () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+
+      expect(await screen.findByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+      expect(screen.queryByText(/does not have an active account/)).not.toBeInTheDocument();
+
+      // PIN step to review, review to form: the two Backs a visitor needs to change the payee.
+      const pinBacks = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(pinBacks[pinBacks.length - 1]);
+      const reviewBacks = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(reviewBacks[reviewBacks.length - 1]);
+
+      expect(await screen.findByLabelText('Recipient handle')).toBeInTheDocument();
+      expect(screen.getByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+    },
+  );
+
+  /*
+    The same refusal at the mint, after a send answered a refused authorisation: the key is held
+    for the same transfer, the payee has meanwhile lost its last open account, and the PIN step
+    can do nothing more. The page shows the check view, as it does for a closed source account,
+    and the sentence comes back on the form after "start over".
+  */
+  describe('a payee with no open account, met under a held key', () => {
+    async function reachTheMintUnderAKeptKey(
+      errorCode: 'AUTHORIZATION_EXPIRED' | 'AUTHORIZATION_INVALID',
+    ) {
+      const sends: (string | null)[] = [];
+      server.use(
+        http.post('*/api/transfers', ({ request }) => {
+          sends.push(request.headers.get('Idempotency-Key'));
+          if (sends.length === 1) {
+            return problem({ status: 401, errorCode, detail: 'Refused.' });
+          }
+        }),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+      await screen.findByText(/your confirmation expired|That confirmation can no longer be used/);
+      expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+      server.use(
+        http.post('*/api/transfers/authorizations', () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      await enterPin();
+      return sends;
+    }
+
+    it.each(['AUTHORIZATION_EXPIRED', 'AUTHORIZATION_INVALID'] as const)(
+      'shows the check view after %s, and start over returns to the form with the sentence, cleared by a new recipient',
+      async (errorCode) => {
+        const sends = await reachTheMintUnderAKeptKey(errorCode);
+
+        expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+        expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+        expect(sends).toHaveLength(1);
+
+        const startOver = await screen.findByRole('button', {
+          name: "It didn't go through — start over",
+        });
+        await settle();
+        await userEvent.click(startOver);
+
+        expect(await screen.findByLabelText('Recipient handle')).toBeInTheDocument();
+        const words = screen.getByText(NO_ACCOUNT_SENTENCE, { exact: false });
+        expect(words.closest('[role="alert"]')).not.toBeNull();
+        expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+
+        // Changing the recipient takes the sentence back.
+        await settle();
+        await userEvent.type(screen.getByLabelText('Recipient handle'), 'x');
+        await waitFor(() =>
+          expect(screen.queryByText(NO_ACCOUNT_SENTENCE, { exact: false })).not.toBeInTheDocument(),
+        );
+      },
+    );
+
+    it('with no key held (the first mint), the PIN step stays and the sentence is said, as before', async () => {
+      server.use(
+        http.post('*/api/transfers/authorizations', () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+
+      expect(await screen.findByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+      expect(screen.queryByText("We couldn't confirm your transfer")).not.toBeInTheDocument();
+      const backs = screen.getAllByRole('button', { name: 'Back' });
+      expect(backs[backs.length - 1]).toBeEnabled();
+    });
   });
 
   /*

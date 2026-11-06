@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
@@ -19,6 +20,33 @@ async function boot(store: TestStore) {
     .dispatch(apiSlice.endpoints.getMe.initiate())
     .unwrap()
     .catch(() => undefined);
+}
+
+/**
+ * A link on the entry pages is one stop for Tab and tells itself apart from its sentence by more
+ * than colour. `index.css` takes the underline off every link and Vitest loads no stylesheet, so
+ * the reset goes in here: jsdom's own underline would pass whatever the page sets.
+ */
+function expectOneUnderlinedStop(name: string) {
+  const link = screen.getByRole('link', { name });
+  const stops = [link, ...link.querySelectorAll('*')].filter((element) =>
+    element.matches('a[href], button, [tabindex]'),
+  );
+  expect(stops).toEqual([link]);
+  expect(screen.queryByRole('button', { name })).toBeNull();
+
+  const reset = /^a \{[^}]*\}/m.exec(readFileSync('src/index.css', 'utf8'));
+  expect(reset?.[0]).toContain('text-decoration: none');
+  const sheet = document.createElement('style');
+  sheet.textContent = reset![0];
+  document.head.append(sheet);
+  try {
+    expect(getComputedStyle(link).textDecorationLine).toBe('underline');
+    // Any case: jsdom lower-cases a custom property's name when it computes the style.
+    expect(getComputedStyle(link).color).toMatch(/^var\(--colorBrandForegroundLink\)$/i);
+  } finally {
+    sheet.remove();
+  }
 }
 
 describe('auth bootstrap (D6)', () => {
@@ -178,20 +206,29 @@ describe('global 401 handling (D3)', () => {
     expect(store.getState().auth.status).toBe('anonymous');
   });
 
-  it('a 401 INVALID_CREDENTIALS stays on the login form — no session expiry', async () => {
-    mockState.session = null;
+  it('a 401 INVALID_CREDENTIALS keeps the session AND the cache — a wrong password is not a dead session', async () => {
+    // Signed in on purpose: sessionMiddleware reacts to a 401 only from 'authenticated', so from
+    // 'anonymous' this could not go red whatever IN_FLOW_401_CODES held.
+    seedMockSession();
     const store = makeTestStore();
     await boot(store);
-    expect(store.getState().auth.status).toBe('anonymous');
+    expect(store.getState().auth.status).toBe('authenticated');
 
-    await store
-      .dispatch(
-        apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: 'Wrong-Pass-1!' }),
-      )
-      .unwrap()
-      .catch(() => undefined);
+    // Warm the cache, so "nothing was wiped" is an observation rather than a vacuity.
+    await store.dispatch(apiSlice.endpoints.getAccounts.initiate()).unwrap();
+    const cachedKeys = Object.keys(store.getState().api.queries);
+    expect(cachedKeys.length).toBeGreaterThan(0);
 
-    expect(store.getState().auth.status).toBe('anonymous');
+    await expect(
+      store
+        .dispatch(
+          apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: 'Wrong-Pass-1!' }),
+        )
+        .unwrap(),
+    ).rejects.toMatchObject({ status: 401, errorCode: 'INVALID_CREDENTIALS' });
+
+    expect(store.getState().auth.status).toBe('authenticated');
+    expect(Object.keys(store.getState().api.queries)).toEqual(cachedKeys);
   });
 });
 
@@ -296,6 +333,20 @@ describe('login flow (returnTo + error branching)', () => {
   });
 });
 
+describe('the links between the entry pages', () => {
+  it('makes "Create account" on the sign-in page one underlined stop', () => {
+    renderWithProviders(<LoginPage />, { routerEntries: ['/login'] });
+
+    expectOneUnderlinedStop('Create account');
+  });
+
+  it('makes "Sign in" on the registration page one underlined stop', () => {
+    renderWithProviders(<RegisterPage />, { routerEntries: ['/register'] });
+
+    expectOneUnderlinedStop('Sign in');
+  });
+});
+
 describe('register flow (D15 dual-path + D13 rate limit)', () => {
   async function fillRegisterForm(user: ReturnType<typeof userEvent.setup>, email: string) {
     await user.type(screen.getByLabelText(/first name/i), 'Test');
@@ -317,8 +368,42 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
       expect(screen.getByText(/we couldn't create an account/i)).toBeInTheDocument(),
     );
     expect(screen.getByText(/sign in with this email/i)).toBeInTheDocument();
+    expectOneUnderlinedStop('sign in with this email');
     // Field values survive (D15) — the user edits, not retypes.
     expect(screen.getByLabelText(/^email address$/i)).toHaveValue('taken@azurebank.dev');
+  });
+
+  it('hands the typed email to the sign-in page, which sends it in the login request', async () => {
+    let sentEmail: unknown;
+    server.use(
+      http.post('*/bff/auth/login', async ({ request }) => {
+        sentEmail = ((await request.json()) as { email?: unknown }).email;
+        return problem({
+          status: 401,
+          errorCode: 'INVALID_CREDENTIALS',
+          detail: 'Invalid email or password.',
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<LoginPage />} />
+      </Routes>,
+      { routerEntries: ['/register'] },
+    );
+
+    await fillRegisterForm(user, 'taken@azurebank.dev');
+    await user.click(await screen.findByRole('link', { name: /sign in with this email/i }));
+
+    // The follow-through: the link's navigation state is the only way the email reaches this page.
+    fireEvent.change(await screen.findByLabelText(/^password$/i), {
+      target: { value: 'Password1!' },
+    });
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => expect(sentEmail).toBe('taken@azurebank.dev'));
   });
 
   it('shows the countdown and disables submit on the shared-bucket 429', async () => {

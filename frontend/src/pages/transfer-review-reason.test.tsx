@@ -1,10 +1,12 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
+import { apiSlice } from '../features/api/apiSlice';
+import { seedMockSession } from '../mocks/state';
 import { TransferPage } from './TransferPage';
 
 /*
@@ -34,13 +36,13 @@ const WORDS = {
   amountCannotBeSent: 'Change the amount to continue.',
 } as const;
 
-function renderTransfer() {
+function renderTransfer(store = makeTestStore()) {
   return renderWithProviders(
     <Routes>
       <Route path="/" element={<TransferPage />} />
       <Route path="/transfer/internal" element={<div>INTERNAL</div>} />
     </Routes>,
-    { routerEntries: ['/'] },
+    { routerEntries: ['/'], store },
   );
 }
 
@@ -122,6 +124,19 @@ async function openTheForm() {
   return view;
 }
 
+/** The form as `openTheForm` has it, for a visitor the page knows: the mock's `demo_user`. */
+async function openTheFormSignedIn() {
+  seedMockSession();
+  const store = makeTestStore();
+  await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+  const view = renderTransfer(store);
+  await screen.findByText('Main Account');
+  return view;
+}
+
+const OWN_HANDLE =
+  'That\'s your own handle. To move money between your own accounts, use "Between your own accounts" below.';
+
 describe('what "Review Transfer" is still waiting for', () => {
   it('nothing typed: the handle', async () => {
     await openTheForm();
@@ -192,6 +207,98 @@ describe('what "Review Transfer" is still waiting for', () => {
       refused: { disabled: true, describedBy: [WORDS.nobodyHasIt] },
       typedSince: { disabled: true, describedBy: [WORDS.notVerified] },
     });
+  });
+
+  it.each(['demo_user', '@demo_user', 'DEMO_USER', '@DeMo_UsEr'])(
+    "the visitor's own handle %s is refused locally, then an edited handle can be verified",
+    async (ownHandle) => {
+      let lookupRequests = 0;
+      server.use(
+        http.get('*/api/users/:azureTag', () => {
+          lookupRequests += 1;
+        }),
+      );
+      await openTheFormSignedIn();
+      fireEvent.change(amountField(), { target: { value: '50' } });
+      fireEvent.change(handleField(), { target: { value: ownHandle } });
+      await userEvent.click(verify());
+
+      expect(lookupRequests).toBe(0);
+      await screen.findByText(OWN_HANDLE);
+      expect(screen.getByText(OWN_HANDLE).closest('[role="alert"]')).not.toBeNull();
+      expect(lookupRequests).toBe(0);
+      expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.nobodyHasIt] });
+      expect(review()).toHaveAccessibleDescription('Change the handle to continue.');
+
+      fireEvent.change(handleField(), { target: { value: 'friend' } });
+      expect(screen.queryByText(OWN_HANDLE)).not.toBeInTheDocument();
+      expect(now()).toStrictEqual({ disabled: true, describedBy: [WORDS.notVerified] });
+      await userEvent.click(verify());
+      await screen.findByText('A. Friend');
+      expect(lookupRequests).toBe(1);
+      await waitFor(() => expect(review()).toBeEnabled());
+    },
+  );
+
+  it("the visitor's own handle verified twice: the alert goes through empty, so the second is said", async () => {
+    // An alert whose words do not change is not read out again. Verify empties it first, as it
+    // does before a lookup, so the same sentence a second time is a change.
+    await openTheFormSignedIn();
+    fireEvent.change(handleField(), { target: { value: 'demo_user' } });
+    await userEvent.click(verify());
+    const alert = (await screen.findByText(OWN_HANDLE)).closest('[role="alert"]') as Element;
+
+    const texts = await textsDuring(alert, async () => {
+      await userEvent.click(verify());
+      await screen.findByText(OWN_HANDLE);
+    });
+
+    expect(texts).toStrictEqual([OWN_HANDLE, '', OWN_HANDLE]);
+  });
+
+  it.each([
+    { nextHandle: 'demo_user', pressEnter: true },
+    { nextHandle: 'another_friend', pressEnter: false },
+  ])('ignores a held lookup after editing to $nextHandle', async ({ nextHandle, pressEnter }) => {
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let started = () => {};
+    const requested = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    server.use(
+      http.get('*/api/users/:azureTag', async () => {
+        started();
+        await held;
+        return HttpResponse.json({
+          data: { exists: true, azureTag: 'friend', displayName: 'A. Friend' },
+          message: null,
+        });
+      }),
+    );
+    const { store } = await openTheFormSignedIn();
+    fireEvent.change(amountField(), { target: { value: '50' } });
+    fireEvent.change(handleField(), { target: { value: 'friend' } });
+    await userEvent.click(verify());
+    await requested;
+    const pending = store.dispatch(apiSlice.util.getRunningQueryThunk('lookupRecipient', 'friend'));
+    expect(pending).toBeDefined();
+
+    fireEvent.change(handleField(), { target: { value: nextHandle } });
+    if (pressEnter) {
+      fireEvent.keyDown(handleField(), { key: 'Enter' });
+      await screen.findByText(OWN_HANDLE);
+    }
+    await act(async () => {
+      answer();
+      await pending;
+    });
+
+    expect(screen.queryByText('A. Friend')).not.toBeInTheDocument();
+    expect(review()).toBeDisabled();
+    if (pressEnter) expect(screen.getByText(OWN_HANDLE)).toBeInTheDocument();
   });
 
   it('a check the bank turned away is still a check to make: "Verify", not another handle', async () => {
