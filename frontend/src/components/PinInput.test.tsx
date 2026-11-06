@@ -105,6 +105,12 @@ describe('PinInput (PR-10)', () => {
     expect(screen.getByRole('button', { name: 'Hide PIN' })).not.toHaveAttribute('aria-pressed');
   });
 
+  it('names the PIN its toggle shows when a caller has more than one, in both states', async () => {
+    renderWithProviders(<PinInput value="" onChange={() => undefined} revealLabel="new PIN" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Show new PIN' }));
+    expect(screen.getByRole('button', { name: 'Hide new PIN' })).toBeInTheDocument();
+  });
+
   /*
     A whole PIN arriving at once is a whole PIN, whichever box has focus and whatever is already
     there. Spliced in at the box, a paste after a mistyped start kept the start: on main, "12" then
