@@ -1,11 +1,22 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
-import { http } from 'msw';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { MOCK_USER, seedMockSession } from '../mocks/state';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
+import {
+  COPY,
+  advanceUntil,
+  emulateFocusFixup,
+  fakeClockUser,
+  hintRegion,
+  hintShownAt,
+  installFakeClock,
+  never,
+} from '../test/outage';
+import { AppToaster } from '../components/feedback';
 import { apiSlice } from '../features/api/apiSlice';
 import { SettingsPage } from './SettingsPage';
 
@@ -309,5 +320,119 @@ describe('settings page: the handle dialog and what the server refuses', () => {
     await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
     expect(renames).toEqual([]);
     expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument();
+  });
+});
+
+/*
+  Sign out on the Session card while the server has not answered. The shell's two Sign out
+  controls are held in layout.test.tsx; this one keeps a pending state of its own, the page's.
+*/
+describe('settings page: Sign out while its answer is awaited', () => {
+  // Unmount first, then restore the clock: a hint still mounted on a fake clock would go on
+  // ticking into the next test.
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  const signOutButton = () =>
+    within(screen.getByRole('region', { name: 'Session' })).getByRole('button', {
+      name: 'Sign out',
+    });
+
+  it('asks the server once however often it is pressed, and keeps its focus', async () => {
+    let answer: () => void = () => {};
+    let asked = 0;
+    server.use(
+      http.post('*/bff/auth/logout', async () => {
+        asked += 1;
+        await new Promise<void>((resolve) => {
+          answer = resolve;
+        });
+        return HttpResponse.json({ message: 'Logged out successfully' });
+      }),
+    );
+    const { router } = await renderSettings();
+    const user = userEvent.setup();
+    const signOut = signOutButton();
+    // A browser hands a disabled button's focus to the page; jsdom does not (src/test/outage.ts).
+    const stopEmulating = emulateFocusFixup();
+    try {
+      await user.click(signOut);
+      await waitFor(() => expect(signOut).toHaveAttribute('aria-busy', 'true'));
+      expect(signOut).toHaveAttribute('aria-disabled', 'true');
+      await waitFor(() => expect(asked).toBe(1));
+      await user.click(signOut);
+      await user.click(signOut);
+
+      expect(asked).toBe(1);
+      expect(signOut).toHaveFocus();
+      act(() => answer());
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe('/login');
+        expect(signOutButton()).not.toHaveAttribute('aria-busy');
+      });
+      expect(asked).toBe(1);
+    } finally {
+      stopEmulating();
+    }
+  });
+
+  it('says it is slow under the button from 5 s, and offers no way to stop it', async () => {
+    server.use(http.post('*/bff/auth/logout', never));
+    await renderSettings();
+    const session = screen.getByRole('region', { name: 'Session' });
+    const signOut = signOutButton();
+    installFakeClock();
+    const user = fakeClockUser();
+    const pressedAt = Date.now();
+    await user.click(signOut);
+    const shownAt = await hintShownAt(session);
+
+    await advanceUntil(pressedAt, 4_900);
+    expect(within(session).queryByText(COPY.slow)).not.toBeInTheDocument();
+    await advanceUntil(shownAt, 5_000);
+    const region = hintRegion(COPY.slow, session);
+    expect(signOut.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await advanceUntil(shownAt, 20_000);
+    hintRegion(COPY.stillTrying, session);
+    expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
+  });
+
+  it('after a sign-out that failed, it takes a press again and asks again', async () => {
+    let asked = 0;
+    server.use(
+      http.post('*/bff/auth/logout', () => {
+        asked += 1;
+        return problem({ status: 503, title: 'Service Unavailable', detail: 'Try again shortly.' });
+      }),
+    );
+    // The toast is how the test knows the refusal has come back.
+    renderWithProviders(
+      <>
+        <AppToaster />
+        <SettingsPage />
+      </>,
+      { store: seededStore(), routerEntries: ['/settings'] },
+    );
+    await screen.findByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`);
+    const user = userEvent.setup();
+    const signOut = signOutButton();
+
+    await user.click(signOut);
+    // The title, matched whole: for half a second the toaster's live region holds all of the
+    // toast's words as one text, which a pattern would find as well.
+    await screen.findByText('Service Unavailable');
+    await waitFor(() => {
+      expect(signOut).not.toHaveAttribute('aria-busy');
+      expect(signOut).not.toHaveAttribute('aria-disabled');
+    });
+    expect(asked).toBe(1);
+    await user.click(signOut);
+
+    await waitFor(() => {
+      expect(asked).toBe(2);
+      expect(screen.getAllByText('Service Unavailable')).toHaveLength(2);
+    });
   });
 });

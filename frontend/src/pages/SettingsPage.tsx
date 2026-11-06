@@ -9,6 +9,7 @@ import {
   Badge,
   Radio,
   RadioGroup,
+  Spinner,
   tokens,
 } from '@fluentui/react-components';
 import {
@@ -21,7 +22,7 @@ import { colors, shadows, gradients, surfaces } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { SIGN_OUT_FAILED } from '../api/problemMessages';
 import { useAppSelector } from '../app/hooks';
-import { useProblemToast } from '../components/feedback';
+import { useProblemToast, WaitHint } from '../components/feedback';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { useLogoutMutation } from '../features/api/apiSlice';
@@ -311,7 +312,9 @@ export function SettingsPage() {
   const styles = useStyles();
   const { preference, resolved, setPreference } = useTheme();
   const navigate = useNavigate();
-  const [logout] = useLogoutMutation();
+  // This page's own pending state, from the press to the answer. The shell's two Sign out
+  // controls hold theirs apart from it, so a press there and one here still send two requests.
+  const [logout, { isLoading: signingOut }] = useLogoutMutation();
   const showProblem = useProblemToast();
   const [renameOpen, setRenameOpen] = useState(false);
   const [changePinOpen, setChangePinOpen] = useState(false);
@@ -503,10 +506,17 @@ export function SettingsPage() {
               <Text className={styles.actionTitle}>{SIGN_OUT_ACTION.label}</Text>
               <Text className={styles.actionSubtitle}>End your session in this browser.</Text>
             </div>
+            {/* While the sign-out is under way the button keeps its words and its focus and drops
+                the press, which Fluent does for `disabledFocusable`: `disabled` would drop focus
+                to the body. The spinner is hidden from assistive technology: `aria-busy` says it. */}
             <Button
               appearance="secondary"
               className={styles.actionButton}
-              icon={<SIGN_OUT_ACTION.icon />}
+              icon={
+                signingOut ? <Spinner size="tiny" aria-hidden="true" /> : <SIGN_OUT_ACTION.icon />
+              }
+              disabledFocusable={signingOut}
+              aria-busy={signingOut || undefined}
               onClick={() => {
                 void handleLogout();
               }}
@@ -514,6 +524,8 @@ export function SettingsPage() {
               {SIGN_OUT_ACTION.label}
             </Button>
           </div>
+          {/* A write: the server may already be ending the session, so there is no Stop. */}
+          <WaitHint active={signingOut} kind="write" />
         </div>
       </section>
 
