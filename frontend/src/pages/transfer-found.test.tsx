@@ -40,10 +40,24 @@ afterEach(() => {
   Vitest gives up on a test at its timeout but cannot stop the body, which goes on pressing and
   querying. Measured: a body abandoned early landed on the next test's page, and that test
   failed on act warnings about its own page. So the hook holds the unmount, and with it the next
-  test or the next file of the worker, until the body has ended.
+  test or the next file of the worker, until the body has ended. The wait is bounded under the
+  20s hook timeout: a hook that timed out would skip the hooks still to run, the unmount and the
+  resets of setup.ts among them. The test itself has failed by then, so giving up waiting hides
+  nothing.
 */
+const BODY_WAIT_MS = 10_000;
 let body: Promise<void> = Promise.resolve();
-afterEach(() => body);
+afterEach(async () => {
+  let giveUp: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<void>((resolve) => {
+    giveUp = setTimeout(resolve, BODY_WAIT_MS);
+  });
+  try {
+    await Promise.race([body, bound]);
+  } finally {
+    clearTimeout(giveUp);
+  }
+});
 
 /** `it`, for a body that the hook above waits for; what it throws is still this test's failure. */
 function test(name: string, run: () => Promise<void>) {
