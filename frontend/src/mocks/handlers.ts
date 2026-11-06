@@ -13,7 +13,13 @@ import {
   unreadableBodyProblem,
   unsupportedMediaTypeProblem,
 } from './problem';
-import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
+import {
+  LOGIN_REQUEST,
+  REGISTER_REQUEST,
+  bindMembers,
+  boundMember,
+  modelStateFor,
+} from './dataAnnotations';
 import { jsonMembersAsWritten } from './jsonMembers';
 import {
   MOCK_PASSWORD,
@@ -3960,7 +3966,9 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     (`LoginGuessBoundSqlServerTests`): twenty wrong passwords sent together, five compared, 401 x5
     and 429 x15; then the right one, 429, compared 0.
   */
-  const password = authBody.body.password as string | undefined;
+  // The BFF binds `Password` whatever its spelling, so {"Password":<129 characters>} is the 400
+  // below, not 422 PASSWORD_REQUIRED (measured on the in-process BFF host on 2026-11-06).
+  const password = boundMember(authBody.body, 'password') as string | undefined;
   const currentPin = authBody.body.currentPin as string | undefined;
 
   /*

@@ -1446,6 +1446,30 @@ describe('failure modes the mock could not previously produce', () => {
     expect(mockState.session?.hasPin).toBe(false);
   });
 
+  it("U3: a first PIN's password binds whatever its spelling", async () => {
+    // The BFF binds members case-insensitively, as on sign-in: `Password` is the same member as
+    // `password`, so an overlong one is the length 400 and the right one enrols.
+    seedMockSession({ ...mockState.session!, hasPin: false });
+    const setPin = (body: Record<string, string>) =>
+      fetch('/bff/auth/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const overlong = await setPin({ pin: '424242', Password: 'a'.repeat(129) });
+    expect(overlong.status).toBe(400);
+    expect((await overlong.json()).errors).toEqual({
+      Password: [
+        "The field Password must be a string or array type with a maximum length of '128'.",
+      ],
+    });
+
+    const enrolled = await setPin({ pin: '424242', PASSWORD: 'Password1!' });
+    expect(enrolled.status).toBe(200);
+    expect(mockState.session?.hasPin).toBe(true);
+  });
+
   it("U3: a first PIN's right password clears the count the sign-in left", async () => {
     // Four wrong sign-ins leave four counted; the right password at the proof clears them, as a
     // right password at the sign-in does.
