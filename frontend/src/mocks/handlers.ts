@@ -60,6 +60,23 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
   answers 200 to. Measured against the running stack rather than assumed: N, B, P and X all returned
   the correctly scoped total, and an N-format Idempotency-Key was accepted on a deposit.
 
+  D is read more widely than 32 hex digits and four hyphens. .NET reads each of its first five
+  slices, 0-8, 9-13, 14-18, 19-23 and 24-28, with `TryParseHex`: one `+`, then `0x` or `0X`, then
+  hex digits that fill the rest of the slice. The last eight characters are hex digits alone.
+  Measured on 2026-10-17 on the API's own test host, against a deposit under the key
+  00000001-0002-0003-0405-060708090a0b, each of
+
+    +0000001-0002-0003-0405-060708090a0b     0x000001-0002-0003-0405-060708090a0b
+    00000001-0x02-0003-0405-060708090a0b     00000001-+002-0003-0405-060708090a0b
+    00000001-0002-0003-0405-+60708090a0b     {0x000001-0002-0003-0405-060708090a0b}
+
+  found that deposit's one row as the listing's `IdempotencyKey`, and was read as the summary's
+  `AccountId` (a 403, not a 400). The first two, made new keys by a last byte of 0x25 and 0x26,
+  were each a 201 as a deposit's `Idempotency-Key`. N reads no prefix:
+  `+0000001000200030405060708090a0b` was a 400 on the listing and on the summary. P hands its
+  middle 36 characters to the same D reader as B does; that was read in .NET's `Guid.cs`
+  (release/10.0), not measured.
+
   Nothing in this app sends anything but D — ids come from the API — so no client could reach the
   gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
   which is the entire failure this file's fidelity suite exists to prevent.
@@ -68,8 +85,34 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 // a template literal is just `(`, which the RegExp then reads as a group opener. Written singly at
 // first, and the P form silently became a capturing group — the format test caught it as a 400.
 const HEX = '[0-9a-f]';
-const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
-const GUID_RE = new RegExp(`^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\))$`, 'i');
+const GUID_N_RE = new RegExp(`^${HEX}{32}$`, 'i');
+/** B and P: the 36 characters of a D between `{` and `}`, or between `(` and `)`. */
+const GUID_B_OR_P_RE = new RegExp(`^(?:\\{.{36}\\}|\\(.{36}\\))$`);
+/** Where each of the first five slices of D starts, and how wide it is. */
+const D_SLICES = [
+  [0, 8],
+  [9, 4],
+  [14, 4],
+  [19, 4],
+  [24, 4],
+] as const;
+const D_SLICE_RE = new RegExp(`^\\+?(?:0x)?(${HEX}+)$`, 'i');
+const D_TAIL_RE = new RegExp(`^${HEX}{8}$`, 'i');
+
+/** The 32 hex digits of a D-spelled GUID, its `+` and `0x` read as .NET reads them, or `null`. */
+function hexOfGuidD(value: string): string | null {
+  if (value.length !== 36 || [8, 13, 18, 23].some((at) => value[at] !== '-')) return null;
+  let hex = '';
+  for (const [start, width] of D_SLICES) {
+    // A slice is four characters at least and its prefix three at most: a prefix never fills a
+    // slice, as `0x+` fills a component of X, and the digits never outgrow the slice's width.
+    const digits = D_SLICE_RE.exec(value.slice(start, start + width))?.[1];
+    if (digits === undefined) return null;
+    hex += digits.padStart(width, '0');
+  }
+  const tail = value.slice(28);
+  return D_TAIL_RE.test(tail) ? hex + tail : null;
+}
 
 /**
  * The X spelling, `{0xdddddddd,0xdddd,0xdddd,{0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd}}`, read as
@@ -125,8 +168,9 @@ function parseGuid(value: string): string | null {
   // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
   // scoped total from the running API. Without this the mock 400s a request the server answers.
   const trimmed = value.trim();
+  const d = GUID_B_OR_P_RE.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
   const hex = (
-    GUID_RE.test(trimmed) ? trimmed.replace(/[^0-9a-f]/gi, '') : hexOfGuidX(value)
+    GUID_N_RE.test(trimmed) ? trimmed : (hexOfGuidD(d) ?? hexOfGuidX(value))
   )?.toLowerCase();
   if (hex?.length !== 32) return null;
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
