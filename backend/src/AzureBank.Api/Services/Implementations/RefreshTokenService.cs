@@ -417,8 +417,11 @@ public class RefreshTokenService : IRefreshTokenService
         Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     /// <summary>
-    /// Best-effort caller fingerprint for forensics. Never a security boundary (a NAT or proxy hop
-    /// changes the IP legitimately) — recorded, not enforced. Truncated to the column widths so an
+    /// The address and User-Agent of the request that asked for the grant: a sign-in, a
+    /// registration or the demo's claim. Only the BFF's own client reaches those endpoints, over
+    /// loopback (ADR-0057 §4.2), and it sends no User-Agent, so a row holds a loopback address
+    /// ("unknown" on the test host, whose requests have no address) and "unknown". Recorded and
+    /// never read: nothing checks either on renewal. Truncated to the column widths so an
     /// oversized User-Agent can never overflow the write.
     /// </summary>
     private (string Ip, string UserAgent) ReadClientContext()

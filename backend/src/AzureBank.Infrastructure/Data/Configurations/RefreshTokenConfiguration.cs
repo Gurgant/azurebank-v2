@@ -37,7 +37,7 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
             .IsUnique();
 
         // ═══════════════════════════════════════════════════════════════
-        // SECURITY TRACKING - for theft detection
+        // ISSUING REQUEST - its address and User-Agent, recorded, never read
         // ═══════════════════════════════════════════════════════════════
         builder.Property(r => r.IpAddress)
             .IsRequired()

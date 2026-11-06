@@ -54,12 +54,15 @@ public class RefreshToken
     public Guid? ReplacedByTokenId { get; set; }
 
     /// <summary>
-    /// Client IP address - validate on refresh for theft detection
+    /// The address of the request that asked for the grant: a loopback address, because only the
+    /// BFF's own client reaches a token endpoint (ADR-0057 §4.2), or "unknown" on the test host,
+    /// whose requests have no address. Recorded and never read: nothing checks it on renewal.
     /// </summary>
     public required string IpAddress { get; set; }
 
     /// <summary>
-    /// Browser/client identifier
+    /// The User-Agent of that request: "unknown", because the BFF's client sends none. Recorded
+    /// and never read.
     /// </summary>
     public required string UserAgent { get; set; }
 

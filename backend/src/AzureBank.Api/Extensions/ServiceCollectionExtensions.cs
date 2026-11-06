@@ -220,8 +220,8 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
-        // The grant (ADR-0057 §4): issue, renew (a read), revoke, and the tripwire. Reads client
-        // IP/UA for forensics, so it needs the request's HttpContext.
+        // The grant (ADR-0057 §4): issue, renew (a read), revoke, and the tripwire. It records the
+        // caller's address and User-Agent on a new grant, so it needs the request's HttpContext.
         services.AddHttpContextAccessor();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         // Its renewal-rate count (ADR-0057 §6, anomaly 2): a singleton, because the count must
