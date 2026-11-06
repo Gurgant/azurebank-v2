@@ -425,6 +425,102 @@ describe('external transfer (PR-11)', () => {
   );
 
   /*
+    The same refusal at the mint, after a send answered a refused authorisation: the key is held
+    for the same transfer, the payee has meanwhile lost its last open account, and the PIN step
+    can do nothing more. The page shows the check view, as it does for a closed source account,
+    and the sentence comes back on the form after "start over".
+  */
+  describe('a payee with no open account, met under a held key', () => {
+    async function reachTheMintUnderAKeptKey(
+      errorCode: 'AUTHORIZATION_EXPIRED' | 'AUTHORIZATION_INVALID',
+    ) {
+      const sends: (string | null)[] = [];
+      server.use(
+        http.post('*/api/transfers', ({ request }) => {
+          sends.push(request.headers.get('Idempotency-Key'));
+          if (sends.length === 1) {
+            return problem({ status: 401, errorCode, detail: 'Refused.' });
+          }
+        }),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+      await screen.findByText(/your confirmation expired|That confirmation can no longer be used/);
+      expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+      server.use(
+        http.post('*/api/transfers/authorizations', () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      await enterPin();
+      return sends;
+    }
+
+    it.each(['AUTHORIZATION_EXPIRED', 'AUTHORIZATION_INVALID'] as const)(
+      'shows the check view after %s, and start over returns to the form with the sentence, cleared by a new recipient',
+      async (errorCode) => {
+        const sends = await reachTheMintUnderAKeptKey(errorCode);
+
+        expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+        expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+        expect(sends).toHaveLength(1);
+
+        const startOver = await screen.findByRole('button', {
+          name: "It didn't go through — start over",
+        });
+        await settle();
+        await userEvent.click(startOver);
+
+        expect(await screen.findByLabelText('Recipient handle')).toBeInTheDocument();
+        const words = screen.getByText(NO_ACCOUNT_SENTENCE, { exact: false });
+        expect(words.closest('[role="alert"]')).not.toBeNull();
+        expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+
+        // Changing the recipient takes the sentence back.
+        await settle();
+        await userEvent.type(screen.getByLabelText('Recipient handle'), 'x');
+        await waitFor(() =>
+          expect(screen.queryByText(NO_ACCOUNT_SENTENCE, { exact: false })).not.toBeInTheDocument(),
+        );
+      },
+    );
+
+    it('with no key held (the first mint), the PIN step stays and the sentence is said, as before', async () => {
+      server.use(
+        http.post('*/api/transfers/authorizations', () =>
+          problem({
+            status: 422,
+            errorCode: 'RECIPIENT_NO_ACCOUNT',
+            detail: 'Recipient does not have an active account.',
+          }),
+        ),
+      );
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await confirmWithPin();
+
+      expect(await screen.findByText(NO_ACCOUNT_SENTENCE, { exact: false })).toBeInTheDocument();
+      expect(screen.queryByText("We couldn't confirm your transfer")).not.toBeInTheDocument();
+      const backs = screen.getAllByRole('button', { name: 'Back' });
+      expect(backs[backs.length - 1]).toBeEnabled();
+    });
+  });
+
+  /*
     The visitor's own source account, closed in another tab or session while this page shows it.
     Measured through the BFF on a spare account closed after the page's requests were prepared:
     the mint and the send both answer 404 errorCode ACCOUNT_NOT_FOUND, detail "Account with
