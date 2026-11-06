@@ -3914,6 +3914,7 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
  * A bad format is still the API's VALIDATION_ERROR shape (400, `errors` dict, NO errorCode — the FE
  * synthesizes VALIDATION_ERROR). On success it flips session.hasPin so the invalidated /me refetch
  * clears the withdraw gate, and clears any prior lock so the freshly-set PIN works immediately.
+ * A PIN_REQUIRED flips it too: that refusal proves a PIN exists, and the BFF's session learns it.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   runSessionActivityMiddleware(request);
@@ -3950,7 +3951,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   /*
     CHANGING requires the current PIN; ENROLLING does not. Order matters and is measured: the
     format check above runs first (ASP.NET binds and validates before the action), then the session,
-    then this. `mockState.pin` being set is the mock's equivalent of a non-null PinHash.
+    then this. What stands for a non-null PinHash is said at the gate below.
   */
   /*
     ENROLLING costs the PASSWORD (T7/#201), and the mock enforces it because the mock's job is to
@@ -3972,11 +3973,12 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   const currentPin = authBody.body.currentPin as string | undefined;
 
   /*
-    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — NOT `mockState.pin`.
-    A first draft used the latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE
-    withdraw verifies against and it defaults to MOCK_PIN unconditionally (state.ts), so every
-    enrolment looked like a change and answered 422. The test caught it, which is the test doing
-    its job — the two fields read alike and mean different things.
+    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — or a PIN this
+    session has not learnt of (`pinUnknownToSession`), NOT `mockState.pin`. A first draft used the
+    latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE withdraw verifies against
+    and it defaults to MOCK_PIN unconditionally (state.ts), so every enrolment looked like a change
+    and answered 422. The test caught it, which is the test doing its job — the two fields read
+    alike and mean different things.
 
     CurrentPin obeys the FULL verifier contract, because the API routes it through IPinVerifier and
     inherits every one of these. A first draft here only incremented a counter, which modelled an
@@ -4014,7 +4016,9 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     });
   }
 
-  if (!mockState.session.hasPin) {
+  const accountHasPin = mockState.session.hasPin || mockState.pinUnknownToSession;
+
+  if (!accountHasPin) {
     if (typeof password !== 'string' || password.length === 0) {
       // `problem`, not `bffProblem`: the BFF forwards the API's ProblemDetails verbatim through
       // ForwardUpstreamError, so the body carries errorCode and the API's own instance — the same
@@ -4055,8 +4059,12 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     clearLoginAttempts(account);
   }
 
-  if (mockState.session.hasPin) {
+  if (accountHasPin) {
     if (typeof currentPin !== 'string' || currentPin.length === 0) {
+      // The BFF's session learns from this refusal that a PIN exists, so the next /me says so
+      // (`IsPinRequired` in backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      mockState.session.hasPin = true;
+      mockState.pinUnknownToSession = false;
       return problem({
         instance: '/api/auth/pin',
         status: 422,
@@ -4087,6 +4095,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   mockState.pin = pin;
   mockState.pinAttempts = 0;
   mockState.pinLockedUntil = null;
+  mockState.pinUnknownToSession = false;
   if (mockState.session) {
     mockState.session.hasPin = true;
   }
