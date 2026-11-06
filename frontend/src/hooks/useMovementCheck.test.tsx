@@ -1,10 +1,13 @@
 import type { PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { http } from 'msw';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
+import { apiSlice, useGetAccountsQuery, useGetTransactionsQuery } from '../features/api/apiSlice';
 import { serviceUnavailable } from '../mocks/problem';
+import { server } from '../mocks/server';
 import { mockState } from '../mocks/state';
-import { makeTestStore } from '../test/renderWithProviders';
+import { makeTestStore, type TestStore } from '../test/renderWithProviders';
 import {
   advance,
   advanceUntil,
@@ -45,8 +48,7 @@ function copy(overrides: Partial<SentRequest<Body>> = {}): SentRequest<Body> {
   StrictMode by `reactStrictMode`, not by a `<StrictMode>` in the wrapper: measured, a wrapper's
   StrictMode did not run a hook's effect twice under `renderHook`, and the option did.
 */
-function options({ strict }: { strict: boolean }) {
-  const store = makeTestStore();
+function options({ strict, store = makeTestStore() }: { strict: boolean; store?: TestStore }) {
   function Wrapper({ children }: PropsWithChildren) {
     return <Provider store={store}>{children}</Provider>;
   }
@@ -239,5 +241,92 @@ describe('useMovementCheck', () => {
     expect(result.current.pastLive).toBe(true);
     expect(result.current.offerNewKey).toBe(true);
     expect(seen).toHaveLength(1);
+  });
+});
+
+/*
+  What the check has read again as a copy arrives. The listing by key finds nothing here, as for a
+  send that never reached the server, so the lookup invalidates nothing itself: these hold the
+  check's own invalidation, which covers every way the check latches, a send answered with no
+  HTTP status or with a 409 that named no code among them. Asserted at the store, as
+  `policies.test.tsx` asserts what IDEMPOTENCY_RESULT_UNKNOWN does to the cache.
+*/
+describe('useMovementCheck, as a copy arrives', () => {
+  const HISTORY = { page: 1, pageSize: 20 };
+
+  /** Counts the reads of the two lists, letting each one through to the mock. Not the lookups. */
+  function countListReads() {
+    const reads = { accounts: 0, transactions: 0 };
+    server.use(
+      http.get('*/api/accounts', () => {
+        reads.accounts += 1;
+        return undefined;
+      }),
+      http.get('*/api/transactions', ({ request }) => {
+        if (!new URL(request.url).searchParams.has('IdempotencyKey')) reads.transactions += 1;
+        return undefined;
+      }),
+    );
+    return reads;
+  }
+
+  it('reads the accounts and the transactions on screen again', async () => {
+    const store = makeTestStore();
+    const reads = countListReads();
+    const { result: lists } = renderHook(
+      () => ({ accounts: useGetAccountsQuery(), transactions: useGetTransactionsQuery(HISTORY) }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => {
+      expect(lists.current.accounts.isSuccess).toBe(true);
+      expect(lists.current.transactions.isSuccess).toBe(true);
+    });
+    expect(reads).toEqual({ accounts: 1, transactions: 1 });
+    const first = {
+      accounts: lists.current.accounts.requestId,
+      transactions: lists.current.transactions.requestId,
+    };
+
+    const sent = copy();
+    const { result } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(reads).toEqual({ accounts: 2, transactions: 2 });
+      expect(result.current.verdict).toBe('notYet');
+      // The second reads answered and drawn too: nothing is left to render after the test.
+      expect(lists.current.accounts.requestId).not.toBe(first.accounts);
+      expect(lists.current.accounts.isFetching).toBe(false);
+      expect(lists.current.transactions.requestId).not.toBe(first.transactions);
+      expect(lists.current.transactions.isFetching).toBe(false);
+    });
+  });
+
+  it('drops a history nobody reads, so the history page reads it afresh', async () => {
+    /*
+      "Check recent transactions" is where the view sends the visitor, and no transfer page or
+      money dialog reads the history. An invalidated entry with no reader is removed, not read
+      again, so the history page reads it afresh. Without the invalidation, a history cached in
+      the last minute would be shown as it was before the send.
+    */
+    const store = makeTestStore();
+    const read = store.dispatch(apiSlice.endpoints.getTransactions.initiate(HISTORY));
+    await read.unwrap();
+    read.unsubscribe();
+    const cached = () => apiSlice.endpoints.getTransactions.select(HISTORY)(store.getState());
+    expect(cached().status).toBe('fulfilled');
+
+    const sent = copy();
+    const { result } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(cached().status).toBe('uninitialized');
+      expect(result.current.verdict).toBe('notYet');
+    });
   });
 });
