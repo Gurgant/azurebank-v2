@@ -1611,6 +1611,31 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
     expectNoNestedLiveRegions();
   });
 
+  it('a locked copy refused before its end, then forgotten: its sentence goes with it, and the page says it was forgotten', async () => {
+    const kept = rememberAClaimedCopy();
+    lockInTheMock(kept.email);
+    const { requests } = await openSignInPage();
+    await userEvent.click(continueButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyPaused]));
+
+    await userEvent.click(forgetLink());
+
+    // "Try again later, or get a new copy." is about a copy this browser no longer has, on a page
+    // that now offers "Try the demo".
+    await waitFor(() => expect(alerts()).toStrictEqual([]));
+    expect({
+      said: forgetStatuses().map((region) => region.textContent),
+      kept: keptAddress(),
+      tryTheDemo: disabledOf(WORDS.tryTheDemo),
+      signIns: requests.signIns,
+    }).toStrictEqual({
+      said: [WORDS.forgotten],
+      kept: null,
+      tryTheDemo: [false],
+      signIns: 1,
+    });
+  });
+
   it('once the lock has ended, "Continue with my copy" signs in to the copy the page kept', async () => {
     const kept = rememberAClaimedCopy();
     lockInTheMock(kept.email);

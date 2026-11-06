@@ -147,7 +147,8 @@ export function LoginPage() {
   // demo with a tag, and a test puts that tag on the page after the modules are in
   // (src/features/demo/demoMode.ts).
   const demo = isDemoMode();
-  const [login, { isLoading: signingIn, error: signInError }] = useLoginMutation();
+  const [login, { isLoading: signingIn, error: signInError, reset: resetSignIn }] =
+    useLoginMutation();
   const [claim, { isLoading: claiming, error: claimError }] = useClaimDemoCopyMutation();
 
   /*
@@ -394,10 +395,19 @@ export function LoginPage() {
     }
   };
 
-  // "Forget this copy": the browser keeps nothing of it from here on, and the page says so.
+  /*
+    "Forget this copy": the browser keeps nothing of it from here on, and the page says so.
+
+    The copy's own refusal before its end goes with it: COPY_SIGN_IN_PAUSED tells the visitor to
+    try that copy again later, and the browser no longer has it to try. The alert reads the
+    sign-in's own last refusal, so that refusal is what is reset. Every other refusal on the page,
+    the form's, a claim's, an outage or a lost connection, is as true once the copy is gone, and
+    stays.
+  */
   const forgetThisCopy = () => {
     forgetDemoCopy();
     setForgotten(true);
+    if (control === 'continue' && signInRefused && !copyEnded) resetSignIn();
   };
 
   /*
