@@ -251,10 +251,20 @@ Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60`.
   it has run, two roads: stop the app; or a new, empty database, in this order: delete the pool
   job; remove the lock `keep-the-database` and delete the database; the same run with
   `@('demo=false')`; `./infra/sql-principals.ps1`; the workflow's `deploy`; `--check`.
-- **If something was stolen**: no password exists to change. Delete the app and both jobs;
-  delete the identities `azurebank-app` and `azurebank-migrate` and create them again; run
+- **If something was stolen**: no password exists to change. First run
+  `./infra/secrets.ps1 -Action Remove`: a parameter file left on this machine by a run that
+  stopped would give the new app the old values, which may be the stolen ones, and the only sign
+  would be the report's `kept from the earlier file`. Then delete the app and both jobs; delete
+  the identities `azurebank-app` and `azurebank-migrate` and create them again; run
   `./infra/sql-principals.ps1`, which replaces both users; make a run of the template with
   `-DeployApp -ImageTag <a known commit>`, and `-DemoOn` if the pool job ever ran; then deploy.
+  With no file and no app, all eight application secrets are generated anew, the PIN pepper and
+  the audit chain's key among them. No PIN set under the old pepper is accepted any more: on the
+  demo that is the PIN of every copy built before, and a free copy is still handed out until it
+  is too old to count, 44 hours by default. The audit verifier's `verify`, run with the new key,
+  reports `CHAIN BROKEN at sequence 1` on the rows written before:
+  [Retiring a key takes three values](../docs/runbooks/audit-chain-unavailable.md#retiring-a-key-takes-three-values)
+  says why.
 - **Before renaming or transferring the repository**, delete the federated credential
   `github-demo` of `azurebank-deploy`: it trusts the repository by name.
 
