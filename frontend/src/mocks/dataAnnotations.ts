@@ -281,6 +281,15 @@ export function bindMembers(
 }
 
 /**
+ * One member's bound value, for a handler with no `RequestSpec`: whatever spelling arrived, read
+ * as `memberFor` reads it, the last match winning.
+ */
+export function boundMember(body: Record<string, unknown>, json: string): unknown {
+  const member = memberFor(body, json);
+  return member === undefined ? undefined : body[member];
+}
+
+/**
  * Returns the 400 the framework would have written, or `null` to let the handler proceed.
  *
  * Deliberately takes the ALREADY-PARSED body: unparseable JSON is a different failure with a
