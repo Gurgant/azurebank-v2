@@ -1,3 +1,4 @@
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Validation;
 using System.ComponentModel.DataAnnotations;
 
@@ -55,9 +56,12 @@ public class SetPinRequest
       the stored hash, which only AuthService.SetPinAsync can see.
     */
 
+    // Verified, not chosen, so no [Password]. Only its length is bounded, as on sign-in: no account
+    // holds a longer one.
     /// <summary>
     /// The account password. Required when enrolling a PIN; ignored when changing an existing one,
     /// where <c>currentPin</c> is the proof instead.
     /// </summary>
+    [MaxLength(ValidationRules.PasswordMaxLength)]
     public string? Password { get; set; }
 }

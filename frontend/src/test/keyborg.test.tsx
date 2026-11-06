@@ -59,7 +59,7 @@ describe('keyborg installed before user-event (test/keyborg.ts)', () => {
     renderWithProviders(<SettingsPage />, { store, routerEntries: ['/settings'] });
     await screen.findByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`);
 
-    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.click(screen.getByRole('button', { name: 'Change public handle' }));
     const input = await screen.findByRole('textbox');
 
     await act(async () => {

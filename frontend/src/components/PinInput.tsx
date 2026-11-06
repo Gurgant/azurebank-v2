@@ -153,6 +153,11 @@ export interface PinInputProps {
    * the starting digits under those boxes would read as the PIN to choose.
    */
   purpose?: 'existing' | 'new';
+  /**
+   * What the reveal toggle says it shows: "Show PIN" and "Hide PIN" by default. A surface with
+   * several PINs names each, or a screen reader's list of buttons holds the same name three times.
+   */
+  revealLabel?: string;
 }
 
 // ============================================
@@ -182,6 +187,7 @@ export function PinInput({
   ariaDescribedBy,
   masked = true,
   purpose = 'existing',
+  revealLabel = 'PIN',
 }: PinInputProps) {
   const styles = useStyles();
   const refs = useRef<Array<HTMLInputElement | null>>([]);
@@ -339,7 +345,7 @@ export function PinInput({
           onClick={() => setRevealed((r) => !r)}
           // The name says the state. aria-pressed as well announced "Hide PIN, pressed" once the
           // PIN was showing, which reads as hidden. (Until 2026-09-17 it carried both.)
-          aria-label={revealed ? 'Hide PIN' : 'Show PIN'}
+          aria-label={`${revealed ? 'Hide' : 'Show'} ${revealLabel}`}
         >
           {revealed ? <EyeOff16Regular /> : <Eye16Regular />}
           {revealed ? 'Hide' : 'Show'}

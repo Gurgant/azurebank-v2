@@ -175,6 +175,15 @@ describe('the balance guard', () => {
   });
 
   it('offers the maximum instead of making the user retype the balance', async () => {
+    const sentAmounts: unknown[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', async ({ request }) => {
+        sentAmounts.push(((await request.clone().json()) as { amount: unknown }).amount);
+      }),
+      http.post('*/api/transactions/withdraw', async ({ request }) => {
+        sentAmounts.push(((await request.clone().json()) as { amount: unknown }).amount);
+      }),
+    );
     serveBalance([START_BALANCE]);
     renderDialog();
 
@@ -192,8 +201,16 @@ describe('the balance guard', () => {
 
     await userEvent.click(useMax);
 
-    expect(screen.getByLabelText('Withdraw amount')).toHaveValue('1250.5');
+    expect(screen.getByLabelText('Withdraw amount')).toHaveValue('1250.50');
     await waitFor(() => expect(continueButton()).toBeEnabled());
+    expect(continueButton()).toHaveTextContent('Continue · €1,250.50');
+    await userEvent.click(continueButton());
+    await screen.findByText('Verify Withdrawal');
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €1,250.50' }));
+    await screen.findByText('Withdrawal Successful!');
+    expect(sentAmounts).toEqual([1250.5, 1250.5]);
   });
 
   it('refreshes the balance a refusal was measured against', async () => {

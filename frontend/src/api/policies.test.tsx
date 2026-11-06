@@ -182,6 +182,102 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
+  const limiterRefusals = [
+    ['RATE_LIMIT_EXCEEDED', 'RATE_LIMIT_EXCEEDED'],
+    ['DEMO_COPY_LIMIT', 'DEMO_COPY_LIMIT'],
+    [undefined, 'HTTP_429'],
+  ] as const;
+
+  it.each(limiterRefusals)(
+    'requires verification after a limiter refusal of a resend (%s), preserving its record',
+    async (errorCode, normalisedCode) => {
+      const keys: string[] = [];
+      const bodies: string[] = [];
+      server.use(
+        http.post('*/api/transactions/deposit', async ({ request }) => {
+          keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+          bodies.push(await request.text());
+          if (keys.length === 1) return HttpResponse.error();
+          return problem({ status: 429, errorCode });
+        }),
+      );
+      const { Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+      const body = { accountId: UUID, amount: 50 };
+
+      const first = await act(() => settle(result.current.submit(body)));
+      expect(first).toMatchObject({ ok: false, error: { status: 'NETWORK' } });
+      expect(result.current.keyRetained).toBe(true);
+
+      const resentAt = performance.now();
+      const second = await act(() => settle(result.current.submit(body)));
+      expect(second).toMatchObject({
+        ok: false,
+        error: { status: 429, errorCode: normalisedCode },
+      });
+      expect(result.current.verifyRequired).toBe(true);
+      expect(result.current.keyRetained).toBe(false);
+      expect(result.current.wentThrough).toBe(false);
+      expect(result.current.lastSent).toEqual({
+        key: keys[0],
+        body,
+        lastSentAt: expect.any(Number),
+        everyAuthorisationRefused: false,
+      });
+      expect(result.current.lastSent!.lastSentAt).toBeGreaterThanOrEqual(resentAt);
+      expect(result.current.lastSent!.lastSentAt).toBeLessThanOrEqual(performance.now());
+      const record = result.current.lastSent;
+
+      const third = await act(() => settle(result.current.submit(body)));
+      expect(third).toMatchObject({
+        ok: false,
+        error: { message: 'Previous result unknown — verify before submitting again.' },
+      });
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).toBe(keys[0]);
+      expect(new Set(bodies).size).toBe(1);
+      expect(result.current.verifyRequired).toBe(true);
+      expect(result.current.keyRetained).toBe(false);
+      expect(result.current.lastSent).toBe(record);
+    },
+  );
+
+  it.each(limiterRefusals)(
+    'drops a first-send limiter refusal (%s) so the next press can send edited details',
+    async (errorCode, normalisedCode) => {
+      const keys: string[] = [];
+      const bodies: unknown[] = [];
+      server.use(
+        http.post('*/api/transactions/deposit', async ({ request }) => {
+          keys.push(request.headers.get('Idempotency-Key') ?? '(missing)');
+          bodies.push(await request.json());
+          return problem({ status: 429, errorCode });
+        }),
+      );
+      const { Wrapper } = hookWrapper();
+      const { result } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+      const body = { accountId: UUID, amount: 50 };
+
+      const first = await act(() => settle(result.current.submit(body)));
+      expect(first).toMatchObject({
+        ok: false,
+        error: { status: 429, errorCode: normalisedCode },
+      });
+      expect(result.current.keyRetained).toBe(false);
+      expect(result.current.verifyRequired).toBe(false);
+
+      const edited = { ...body, amount: 60 };
+      const second = await act(() => settle(result.current.submit(edited)));
+      expect(second).toMatchObject({
+        ok: false,
+        error: { status: 429, errorCode: normalisedCode },
+      });
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).not.toBe(keys[0]);
+      expect(bodies).toEqual([body, edited]);
+    },
+  );
+
   /** Records the fake instant of every call, answering each with `answer`. */
   function recordReads(answer: () => Response | Promise<Response>) {
     const times: number[] = [];

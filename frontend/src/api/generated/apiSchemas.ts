@@ -396,7 +396,7 @@ export type SetPinRequest = z.infer<typeof SetPinRequest>;
 export const SetPinRequest = z.object({
   pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
   currentPin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')).nullable().optional(),
-  password: z.string().nullable().optional(),
+  password: z.string().max(128).nullable().optional(),
 });
 
 export type TransferAuthorizationRequest = z.infer<typeof TransferAuthorizationRequest>;

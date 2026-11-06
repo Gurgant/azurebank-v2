@@ -46,7 +46,7 @@ test('the served build raises no Content-Security-Policy violation', async ({ pa
   }
 
   // A Fluent dialog: a portal, focus management and a burst of new styles.
-  await page.getByRole('button', { name: 'Change', exact: true }).click();
+  await page.getByRole('button', { name: 'Change public handle', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 

@@ -29,8 +29,8 @@ before the first paint, or a dark-mode user sees a white flash on every load.
    and the CSS, so the three cannot drift. A test compares the checked-in stylesheet with it,
    because a browser paints nothing for an undefined property and never warns.
 5. **The dark values are derived from Fluent's own dark theme, by role**, so that the palette and
-   the component library agree. `neutral[700]` is "primary text", so its dark counterpart is
-   `colorNeutralForeground2`, not the mirror of index 700 on a ten-step scale. The canvas sits below
+   the component library agree. `neutral[500]` is `text.tertiary`, so its dark counterpart is
+   `colorNeutralForeground3`, not the mirror of index 500 on a ten-step scale. The canvas sits below
    the card in both themes: `#F3F4F6` under `#FFFFFF` in light, `#141414` under `#292929` in dark. A
    naive inversion gets this backwards and flattens the app.
 6. **Three preference values, not a boolean**: `system | light | dark`. A user who never touched the

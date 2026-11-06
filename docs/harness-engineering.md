@@ -27,8 +27,8 @@ two more in full.
 This page takes the public part of the harness piece by piece, each with the file, the job or
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
 the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
-[the last table](#the-numbers) were counted on 12 October 2026, and the first four of them
-again on 23 October 2026; it says where each can be counted again.
+[the last table](#the-numbers) were counted on 12 October 2026, and the first four were
+recounted on 30 October 2026; it says where each can be counted again.
 
 ## One change, start to finish
 
