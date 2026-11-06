@@ -727,6 +727,80 @@ describe('money flows — the behaviour the unification must preserve', () => {
       expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
     });
 
+    /*
+      The same dead end with a limiter in the daily bound's place: the mint of the new
+      confirmation, made under the key the expiry kept, is answered 429, and a demo copy past its
+      limit refuses every mint after it. The key keeps Back and Close disabled. Every
+      authorisation sent under the key was refused, so the check view needs no wait to say that
+      nothing went through.
+    */
+    const limiterRefusal = (code: string) =>
+      code === 'HTTP_429'
+        ? HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 })
+        : problem({
+            status: 429,
+            errorCode: code,
+            detail:
+              code === 'DEMO_COPY_LIMIT'
+                ? 'This demo copy has reached its limit of changes. Start over to get a fresh copy.'
+                : 'Too many requests. Please retry later.',
+          });
+
+    it.each(
+      (['external', 'internal'] as const).flatMap((page) =>
+        ['RATE_LIMIT_EXCEEDED', 'DEMO_COPY_LIMIT', 'HTTP_429'].map((code) => ({ page, code })),
+      ),
+    )(
+      '$page: lets the visitor out when a limiter ($code) refuses the new confirmation after an expiry',
+      async ({ page, code }) => {
+        const path = page === 'external' ? '/api/transfers' : '/api/transfers/internal';
+        let mints = 0;
+        let sends = 0;
+        server.use(
+          http.post(`*${path}/authorizations`, () => {
+            mints += 1;
+            if (mints === 1) return undefined;
+            return limiterRefusal(code);
+          }),
+          http.post(`*${path}`, () => {
+            sends += 1;
+            return problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+            });
+          }),
+        );
+        if (page === 'external') {
+          await externalToReview();
+        } else {
+          renderInternal();
+          await screen.findByRole('button', { name: 'From Main Account' });
+          await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+          await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+          await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+        }
+        await confirmWithPin();
+        expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
+
+        await enterPin();
+
+        // The check view, settled: nothing under the key can land, so "start over" is offered.
+        expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+        expect(screen.getByText("Your transfer didn't go through")).toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: "It didn't go through — start over" }),
+        ).toBeEnabled();
+        expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+        expect(
+          screen.queryByText(/Too many requests|This demo copy has reached/),
+        ).not.toBeInTheDocument();
+        expect(mints).toBe(2);
+        expect(sends).toBe(1);
+      },
+    );
+
     it.each(['not a date', ''])(
       'ends the sentence at "today" when the reset instant %j is not a date',
       async (resetsAt) => {

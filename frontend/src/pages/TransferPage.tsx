@@ -17,7 +17,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { colors } from '../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
-import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
+import { isLimiterRefusal, isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
@@ -820,7 +820,7 @@ export function TransferPage() {
   /**
    * What the PIN step does about a refusal, shared by the mint and the send so the two cannot drift.
    * The banner itself is the wizard's; this owns only the PIN box and the lock. `phase` is which of
-   * the two failed: the first arm is the send's alone, the last the mint's.
+   * the two failed: the first arm is the send's alone, the last two the mint's.
    */
   function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
     if (phase === 'send' && isProvenCommit(refusal)) {
@@ -962,6 +962,21 @@ export function TransferPage() {
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer');
+    } else if (phase === 'mint' && keyLive && refusal !== null && isLimiterRefusal(refusal)) {
+      /*
+        A limiter refused the mint made under a held key: `RATE_LIMIT_EXCEEDED`, a demo copy past
+        its limit, which refuses every mint after this one, or a 429 whose code cannot be read.
+        The key keeps Back and Close disabled, and the full boxes send nothing until a digit
+        changes. So the page does what the closed-account arm above does: the PIN copies go, and
+        `requireVerify` lets the key go and shows the check view. Every authorisation presented
+        under the key was refused, so nothing under it can commit: the view waits for no bound,
+        and offers "start over" once the listing has answered. With no key held the exits are
+        open, and the refusal is said on the PIN step.
+      */
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      wizard.requireVerify();
     } else if (
       phase === 'mint' &&
       refusal !== null &&

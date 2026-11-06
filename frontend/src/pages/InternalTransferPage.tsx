@@ -13,7 +13,7 @@ import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-ico
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
+import { isLimiterRefusal, isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
 import {
   CHECK_AGAIN,
   MOVE_ACCOUNT_CLOSED,
@@ -627,6 +627,14 @@ export function InternalTransferPage() {
       // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer/internal');
+    } else if (phase === 'mint' && keyLive && refusal !== null && isLimiterRefusal(refusal)) {
+      // A limiter refused the mint made under a held key. The key would keep every exit shut over
+      // boxes that can only ask the limiter again, so the PIN copies go and the check view lets
+      // the key go, as for ACCOUNT_NOT_FOUND above. TransferPage has the reasoning.
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      wizard.requireVerify();
     } else if (
       phase === 'mint' &&
       refusal !== null &&

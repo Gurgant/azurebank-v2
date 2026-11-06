@@ -2,7 +2,8 @@
 
 **Status:** Accepted · **Date:** 2026-07-25 · **Amended:** 2026-08-12, 2026-08-16 (ADR-0041,
 ADR-0042), 2026-09-04, 2026-09-15, 2026-10-01 (ADR-0059), 2026-10-16 (ADR-0009; decisions 1 and
-4, the listing by key), 2026-10-30 (decision 4, a limiter's refusal) · **Decision Makers:** Vladislav Aleshaev
+4, the listing by key), 2026-10-30 (decision 4, a limiter's refusal), 2026-11-06 (decision 6, a
+limiter's refusal of the mint) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -56,10 +57,13 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
    intent while the first may still land (ADR-0059). The transfer pages disable their form while a
    key is live. A transfer page and the withdrawal dialog latch the same way, and so let the key
    go, when the mint of a new authorisation under a held key answers `ACCOUNT_NOT_FOUND`, because
-   the account is closed and no authorisation can be had for that key again. It is safe: a mint is
-   made under a held key only after every authorisation presented under it was refused, and the
-   check view stands between the old key and a new one. The withdrawal dialog latches so too when
-   the list it reads on Continue lacks its account while a key is held, as for an edit.
+   the account is closed and no authorisation can be had for that key again, and when a limiter
+   refuses that mint (`RATE_LIMIT_EXCEEDED`, `DEMO_COPY_LIMIT`, or a 429 whose code cannot be
+   read), because the PIN step could then only mint again, with every exit shut by the key. It is
+   safe: a mint is made under a held key only after every authorisation presented under it was
+   refused, and the check view stands between the old key and a new one. The withdrawal dialog
+   latches so too when the list it reads on Continue lacks its account while a key is held, as for
+   an edit.
 7. **`keyRetained` blocks dismissal while any key is live**, not only while a request is in flight,
    because abandoning a kept key and reopening the dialog mints a fresh key over the same money.
 8. **Step-up replay is byte-identical and happens at `baseQuery` level.** After a PIN elevation the
