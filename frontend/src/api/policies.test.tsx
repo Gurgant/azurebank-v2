@@ -1345,6 +1345,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
   const refused = () =>
     problem({ status: 401, errorCode: 'AUTHORIZATION_EXPIRED', detail: 'Expired.' });
   const noConnection = () => HttpResponse.error();
+  const limited = () => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' });
 
   /** Sends one withdrawal per step under one key, then latches the check if no answer did. */
   async function withdrawalsUnderOneKey(
@@ -1382,6 +1383,19 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(copy?.everyAuthorisationRefused).toBe(true);
   });
 
+  it.each(limiterRefusals)(
+    '6n — A1 refused, then a limiter refused the resend that first carried A2 (%s): A2 never reached the API, so nothing under the key can commit any more',
+    async (errorCode) => {
+      // A limiter answers before the API, so the API saw A1 alone, and refused it.
+      const copy = await withdrawalsUnderOneKey([
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: () => problem({ status: 429, errorCode }) },
+      ]);
+
+      expect(copy?.everyAuthorisationRefused).toBe(true);
+    },
+  );
+
   it.each([
     [
       'a send that carried no authorisation',
@@ -1399,6 +1413,14 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       [
         { authorisation: A1, answer: noConnection },
         { authorisation: A2, answer: refused },
+      ],
+    ],
+    [
+      'A1 refused, A2 answered with no connection, then a limiter refused its resend with A2',
+      [
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: noConnection },
+        { authorisation: A2, answer: limited },
       ],
     ],
     [
