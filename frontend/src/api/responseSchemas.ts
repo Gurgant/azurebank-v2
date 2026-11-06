@@ -52,6 +52,8 @@ const MovementsPage = PaginatedResponseOfTransactionResponse.required();
 /**
  * Exported so tsc's noUnusedLocals sees a use — the tuple's only job is to force every
  * AssertExtends pair to typecheck (each entry proves one direction of one schema pair).
+ * Every `as ZodType<…>` cast below needs its own pair here, both ways, with the schema it casts:
+ * responseSchemas.test.ts fails on a cast that has none.
  */
 export type _GeneratedSchemasMatchSpec = [
   AssertExtends<z.infer<typeof DepositResponse>, Schemas['DepositResponse']>,
@@ -96,6 +98,24 @@ export type _GeneratedSchemasMatchSpec = [
   AssertExtends<
     Required<Schemas['PaginatedResponseOfTransactionResponse']>,
     z.infer<typeof MovementsPage>
+  >,
+  AssertExtends<z.infer<typeof BalanceResponse>, Schemas['BalanceResponse']>,
+  AssertExtends<Schemas['BalanceResponse'], z.infer<typeof BalanceResponse>>,
+  AssertExtends<z.infer<typeof AccountNumberResponse>, Schemas['AccountNumberResponse']>,
+  AssertExtends<Schemas['AccountNumberResponse'], z.infer<typeof AccountNumberResponse>>,
+  AssertExtends<z.infer<typeof TransactionResponse>, Schemas['TransactionResponse']>,
+  AssertExtends<Schemas['TransactionResponse'], z.infer<typeof TransactionResponse>>,
+  AssertExtends<z.infer<typeof RecipientLookupResponse>, Schemas['RecipientLookupResponse']>,
+  AssertExtends<Schemas['RecipientLookupResponse'], z.infer<typeof RecipientLookupResponse>>,
+  AssertExtends<z.infer<typeof UpdateAzureTagResponse>, Schemas['UpdateAzureTagResponse']>,
+  AssertExtends<Schemas['UpdateAzureTagResponse'], z.infer<typeof UpdateAzureTagResponse>>,
+  AssertExtends<
+    z.infer<typeof PaginatedResponseOfTransactionResponse>,
+    Schemas['PaginatedResponseOfTransactionResponse']
+  >,
+  AssertExtends<
+    Schemas['PaginatedResponseOfTransactionResponse'],
+    z.infer<typeof PaginatedResponseOfTransactionResponse>
   >,
 ];
 
