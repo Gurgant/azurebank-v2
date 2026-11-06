@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
@@ -371,6 +371,39 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
     expectOneUnderlinedStop('sign in with this email');
     // Field values survive (D15) — the user edits, not retypes.
     expect(screen.getByLabelText(/^email address$/i)).toHaveValue('taken@azurebank.dev');
+  });
+
+  it('hands the typed email to the sign-in page, which sends it in the login request', async () => {
+    let sentEmail: unknown;
+    server.use(
+      http.post('*/bff/auth/login', async ({ request }) => {
+        sentEmail = ((await request.json()) as { email?: unknown }).email;
+        return problem({
+          status: 401,
+          errorCode: 'INVALID_CREDENTIALS',
+          detail: 'Invalid email or password.',
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<LoginPage />} />
+      </Routes>,
+      { routerEntries: ['/register'] },
+    );
+
+    await fillRegisterForm(user, 'taken@azurebank.dev');
+    await user.click(await screen.findByRole('link', { name: /sign in with this email/i }));
+
+    // The follow-through: the link's navigation state is the only way the email reaches this page.
+    fireEvent.change(await screen.findByLabelText(/^password$/i), {
+      target: { value: 'Password1!' },
+    });
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await waitFor(() => expect(sentEmail).toBe('taken@azurebank.dev'));
   });
 
   it('shows the countdown and disables submit on the shared-bucket 429', async () => {
