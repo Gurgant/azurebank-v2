@@ -204,6 +204,54 @@ describe('account number reveal (ADR-0020)', () => {
     );
   });
 
+  /*
+    Copy is on the page only while the number shows. When the focused node is removed, jsdom
+    leaves focus on the page itself, as a browser does: a keyboard visitor on Copy at 20 s stays
+    there unless the field puts focus on the eye button, which is still beside the number.
+  */
+  it('hiding itself while Copy has focus, the number puts focus on the eye button under its new name', async () => {
+    installFakeClock();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockState.authLevel = 2;
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    const copy = screen.getByRole('button', { name: `Copy account number for ${MAIN}` });
+    copy.focus();
+    expect(copy).toHaveFocus();
+
+    await act(async () => {
+      vi.advanceTimersByTime(REVEAL_TIMEOUT_MS);
+    });
+
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    expect(copy).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: revealName })).toHaveFocus();
+  });
+
+  it('hiding itself while another control has focus, the number leaves focus there', async () => {
+    installFakeClock();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockState.authLevel = 2;
+    renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
+
+    await user.click(await screen.findByRole('button', { name: revealName }));
+    await screen.findByText(FULL_MAIN);
+    const elsewhere = screen.getByRole('button', {
+      name: 'Reveal full account number for Rainy Day',
+    });
+    elsewhere.focus();
+    expect(elsewhere).toHaveFocus();
+
+    await act(async () => {
+      vi.advanceTimersByTime(REVEAL_TIMEOUT_MS);
+    });
+
+    await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
+    expect(elsewhere).toHaveFocus();
+  });
+
   it('a copy that finishes after the number was hidden again does not say Copied', async () => {
     installFakeClock();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
