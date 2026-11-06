@@ -130,8 +130,8 @@ try
 
     // The public demo's settings (the "Demo" section, which the API and the Seeder read too). Of
     // the section this host needs the flag alone; the validator checks every range all the same,
-    // flag on or off, as it does in the other two. No rule for Demo:ClientKeySecret here: this
-    // host hashes no address and holds no secret.
+    // flag on or off, as it does in the other two. No rule for Demo:ClientKeySecret here: only
+    // the API holds that secret.
     builder.Services.AddOptions<DemoOptions>()
         .Bind(builder.Configuration.GetSection(DemoOptions.SectionName))
         .ValidateOnStart();
@@ -411,12 +411,14 @@ try
             // scan keeps seeing this site.
             var logger = context.HttpContext.RequestServices.GetRequiredService<Serilog.ILogger>();
             logger.Warning(
-                "SecurityEvent {SecurityEvent}: {Method} {RoutePattern} ({Resource}) rejected for partition {Partition}",
+                "SecurityEvent {SecurityEvent}: {Method} {RoutePattern} ({Resource}) rejected for client {ClientCode}",
                 SecurityEvents.RateLimitExceeded,
                 context.HttpContext.Request.Method,
                 RequestLogRoute.Of(context.HttpContext),
                 RequestLogRoute.ResourceOf(context.HttpContext),
-                ClientAddress.Of(context.HttpContext));
+                ClientAddress.CodeOf(
+                    context.HttpContext.RequestServices.GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey,
+                    ClientAddress.Of(context.HttpContext)));
 
             var problem = new ProblemDetails
             {

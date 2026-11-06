@@ -1,12 +1,17 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AzureBank.Shared.Constants;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace AzureBank.Bff.Tests;
 
@@ -89,6 +94,68 @@ public class RateLimiterTests : IClassFixture<WebApplicationFactory<Program>>
         var innocent = await HammerAsync(client, "/bff/auth/login", "203.0.113.99", count: 2);
         innocent.Select(r => r.StatusCode).Should().NotContain(HttpStatusCode.TooManyRequests,
             "a different client IP is a different partition and must be unaffected by the burst");
+    }
+
+    [Fact]
+    public async Task ARefusalsLogLine_KeepsAOneWayCode_AndNoEventOfTheRequestHoldsTheAddress()
+    {
+        var log = new ConcurrentQueue<LogEvent>();
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("RateLimiting:AuthPermitLimit", "1");
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IStartupFilter, FakeRemoteIpStartupFilter>();
+                services.AddSingleton<ILogEventSink>(new QueueSink(log));
+            });
+        }).CreateClient();
+
+        async Task<LogEvent> RefusalOf(string address)
+        {
+            var refused = log.Count(IsARefusal);
+            // Twice: the second is refused whether or not this address has been counted before.
+            var responses = await HammerAsync(client, "/bff/auth/login", address, count: 2);
+            responses[^1].StatusCode.Should().Be(HttpStatusCode.TooManyRequests, "ARRANGE: the limit here is 1");
+            return log.Where(IsARefusal).Skip(refused).First();
+        }
+
+        var first = await RefusalOf("203.0.113.77");
+        var again = await RefusalOf("203.0.113.77");
+        var other = await RefusalOf("203.0.113.78");
+        var inPrefix = await RefusalOf("2001:db8:1:2::1");
+        var samePrefix = await RefusalOf("2001:db8:1:2::2");
+        var otherPrefix = await RefusalOf("2001:db8:1:3::1");
+
+        // Each event as one text, the refusals and every other line these requests wrote: its
+        // message, the value of every property, its exception.
+        var everyLine = log
+            .Select(e => $"{e.RenderMessage()} {string.Join(' ', e.Properties.Values)} {e.Exception}")
+            .ToList();
+
+        using (new AssertionScope())
+        {
+            CodeIn(first).Should().MatchRegex("^[0-9a-f]{16}$");
+            CodeIn(again).Should().Be(CodeIn(first), "the same visitor gives the same value, so a pattern can be seen");
+            CodeIn(other).Should().NotBe(CodeIn(first), "another visitor is another value");
+            CodeIn(samePrefix).Should().Be(CodeIn(inPrefix), "one /64 is one client to the limiter and to its log");
+            CodeIn(otherPrefix).Should().NotBe(CodeIn(inPrefix));
+            CodeIn(inPrefix).Should().NotBe(CodeIn(first));
+
+            everyLine.Should().NotContain(line => line.Contains("203.0.113.77"), "the address cannot be read back");
+            everyLine.Should().NotContain(line => line.Contains("203.0.113.78"));
+            everyLine.Should().NotContain(line => line.Contains("2001:db8:1:"));
+            everyLine.Should().NotContain(line => line.Contains(TestServiceCredential.Key));
+
+            first.RenderMessage().Should().Contain(CodeIn(first));
+            ((first.Properties["Method"] as ScalarValue)?.Value).Should().Be("POST");
+            ((first.Properties["RoutePattern"] as ScalarValue)?.Value).Should().Be("/bff/auth/login");
+        }
+
+        static bool IsARefusal(LogEvent e) => e.Properties.TryGetValue("SecurityEvent", out var name)
+            && name is ScalarValue { Value: string value } && value == SecurityEvents.RateLimitExceeded;
+
+        static string? CodeIn(LogEvent e) =>
+            e.Properties.GetValueOrDefault("ClientCode") is ScalarValue { Value: string code } ? code : null;
     }
 
     [Fact]
