@@ -134,7 +134,6 @@ const useStyles = makeStyles({
   copyright: {
     display: 'block',
     fontSize: '12px',
-    opacity: 0.6,
     color: tokens.colorNeutralForegroundOnBrand,
   },
 });

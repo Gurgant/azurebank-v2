@@ -479,8 +479,9 @@ public class DemoClaimTests : IClassFixture<WebApplicationFactory<Program>>, IDi
             sent.Should().NotContain("198.51.100.200", "the address is the connection's, never one the browser wrote");
 
             rejected.Should().HaveCount(1, "the limiter refused the second claim, and says so");
-            ((rejected.FirstOrDefault()?.Properties["Partition"] as ScalarValue)?.Value).Should().Be(
-                expected, "the claim names the client by the limiter's own key");
+            ((rejected.FirstOrDefault()?.Properties["ClientCode"] as ScalarValue)?.Value).Should().Be(
+                ClientAddress.CodeOf(TestServiceCredential.Key, expected),
+                "the claim names the client by the limiter's own key, whose code the refusal logs");
         }
     }
 

@@ -84,6 +84,7 @@ public class LogPlaceholderClassTests
         ["AccountId"] = SurrogateKey,
         ["ActorUserId"] = SurrogateKey,
         ["AuthorizationId"] = SurrogateKey,
+        ["ClientCode"] = SurrogateKey, // ClientAddress.CodeOf: a keyed one-way code of a client's address, never the address
         ["CopyId"] = SurrogateKey, // a demo copy's row id: minted by the Seeder, it names no person and opens nothing
         ["FromId"] = SurrogateKey,
         ["Key"] = SurrogateKey, // the client's Idempotency-Key: an opaque request id it generated
@@ -147,7 +148,6 @@ public class LogPlaceholderClassTests
         ["Operation"] = Operational,
         ["Outcome"] = Operational,
         ["Owed"] = Operational,
-        ["Partition"] = Operational,
         ["PendingRows"] = Operational,
         ["PeriodSeconds"] = Operational,
         ["PoolBlockingPeriod"] = Operational,

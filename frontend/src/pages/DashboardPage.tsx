@@ -359,7 +359,6 @@ const useStyles = makeStyles({
     display: 'block',
     fontSize: '13px',
     color: 'inherit',
-    opacity: 0.85,
   },
 
   // `1fr 1fr` gave each tile half the measure — ~340px of card for an icon and one word. Capped,
