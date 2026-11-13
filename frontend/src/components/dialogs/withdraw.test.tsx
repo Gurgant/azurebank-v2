@@ -1811,7 +1811,7 @@ describe('withdraw — the page is left while the authorisation is being asked f
         return withdrawSuccessBody(900);
       }),
     );
-    const { router } = renderWithdraw();
+    const { router, store } = renderWithdraw();
     await goToPinStep();
     await enterPin('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
@@ -1821,7 +1821,7 @@ describe('withdraw — the page is left while the authorisation is being asked f
     expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
 
     mint.release();
-    await mint.answered();
+    await mint.answered(store);
 
     expect(sent.withdrawals).toBe(0);
   });

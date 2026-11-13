@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 /**
  * Whether the component that calls this is still on screen, for code that runs after an await.
@@ -8,6 +8,10 @@ import { useEffect, useRef } from 'react';
  * request that was already on its way is not stopped by the component going. What comes after the
  * await has nothing to show its answer in, so it reads this and sends nothing.
  *
+ * It is a layout effect so that the ref is cleared in the commit that removes the component. The
+ * cleanup of a plain effect runs after that commit, and an answer that resolves in the gap would
+ * still find the component on screen.
+ *
  * `true` is set in the body of the effect as well as `false` in its cleanup: under StrictMode a
  * component mounts, is cleaned up and mounts again, and a cleanup alone would leave it `false` for
  * good. Read it in a callback, never in render: it changes without a render.
@@ -15,7 +19,7 @@ import { useEffect, useRef } from 'react';
 export function useMountedRef() {
   const mounted = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

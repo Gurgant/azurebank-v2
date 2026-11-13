@@ -732,7 +732,7 @@ describe('DeleteAccountDialog — the page is left while the PIN is being checke
         return undefined;
       }),
     );
-    const { router, onDeleted } = renderDialog();
+    const { router, store, onDeleted } = renderDialog();
     await reachPinStep();
     await enterPin();
     await mint.arrived;
@@ -741,7 +741,7 @@ describe('DeleteAccountDialog — the page is left while the PIN is being checke
     expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
 
     mint.release();
-    await mint.answered();
+    await mint.answered(store);
 
     expect(sent.deletes).toBe(0);
     expect(mockState.accounts.some((account) => account.id === TEMP_FUND.id)).toBe(true);

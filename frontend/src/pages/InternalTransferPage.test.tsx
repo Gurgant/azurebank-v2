@@ -606,7 +606,7 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
 
   it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
     const sends = watchSends();
-    const { router, mint } = await whileThePinIsBeingChecked();
+    const { router, store, mint } = await whileThePinIsBeingChecked();
 
     await act(() => router.navigate(-1));
     await userEvent.click(
@@ -617,7 +617,7 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
 
     mint.release();
-    await mint.answered();
+    await mint.answered(store);
 
     expect(sends).toEqual([]);
   });

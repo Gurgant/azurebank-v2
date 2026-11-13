@@ -1148,7 +1148,7 @@ describe('external transfer: the shortcuts of the form and the ways off the page
   it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
     const sends = watchSends();
     const mint = holdTheMint('*/api/transfers/authorizations');
-    const { router } = await toReview('50', ['/dashboard', '/']);
+    const { router, store } = await toReview('50', ['/dashboard', '/']);
     await confirmWithPin();
     await untilThePinIsBeingChecked(mint);
 
@@ -1161,7 +1161,7 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
 
     mint.release();
-    await mint.answered();
+    await mint.answered(store);
 
     expect(sends).toEqual([]);
   });
@@ -1171,7 +1171,7 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     // refusal to send once it is gone is all that stands between the answer and the transfer.
     const sends = watchSends();
     const mint = holdTheMint('*/api/transfers/authorizations');
-    const { router } = await toReview();
+    const { router, store } = await toReview();
     await confirmWithPin();
     await untilThePinIsBeingChecked(mint);
 
@@ -1179,7 +1179,7 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
 
     mint.release();
-    await mint.answered();
+    await mint.answered(store);
 
     expect(sends).toEqual([]);
   });
