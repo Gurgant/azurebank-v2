@@ -293,11 +293,14 @@ public class CorrelationIdTests : IClassFixture<WebApplicationFactory<Program>>
     /*
       The reason the id sits in an AsyncLocal and not on the request. A renewal that TokenRefresher
       starts with Task.Run takes the id with it and can still be sending when its request has
-      ended; the gate keeps this one waiting until the middleware has returned, which is the
-      control, and it must still go out under the id of the request that started it.
+      ended. This drives a Task.Run of its own, not TokenRefresher: it holds the handler's reading
+      of the ambient id, and the runtime carrying it into detached work. A renewal that stopped
+      flowing the context (SuppressFlow, UnsafeQueueUserWorkItem) would need a test on the real
+      renewal path to be seen. The gate keeps this call waiting until the middleware has returned,
+      which is the control, and it must still go out under the id of the request that started it.
     */
     [Fact]
-    public async Task ARenewalStartedWithTaskRun_GoesOutUnderItsRequestsId_AfterTheRequestHasEnded()
+    public async Task ACallStartedWithTaskRun_GoesOutUnderItsRequestsId_AfterTheRequestHasEnded()
     {
         var sent = new List<string[]>();
         using var invoker = HandlerRecordingInto(sent);
