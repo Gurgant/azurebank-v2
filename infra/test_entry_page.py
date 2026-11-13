@@ -233,24 +233,32 @@ class EntryPageTests(unittest.TestCase):
         self.assertNotIn('WebSocket', script)
         self.assertNotIn('EventSource', script)
 
-    def test_the_number_is_written_once_for_each_language_in_the_link_to_the_list(self):
-        links = re.findall(r'<a href="https://github\.com/Gurgant/azurebank-v2/pulls\?q=is%3Apr\+is%3Amerged">'
-                           r'(.*?)</a>', PAGE, flags=re.S)
-        link, = [link for link in links if 'data-merged-count' in link]
-        figures = re.findall(r'<span class="fig" lang="(\w+)" data-lang="\1"><b data-merged-count="\1">'
-                             r'([^<]*)</b>', link)
+    def test_the_number_is_written_once_for_each_language_in_the_tally_of_how_i_work(self):
+        tally, = re.findall(r'<div class="tally">(.*?)<ul class="tally__links"', PAGE, flags=re.S)
+        figures = re.findall(r'<p class="fig" lang="(\w+)" data-lang="\1">\s*<b data-merged-count="\1">'
+                             r'([^<]*)</b>', tally)
         self.assertEqual([language for language, _ in figures], ['en', 'it'])
         self.assertEqual(PAGE.count('data-merged-count'), 2)
         for _, written in figures:
             self.assertRegex(written, r'^[1-9]\d{0,2}([.,]\d{3})*$')
         self.assertEqual(figures[0][1].replace(',', ''), figures[1][1].replace('.', ''))
 
-    def test_the_note_is_empty_in_the_page_and_follows_the_date_of_the_four_figures(self):
-        date, = re.findall(r'<p class="proof__date">(.*?)</p>', PAGE, flags=re.S)
+    def test_the_note_is_empty_in_the_page_and_follows_the_date_of_the_count_in_the_tally(self):
+        tally, = re.findall(r'<div class="tally">(.*?)<ul class="tally__links"', PAGE, flags=re.S)
+        date, = re.findall(r'<p class="tally__date">(.*?)</p>', tally, flags=re.S)
         notes = re.findall(r'<span lang="(\w+)" data-lang="\1">[^<]*<time datetime="[\d-]+">[^<]*</time>'
                            r'<span data-count-note="\1"></span></span>', date)
         self.assertEqual(notes, ['en', 'it'])
         self.assertEqual(PAGE.count('data-count-note'), 2)
+        self.assertLess(tally.index('data-merged-count'), tally.index('data-count-note'))
+
+    def test_the_first_screen_does_not_show_the_merge_count_or_a_note_about_it(self):
+        first, = re.findall(r'<div class="proof">(.*?)</div>', PAGE, flags=re.S)
+        self.assertNotIn('data-merged-count', first)
+        self.assertNotIn('data-count-note', first)
+        figures = re.findall(r'<b>([^<]*)</b\s*>', first)
+        self.assertEqual(figures[0::2], ['5,408', '509', '11', '4'])
+        self.assertEqual(figures[1::2], ['5.408', '509', '11', '4'])
 
     def test_the_script_and_the_style_sheet_are_asked_for_under_one_version(self):
         versions = re.findall(r'(?:href|src)="entry\.(?:css|js)\?v=(\d+)"', PAGE)

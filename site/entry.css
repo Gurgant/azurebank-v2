@@ -1367,8 +1367,8 @@ strong {
   color: var(--text);
   text-wrap: pretty;
 }
-/* The one dark object of the light part: the field of the first screen, come back, with one
-   figure and the two places that show it. */
+/* The one dark object of the light part: the field of the first screen, come back, with the merge
+   count, the day it was counted, the figure of agent merges and the places that show them. */
 .tally {
   padding: clamp(20px, 3vw, 32px);
   border-radius: 14px;
@@ -1394,6 +1394,16 @@ strong {
   line-height: 1.35;
   color: var(--blue-110);
   text-decoration: none;
+}
+/* The day beside the merge count, set off from the figure of agent merges that follows it. */
+.tally__date {
+  margin: 10px 0 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgb(128 179 242 / 0.24);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--blue-100);
 }
 .tally__links {
   margin-top: 16px;
@@ -2044,7 +2054,7 @@ strong {
     background: var(--p-line);
   }
   .proof__list {
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) minmax(0, 1.05fr) minmax(0, 1.3fr);
+    grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, 1fr);
     column-gap: clamp(24px, 3vw, 48px);
   }
   .proof li:nth-child(n + 3) {
@@ -2099,7 +2109,7 @@ strong {
 /* ----- 1024 to 1200: the band of figures has less room, and gives more of it to the tests ----- */
 @media (min-width: 64em) and (max-width: 74.99em) {
   .proof__list {
-    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.8fr) minmax(0, 0.95fr) minmax(0, 1.25fr);
+    grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr);
     column-gap: 20px;
   }
   .fig {
