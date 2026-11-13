@@ -130,6 +130,6 @@ describe('the icon set still comes from the master', () => {
     const [pkg, version] = lock.rasteriser.split(/@(?=[\d])/);
 
     expect(pkg).toBe('@resvg/resvg-js');
-    expect(docs).toContain(`npm install --no-save ${pkg}@${version}`);
+    expect(docs).toContain(`pnpm add --dir .icon-tools ${pkg}@${version}`);
   });
 });

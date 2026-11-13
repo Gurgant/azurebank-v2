@@ -63,9 +63,16 @@ earlier one, and a dependency that is not from the registry. The move must chang
   was 5 s. Node 26, the machine under load.
 - Going back is `git revert`, which brings `package-lock.json` back; every folder then needs its
   `node_modules` deleted first, because pnpm's layout is not npm's.
-- Not covered: `generate-icons.js` and the pages that cite it still tell a reader to run
-  `npm install --no-save` for `@resvg/resvg-js`, which rebuilds `node_modules` npm's way in a pnpm
-  folder. The way out is a separate step.
+- The icon rasteriser is installed into a folder of its own, not with `npm install --no-save`,
+  which would rebuild `node_modules` npm's way in a pnpm folder, with no age limit, no trust
+  policy and install scripts running. `pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2`, run once
+  from the repository root, writes `.icon-tools/` (git-ignored, outside `frontend/` because pnpm
+  would take a folder under it for part of the workspace), and `generate-icons.js` and
+  `favicon-contrast.js` read it from there; `ICON_TOOLS_DIR` points them elsewhere.
+  `@resvg/resvg-js` stays out of `package.json` on purpose: it is a native module and the icons
+  change roughly never.
+  The folder has no `pnpm-workspace.yaml` of its own, so the age limit and the trust policy do not
+  apply to it; the exact pin and the lock it writes are what hold the version.
 - Not covered: Node 26 has no Corepack, so the move to it must change `corepack enable` in the
   Dockerfile and the sentence about it in three documents: `README.md`, `frontend/README.md`
   and `docs/engineering-practices.md`. Those sentences now say that Node 24.12 or later carries

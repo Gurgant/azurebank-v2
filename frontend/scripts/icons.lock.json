@@ -12,7 +12,7 @@
       "path": "scripts/generate-icons.js",
       "role": "generator",
       "mode": "text",
-      "sha256": "54c2d53accd3bed719d7870f53c03d09f4cc54a80c2bfec94d03497942ce3590"
+      "sha256": "8b57d1d5588bed9a2fd35e1dcc9ee3dc753996b2ff0c77298c58274b53af1417"
     },
     {
       "path": "public/favicon.svg",
