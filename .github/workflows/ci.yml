@@ -21,12 +21,12 @@ env:
 # Every job in the four workflows names its image, ubuntu-24.04. `ubuntu-latest` was that
 # image too (20260927.320.1, read in the jobs' logs on 2026-10-03), and GitHub moves the label
 # to Ubuntu 26.04 run by run from 2026-10-19 (actions/runner-images#14748), with no commit
-# here. Jobs take tools from the image and install none of them: python3, PowerShell 7 and
-# Bicep in the infrastructure job, python3, az and docker in the deploy workflow, the shared
-# libraries Chromium needs in the real-stack job, and those libraries with docker, its compose
-# plugin and curl in the demo-stack job. A new image is a change like any other: the
-# label moves on a branch whose run on that image is green, and deploy.yml, which no branch can
-# run, moves last.
+# here. Bicep and actionlint are downloaded at pinned versions and checked by SHA-256; the system
+# tools below come from the image: python3 and PowerShell 7 in the infrastructure job, python3,
+# az and docker in the deploy workflow, the shared libraries Chromium needs in the real-stack
+# job, and those libraries with docker, its compose plugin and curl in the demo-stack job. A new
+# image is a change like any other: the label moves on a branch whose run on that image is
+# green, and deploy.yml, which no branch can run, moves last.
 jobs:
   backend:
     name: Backend build + tests

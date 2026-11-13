@@ -237,7 +237,7 @@ interface MockState {
   /**
    * The session user's accounts — REAL contract shapes: PascalCase types, and numbers
    * arrive ALREADY MASKED (`AB-****-****-90`) because AccountMapper.MaskAccountNumber
-   * runs server-side; the full number never leaves the API.
+   * runs server-side; the full number reaches the browser only through the PIN-gated reveal.
    */
   accounts: MockAccount[];
   /** History feed, NEWEST FIRST like the real query orders it. */
