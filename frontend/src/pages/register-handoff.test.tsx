@@ -4,8 +4,9 @@ import { Route, Routes } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../mocks/server';
-import { problem } from '../mocks/problem';
-import { advance, fakeClockUser, installFakeClock } from '../test/outage';
+import { problem, serviceUnavailable } from '../mocks/problem';
+import { expectNoNestedLiveRegions } from '../test/liveRegions';
+import { COPY, advance, fakeClockUser, installFakeClock } from '../test/outage';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { RegisterPage } from './RegisterPage';
 
@@ -172,6 +173,25 @@ describe('register: a refusal that names fields', () => {
   });
 });
 
+describe('register: a failure with no banner of its own', () => {
+  it('says an outage in an alert, as the sign-in page does', async () => {
+    server.use(
+      http.post('*/bff/auth/register', () =>
+        serviceUnavailable({ via: 'bff', instance: '/bff/auth/register' }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<RegisterHarness />, { routerEntries: ['/register'] });
+
+    await fillAndSubmit(user, 'fresh@azurebank.dev');
+
+    // A MessageBar with no role is a group, not a live region, and Fluent's own announcement of
+    // it goes nowhere: this app mounts no AnnounceProvider. Without the role nothing is said.
+    expect((await screen.findByRole('alert')).textContent).toBe(COPY.unavailable);
+    expect(screen.queryByText('PIN SETUP PAGE')).not.toBeInTheDocument();
+  });
+});
+
 describe('register: the limiter lets go', () => {
   // Unmount first, then restore the clock: a countdown still mounted on a fake clock would go on
   // ticking into the next test.
@@ -208,6 +228,9 @@ describe('register: the limiter lets go', () => {
     expect(await screen.findByRole('timer')).toHaveTextContent(/try again in/i);
     expect(screen.getByText(/Too many attempts from your connection\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create account/i })).toBeDisabled();
+    // The timer beside the alert, never inside it: an atomic alert around it would be read
+    // again on every tick.
+    expectNoNestedLiveRegions();
 
     await advance(6_000);
 
