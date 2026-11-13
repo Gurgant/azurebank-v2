@@ -61,8 +61,9 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
   the correctly scoped total, and an N-format Idempotency-Key was accepted on a deposit.
 
   D is read more widely than 32 hex digits and four hyphens. .NET reads each of its first five
-  slices, 0-8, 9-13, 14-18, 19-23 and 24-28, with `TryParseHex`: one `+`, then `0x` or `0X`, then
-  hex digits that fill the rest of the slice. The last eight characters are hex digits alone.
+  slices, 0-8, 9-13, 14-18, 19-23 and 24-28, with `TryParseHex`: an optional `+`, then an optional
+  `0x` or `0X`, then hex digits that fill the rest of the slice. The last eight characters are hex
+  digits alone.
   Measured on 2026-10-17 on the API's own test host, against a deposit under the key
   00000001-0002-0003-0405-060708090a0b, each of
 
@@ -74,8 +75,9 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
   `AccountId` (a 403, not a 400). The first two, made new keys by a last byte of 0x25 and 0x26,
   were each a 201 as a deposit's `Idempotency-Key`. N reads no prefix:
   `+0000001000200030405060708090a0b` was a 400 on the listing and on the summary. P hands its
-  middle 36 characters to the same D reader as B does; that was read in .NET's `Guid.cs`
-  (release/10.0), not measured.
+  middle 36 characters to the same D reader as B does. That, the `+` coming before the `0x` and not
+  after it, and the hex-digits-alone tail were read in .NET's `Guid.cs` (release/10.0), not
+  measured.
 
   Nothing in this app sends anything but D — ids come from the API — so no client could reach the
   gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
@@ -105,7 +107,7 @@ function hexOfGuidD(value: string): string | null {
   let hex = '';
   for (const [start, width] of D_SLICES) {
     // A slice is four characters at least and its prefix three at most: a prefix never fills a
-    // slice, as `0x+` fills a component of X, and the digits never outgrow the slice's width.
+    // slice, unlike `0x+`, which fills a component of X, and the digits never outgrow the slice's width.
     const digits = D_SLICE_RE.exec(value.slice(start, start + width))?.[1];
     if (digits === undefined) return null;
     hex += digits.padStart(width, '0');
