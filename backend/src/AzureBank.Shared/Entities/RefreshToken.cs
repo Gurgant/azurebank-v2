@@ -54,15 +54,16 @@ public class RefreshToken
     public Guid? ReplacedByTokenId { get; set; }
 
     /// <summary>
-    /// The address of the request that asked for the grant: a loopback address, because only the
-    /// BFF's own client reaches a token endpoint (ADR-0057 §4.2), or "unknown" on the test host,
-    /// whose requests have no address. Recorded and never read: nothing checks it on renewal.
+    /// The address of the request that asked for the grant: a loopback address, because the token
+    /// road admits only loopback callers (ADR-0057 §4.2), or "unknown" for a request with no
+    /// address, as on the test host. Recorded and never read: nothing checks it on renewal.
     /// </summary>
     public required string IpAddress { get; set; }
 
     /// <summary>
-    /// The User-Agent of that request: "unknown", because the BFF's client sends none. Recorded
-    /// and never read.
+    /// The User-Agent of the request that asked for the grant: "unknown" when the BFF's own client
+    /// asked, because it sends none, or the caller's own when a tool calls the API directly.
+    /// Recorded and never read.
     /// </summary>
     public required string UserAgent { get; set; }
 

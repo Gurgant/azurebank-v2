@@ -418,11 +418,12 @@ public class RefreshTokenService : IRefreshTokenService
 
     /// <summary>
     /// The address and User-Agent of the request that asked for the grant: a sign-in, a
-    /// registration or the demo's claim. Only the BFF's own client reaches those endpoints, over
-    /// loopback (ADR-0057 §4.2), and it sends no User-Agent, so a row holds a loopback address
-    /// ("unknown" on the test host, whose requests have no address) and "unknown". Recorded and
-    /// never read: nothing checks either on renewal. Truncated to the column widths so an
-    /// oversized User-Agent can never overflow the write.
+    /// registration or the demo's claim. The token road admits only a loopback caller that carries
+    /// the BFF's marker (ADR-0057 §4.2), so the address is a loopback one, or "unknown" for a
+    /// request with no address, as on the test host. The BFF's own client sends no User-Agent, so
+    /// a grant it asks for holds "unknown"; a tool that calls the API directly, with the key and
+    /// the marker, keeps its own. Recorded and never read: nothing checks either on renewal.
+    /// Truncated to the column widths so an oversized User-Agent can never overflow the write.
     /// </summary>
     private (string Ip, string UserAgent) ReadClientContext()
     {

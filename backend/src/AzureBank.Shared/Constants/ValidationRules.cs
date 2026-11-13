@@ -128,7 +128,7 @@ public static class ValidationRules
     public const string PageSizeRangeMessage = "PageSize must be between 1 and 100.";
 
     // ═══════════════════════════════════════════════════════════════
-    // SECURITY TRACKING & STORAGE
+    // STORED-VALUE WIDTHS - caller context, token hash, PIN hash
     // ═══════════════════════════════════════════════════════════════
     public const int IpAddressMaxLength = 45;    // IPv6 max
     public const int UserAgentMaxLength = 500;
