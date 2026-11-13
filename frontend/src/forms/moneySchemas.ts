@@ -49,13 +49,19 @@ export function describeMoneyBound(amount: number): string {
 }
 
 /**
- * Sanitize raw amount text exactly like the legacy handlers: strip non-numerics, collapse to a
- * single decimal point, clamp to 2 decimals (EUR minor units, ISO 4217 — the backend rejects a
- * finer scale as VALIDATION_ERROR, so it stops at the source). The 2-decimal clamp now applies
- * to deposit too (it previously lacked it — normalization, noted in the PR).
+ * Sanitize raw amount text like the legacy handlers, bar the comma (below): strip non-numerics,
+ * collapse to a single decimal point, clamp to 2 decimals (EUR minor units, ISO 4217 — the
+ * backend rejects a finer scale as VALIDATION_ERROR, so it stops at the source). The 2-decimal
+ * clamp now applies to deposit too (it previously lacked it — normalization, noted in the PR).
+ *
+ * A comma is read as the decimal point when the text has no dot: the field runs this on every
+ * keystroke, and the keypad that `inputMode="decimal"` opens types the user's own separator, a
+ * comma in many regions; dropping it would make "12,50" read as 1250. The rule has to hold per
+ * keystroke, so "1," becomes "1." at once; a thousands comma ("1,250") therefore reads as 1.25.
  */
 export function sanitizeAmountInput(value: string): string {
-  const digitsAndDots = value.replace(/[^0-9.]/g, '');
+  const decimalised = value.includes('.') ? value : value.replace(',', '.');
+  const digitsAndDots = decimalised.replace(/[^0-9.]/g, '');
   const firstDot = digitsAndDots.indexOf('.');
   const singleDot =
     firstDot === -1
