@@ -130,6 +130,28 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task RevealingTheFullNumber_WritesTheRow()
+    {
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var response = await Client.GetAsync($"/api/accounts/{accountId}/full-number");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // A read has no business save to ride: AccountService saves this row itself, after Record.
+        // Only the table shows whether that save happened, and the 200 and the log line do not.
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.AccountNumberRevealed);
+
+        row.Outcome.Should().Be(AuditOutcome.Succeeded, "the number was returned: that is the fact recorded");
+        row.SubjectType.Should().Be("Account");
+        row.SubjectId.Should().Be(accountId, "the row names the account whose number left the server");
+        row.Detail.Should().BeNull("the account number itself must never be copied into this table");
+        row.RowHash.Should().MatchRegex(
+            "^[0-9a-f]{64}$",
+            "an unchained row reads back as blank padding and would otherwise pass a length check");
+    }
+
+    [Fact]
     public async Task ARefusedRefresh_WritesItsRow_EvenThoughNothingElseCommitted()
     {
         /*
