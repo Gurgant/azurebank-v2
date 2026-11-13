@@ -998,6 +998,16 @@
               }
             }
           },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds.",
             "content": {
@@ -1085,6 +1095,16 @@
           },
           "415": {
             "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1630,6 +1650,16 @@
               }
             }
           },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Service Unavailable - the database could not be reached or did not answer in time, or the request ran past its deadline. The body carries errorCode SERVICE_UNAVAILABLE and retryAfterSeconds, the Retry-After header carries the same value, and the answer is never cached (its Cache-Control includes no-store). Send the request again after that many seconds.",
             "content": {
@@ -1760,6 +1790,16 @@
           },
           "415": {
             "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE).",
             "content": {
               "application/json": {
                 "schema": {

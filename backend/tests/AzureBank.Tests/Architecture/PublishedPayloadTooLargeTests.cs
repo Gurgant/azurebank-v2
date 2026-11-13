@@ -6,8 +6,10 @@ using Xunit;
 namespace AzureBank.Tests.Architecture;
 
 /// <summary>
-/// Keeps the committed OpenAPI document honest about 413 responses: each mint declares a
-/// ProblemDetails 413 naming PAYLOAD_TOO_LARGE, and exactly eight operations declare a 413.
+/// Keeps the committed OpenAPI document honest about 413 responses: each operation marked
+/// <c>[RefuseOversizedBody]</c> (the four mints, and login, register, set PIN and verify PIN)
+/// declares a ProblemDetails 413 naming PAYLOAD_TOO_LARGE, and exactly twelve operations declare
+/// a 413: those eight and the four money operations.
 /// </summary>
 public class PublishedPayloadTooLargeTests
 {
@@ -21,6 +23,10 @@ public class PublishedPayloadTooLargeTests
         "POST /api/transfers/internal/authorizations",
         "POST /api/transactions/withdraw/authorizations",
         "POST /api/accounts/{id}/deletion-authorizations",
+        "POST /api/auth/login",
+        "POST /api/auth/register",
+        "POST /api/auth/pin",
+        "POST /api/auth/pin/verify",
     ];
 
     [Theory]
@@ -28,7 +34,11 @@ public class PublishedPayloadTooLargeTests
     [InlineData("/api/transfers/internal/authorizations")]
     [InlineData("/api/transactions/withdraw/authorizations")]
     [InlineData("/api/accounts/{id}/deletion-authorizations")]
-    public void Mint_declares_413_as_problem_details_naming_its_code(string path)
+    [InlineData("/api/auth/login")]
+    [InlineData("/api/auth/register")]
+    [InlineData("/api/auth/pin")]
+    [InlineData("/api/auth/pin/verify")]
+    public void Operation_marked_RefuseOversizedBody_declares_413_as_problem_details_naming_its_code(string path)
     {
         var document = RepositoryFiles.PublishedContract();
         var operation = document.GetProperty("paths").GetProperty(path).GetProperty("post");
@@ -45,7 +55,7 @@ public class PublishedPayloadTooLargeTests
     }
 
     [Fact]
-    public void Exactly_eight_operations_declare_a_413()
+    public void Exactly_twelve_operations_declare_a_413()
     {
         var document = RepositoryFiles.PublishedContract();
         var declaring = new List<string>();
