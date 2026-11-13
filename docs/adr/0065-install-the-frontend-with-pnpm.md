@@ -65,10 +65,12 @@ earlier one, and a dependency that is not from the registry. The move must chang
   `node_modules` deleted first, because pnpm's layout is not npm's.
 - The icon rasteriser is installed into a folder of its own, not with `npm install --no-save`,
   which would rebuild `node_modules` npm's way in a pnpm folder, with no age limit, no trust
-  policy and install scripts running. `pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2`, run once
-  from the repository root, writes `.icon-tools/` (git-ignored, outside `frontend/` because pnpm
-  would take a folder under it for part of the workspace), and `generate-icons.js` and
-  `favicon-contrast.js` read it from there; `ICON_TOOLS_DIR` points them elsewhere.
+  policy and install scripts running. `mkdir .icon-tools` and then
+  `pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2`, run once from the repository root (pnpm
+  12.15.0 refuses a `--dir` that does not exist), write `.icon-tools/` (git-ignored, outside
+  `frontend/` because pnpm would take a folder under it for part of the workspace), and
+  `generate-icons.js` and `favicon-contrast.js` read it from there;
+  `ICON_TOOLS_DIR` points them elsewhere.
   `@resvg/resvg-js` stays out of `package.json` on purpose: it is a native module and the icons
   change roughly never.
   The folder has no `pnpm-workspace.yaml` of its own, so the age limit and the trust policy do not
@@ -77,9 +79,10 @@ earlier one, and a dependency that is not from the registry. The move must chang
   Dockerfile and the sentence about it in three documents: `README.md`, `frontend/README.md`
   and `docs/engineering-practices.md`. Those sentences now say that Node 24.12 or later carries
   Corepack and that Node 25 and later need pnpm installed another way.
-- A cached `node:24-bookworm-slim` older than 24.12.0 fails at the install, at the Dockerfile's
+- A cached `node:24` image older than 24.12.0 fails at the install, at the Dockerfile's
   `corepack`: its Corepack cannot start pnpm 12, and `compose up --build` does not pull a newer
-  image.
+  image. The Dockerfile therefore pins `node:24.22.3-bookworm-slim`, a patch release that
+  carries a Corepack able to start pnpm 12.
 - A developer whose pnpm is not 12.15.0 and who does not use Corepack runs that pnpm as it is:
   `pmOnFail: ignore` turns off the check, and no run here exercised that.
 - Not covered: that the dependency graph of GitHub lists the frontend again. It reads the default

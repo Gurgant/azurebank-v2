@@ -3,7 +3,9 @@
 # It listens on 8080 unless ASPNETCORE_URLS says otherwise; its one secret, the service key, comes
 # from the environment at run time.
 
-FROM node:24-bookworm-slim AS spa
+# The patch is pinned: a cached node:24 image older than 24.12.0 carries a Corepack that cannot
+# start pnpm 12, and compose up --build does not pull a newer one.
+FROM node:24.22.3-bookworm-slim AS spa
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
