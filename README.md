@@ -157,7 +157,7 @@ checks have passed and CodeQL reports no error and no security alert rated high 
 | Contract tests (the check is named Bruno collection) | The Bruno collection, request by request, against the running API |
 | Infrastructure | The deployment templates compile and lint clean, the tests of the deployment script and of the PowerShell scripts, a lint of the workflows |
 | Demo suite | The demo's browser suite on the stack a deployment runs, with the two restarts of containers it makes |
-| Commit messages | The pull request's commit messages, read for a credit line or a mention |
+| Commit messages | The pull request's commit messages, checked against the project's rules |
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
