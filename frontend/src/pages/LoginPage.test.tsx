@@ -1614,11 +1614,12 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
   it('a locked copy refused before its end, then forgotten: its sentence goes with it, and the page says it was forgotten', async () => {
     const kept = rememberAClaimedCopy();
     lockInTheMock(kept.email);
-    const { requests } = await openSignInPage();
+    const { requests, settled } = await openSignInPage();
     await userEvent.click(continueButton());
     await waitFor(() => expect(alerts()).toStrictEqual([WORDS.copyPaused]));
 
     await userEvent.click(forgetLink());
+    await settled();
 
     // "Try again later, or get a new copy." is about a copy this browser no longer has, on a page
     // that now offers "Try the demo".
@@ -1632,6 +1633,58 @@ describe('the sign-in page on the demo, in a browser that keeps a copy', () => {
       said: [WORDS.forgotten],
       kept: null,
       tryTheDemo: [false],
+      signIns: 1,
+    });
+  });
+
+  it('an outage answered to "Continue with my copy", then the copy forgotten: the outage is still said', async () => {
+    // CONTROL: green before this change
+    rememberAClaimedCopy();
+    const { requests, settled } = await openSignInPage({
+      signIn: () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/login' }),
+    });
+    await userEvent.click(continueButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([COPY.unavailable]));
+
+    await userEvent.click(forgetLink());
+    await settled();
+
+    // The sentence is about the server, not the copy: forgetting the copy leaves it as true.
+    expect({
+      alerts: alerts(),
+      said: forgetStatuses().map((region) => region.textContent),
+      kept: keptAddress(),
+      signIns: requests.signIns,
+    }).toStrictEqual({
+      alerts: [COPY.unavailable],
+      said: [WORDS.forgotten],
+      kept: null,
+      signIns: 1,
+    });
+  });
+
+  it("the form's wrong password, then the copy forgotten: the form's sentence is still said", async () => {
+    // CONTROL: green before this change
+    const kept = rememberAClaimedCopy();
+    const { requests, settled } = await openSignInPage();
+    await fillTheForm(kept.email, 'Wrong-Pass-1!');
+    await userEvent.click(signInButton());
+    await waitFor(() => expect(alerts()).toStrictEqual([WORDS.wrongPassword]));
+
+    await userEvent.click(forgetLink());
+    await settled();
+
+    // The same 401 as a locked copy's, sent by the form: its sentence is about the pair typed
+    // there, which forgetting the copy does not change.
+    expect({
+      alerts: alerts(),
+      said: forgetStatuses().map((region) => region.textContent),
+      kept: keptAddress(),
+      signIns: requests.signIns,
+    }).toStrictEqual({
+      alerts: [WORDS.wrongPassword],
+      said: [WORDS.forgotten],
+      kept: null,
       signIns: 1,
     });
   });

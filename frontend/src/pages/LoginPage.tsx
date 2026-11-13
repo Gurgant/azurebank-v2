@@ -244,6 +244,10 @@ export function LoginPage() {
   const signInRefused =
     problem?.errorCode === 'INVALID_CREDENTIALS' ||
     (problem?.errorCode === 'VALIDATION_ERROR' && control === 'form');
+  // Whether COPY_SIGN_IN_PAUSED is on the page: "Continue with my copy" was refused with a wrong
+  // password before the copy's end. The alert that says it and "Forget this copy", which takes it
+  // away, both go by this one flag, so the two cannot disagree on when.
+  const copySignInPaused = signInRefused && control === 'continue' && !copyEnded;
 
   // D13: one ABSOLUTE deadline per limiter RESPONSE. Derived from the error object —
   // fresh identity on EVERY rejection — so a repeat lockout with the identical
@@ -400,14 +404,15 @@ export function LoginPage() {
 
     The copy's own refusal before its end goes with it: COPY_SIGN_IN_PAUSED tells the visitor to
     try that copy again later, and the browser no longer has it to try. The alert reads the
-    sign-in's own last refusal, so that refusal is what is reset. Every other refusal on the page,
-    the form's, a claim's, an outage or a lost connection, is as true once the copy is gone, and
-    stays.
+    sign-in's own last refusal, so that refusal is what is reset. Every other refusal on the page
+    stays, because none of them names the copy and each is as true once it is gone: the form's, a
+    claim's, and, answered to "Continue with my copy", an outage, a lost connection, a problem on
+    the server's side, or "Something went wrong." for an answer with no sentence of its own.
   */
   const forgetThisCopy = () => {
     forgetDemoCopy();
     setForgotten(true);
-    if (control === 'continue' && signInRefused && !copyEnded) resetSignIn();
+    if (copySignInPaused) resetSignIn();
   };
 
   /*
@@ -461,11 +466,11 @@ export function LoginPage() {
       {signInRefused && (
         <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>
-            {control !== 'continue'
-              ? SIGN_IN_REFUSED
-              : copyEnded
+            {copySignInPaused
+              ? COPY_SIGN_IN_PAUSED
+              : control === 'continue'
                 ? COPY_NO_LONGER_AVAILABLE
-                : COPY_SIGN_IN_PAUSED}
+                : SIGN_IN_REFUSED}
           </MessageBarBody>
         </MessageBar>
       )}
