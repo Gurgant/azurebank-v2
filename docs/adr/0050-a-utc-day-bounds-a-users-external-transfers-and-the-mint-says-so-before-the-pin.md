@@ -32,17 +32,23 @@ body), so a doomed transfer cost a PIN entry. The balance guard itself has no AD
   2. Before the transfer's retry loop, after `ValidateAsync`, so that an absent, expired or invalid
      authorisation still wins and the check is no oracle; and before the balance check, so that
      mint and transfer refuse in the same order. Both bounds violated: `DAILY_LIMIT_EXCEEDED`.
-  3. Inside the transaction, the authoritative check (D5). The midnight edge is the definition: a
-     mint that passes at 23:59:30Z and is spent at 00:00:10Z is decided against the new day.
-- **D5 — The control is a per-user application lock, taken first, with the sum before any row.**
-  Right after `BeginTransactionAsync`, `TransferService.DailyLimitLockSql` takes `sp_getapplock`
-  on `daily-limit:{userId}`, then the sum over committed rows runs and `used + requested > limit`
-  throws, because two transfers from two accounts of one user to different payees share no row:
-  without the lock, eight transfers of 100 against a ceiling of 500 answered eight 201s and a day
-  of 800. The batch raises on a negative return, which `ExecuteSqlRawAsync` cannot see. The wait is
-  bounded by `DailyLimit:LockTimeoutSeconds` (default 10, range 1 to 29, below the 30 s command
-  timeout), because without `@LockTimeout` it is `@@LOCK_TIMEOUT`, measured -1, for ever; with
-  2,000 ms a waiter was refused -1 after 2,006 to 2,012 ms. A timeout is a fault, never the 422.
+  3. Inside the transaction, the authoritative check (D5), which follows the attempt's own look at
+     the funds: the order above is that of the checks before the attempt. The midnight edge is the
+     definition: a mint that passes at 23:59:30Z and is spent at 00:00:10Z is decided against the
+     new day.
+- **D5 — The control is a per-user application lock, taken inside the transaction, with the sum
+  before any row.** Before any ledger row is built, and after the accounts and the funds have been
+  looked at, `TransferService.DailyLimitLockSql` takes `sp_getapplock` on `daily-limit:{userId}`,
+  owned by the transaction, so a commit or a rollback releases it. Then the sum over committed rows
+  runs and `used + requested > limit` throws, because two transfers from two accounts of one user
+  to different payees share no row: without the lock, eight transfers of 100 against a ceiling of
+  500 answered eight 201s and a day of 800. The batch raises on a negative return, which
+  `ExecuteSqlRawAsync` cannot see, and its message names the return, so a log tells a timeout from
+  the rest. The wait is bounded by `DailyLimit:LockTimeoutSeconds` (default 10, range 1 to 29,
+  below the 30 s command timeout), because without `@LockTimeout` it is `@@LOCK_TIMEOUT`, measured
+  -1, for ever, and only the command timeout would end it, with the loser holding a transaction
+  and a pooled connection meanwhile; with 2,000 ms a waiter was refused -1 after 2,006 to 2,012
+  ms. A timeout is a fault, never the 422, which would carry figures nobody computed.
 - **D6 — The number is an option, 5,000, validated on start; and the ledger clock's DI registration
   is app-owned.** `DailyLimit:Amount` is an option, not a constant, because tiers will need one and
   an aggregate has no JSON-schema slot (`MONEY_MAX` stays the one published maximum, ADR-0046).
@@ -69,8 +75,11 @@ body), so a doomed transfer cost a PIN entry. The balance guard itself has no AD
 
 - Rejected: a rolling 24-hour window, because "remaining" moves and has no fixed reset instant.
 - Rejected: re-summing under the audit chain's tail lock, because ADR-0044 may partition that lock.
-- Rejected: a row lock on `AspNetUsers` or `Accounts`, because audited saves lock tail → row, so a
-  transfer locking row → tail closes a 1205 cycle; applock → tail is the only order added.
+- Rejected: a row lock on `AspNetUsers` or `Accounts`, because audited saves lock tail → row (a
+  rename, a PIN enrolment or change, a deposit), so a transfer locking row → tail closes a 1205
+  cycle that only EF's retry of the victim would hide. Applock → tail is the only order added: the
+  other application lock, the primary swap's, is on another resource and is held by a path that
+  takes no tail lock.
 - Rejected: restoring `ValidationRules.DailyTransferLimit = 1_000`, because it was a dead number.
 - Rejected: an audit row per refusal, because it is an unbounded write the caller triggers at will.
 
@@ -103,7 +112,10 @@ body), so a doomed transfer cost a PIN entry. The balance guard itself has no AD
 
 - A writer of `Pending` rows in `Transactions`: D3's filter becomes a decision about reservations.
 - A second aggregate, a time zone on `ApplicationUser` (D1), or a bound on the mint's query (D8).
-- Transaction-level `SNAPSHOT` isolation, which nothing sets: D5's lock does not hold under it.
+- Transaction-level `SNAPSHOT` isolation, which nothing sets: D5's lock does not hold under it. It
+  holds under `READ COMMITTED` and under read-committed snapshot, which the local development and
+  test databases have on (measured on those two; the concurrency proof logs the setting of the
+  database it runs on).
 
 ## Verification
 

@@ -62,16 +62,22 @@ balance before primary, is code (`RefuseIfNotClosable`), held by a unit test and
 - **D9: A write whose account closed or went while it ran is refused as a request on a closed
   account**: 404 `ACCOUNT_NOT_FOUND` for the caller's own account, with nothing written and nothing
   spent. A deposit, a withdrawal and both transfers look at their accounts again after every
-  reload, because a reload returns a closed row with a current `RowVersion`. A row that is gone is
+  reload, because a reload returns a closed row with a current `RowVersion`. The look comes before
+  the funds check, because the API closes only an empty account: one that closed meanwhile would
+  answer 422 `INSUFFICIENT_FUNDS` where every other request answers 404. A row that is gone is
   treated as a closed one: proven for a deposit and for the destination of an internal transfer,
   which answer the same 404, and for a payee. A withdrawal's account, a sender's and the source of
   an internal transfer pass through the same test with no proof that removes their rows, because
   a row that holds money has ledger rows the store does not let go. An external transfer whose
   payee account is closed or gone pays another open account of the same payee, at its first look
   and at every later one: the primary first, then the oldest. The payer names a person, and the
-  authorisation binds that person, not an account. An account that only stopped being primary
-  while the transfer ran is still paid. The transfer answers 422 `RECIPIENT_NO_ACCOUNT` only when
-  none is open. A withdrawal or a transfer that committed and lost its acknowledgement answers
+  authorisation binds that person, not an account. The handle is not resolved again, because a
+  handle can be renamed and taken by someone else (ADR-0015): the choice is keyed on the user the
+  first look resolved. An account that only stopped being primary while the transfer ran is still
+  paid. Each candidate is read fresh from the store before it is taken, because the tracker can
+  hold it with the values and the `RowVersion` of the first look, and the turns are at most the
+  accounts read. The transfer answers 422 `RECIPIENT_NO_ACCOUNT` only when none is open. A
+  withdrawal or a transfer that committed and lost its acknowledgement answers
   from its idempotency claim, also when its account closed in between: proven for a withdrawal
   and for the source of an external transfer. A closure whose row is gone answers the same 404,
   with no audit row and nothing spent: proven for a row that goes at the closure's save and for

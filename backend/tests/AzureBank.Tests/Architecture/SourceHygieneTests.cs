@@ -225,7 +225,6 @@ public class SourceHygieneTests
         ["backend/src/AzureBank.Api/Services/Implementations/RefreshTokenService.cs"] = 1,
         ["backend/src/AzureBank.Api/Services/Implementations/StepUpAuthorizationService.cs"] = 1,
         ["backend/src/AzureBank.Api/Services/Implementations/TransactionService.cs"] = 3,
-        ["backend/src/AzureBank.Api/Services/Implementations/TransferService.cs"] = 6,
         ["backend/src/AzureBank.Api/Services/Implementations/UserService.cs"] = 1,
         ["backend/src/AzureBank.Api/Services/RefreshTokenCleanupService.cs"] = 1,
         ["backend/src/AzureBank.Api/Transformers/BusinessRulesDocumentTransformer.cs"] = 8,
