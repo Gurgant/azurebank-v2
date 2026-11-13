@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
@@ -176,6 +177,238 @@ public class SourceHygieneTests
         offenders.Should().BeEmpty(
             "two <summary> blocks on one member both reach the generated XML under it, and the "
             + "compiler is silent about it with documentation generation on");
+    }
+
+    /// <summary>
+    /// The comment lines of production source that carry a date, the words "review round" or a
+    /// warning sign, counted per file: the count of a file may fall and may not rise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A date or a review round says where a comment came from, and AGENTS.md rules out both. The
+    /// warning sign is counted beside them because it shouts as capitals do, and the rule rules
+    /// those out too. The agents that write part of the code start from that page, so a rule that
+    /// nothing checks would be broken again at the next change.
+    /// </para>
+    /// <para>
+    /// Production source is every C# file of <c>backend/src</c> and the <c>.ts</c> and <c>.tsx</c>
+    /// files of <c>frontend/src</c> other than tests, declaration files and the folders
+    /// <c>test</c>, <c>mocks</c>, <c>contract</c>, <c>integration</c> and <c>api/generated</c>. A
+    /// line counts once, however many of the three it holds. Capitals for emphasis are not
+    /// counted, because SQL keywords and error codes in comments would drown them: the rule covers
+    /// them and a review reads them.
+    /// </para>
+    /// <para>
+    /// <see cref="MarkedCommentLinesAllowed"/> holds the count of each file that has any, and a file
+    /// that is not in it has none allowed. A failing run names each file that grew, with its count
+    /// and the count allowed. A change that removes such lines lowers the entry of each file it
+    /// touched to the count that file now holds, and takes a file at zero out. The lines that are
+    /// left wait for the next change to their file.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<string, int> MarkedCommentLinesAllowed = new(StringComparer.Ordinal)
+    {
+        ["backend/src/AzureBank.Api/Controllers/AccountController.cs"] = 1,
+        ["backend/src/AzureBank.Api/Controllers/AuthController.cs"] = 1,
+        ["backend/src/AzureBank.Api/Controllers/TransferController.cs"] = 1,
+        ["backend/src/AzureBank.Api/Extensions/ServiceCollectionExtensions.cs"] = 4,
+        ["backend/src/AzureBank.Api/Handlers/AppExceptionHandler.cs"] = 1,
+        ["backend/src/AzureBank.Api/Middleware/OversizedBodyDrain.cs"] = 2,
+        ["backend/src/AzureBank.Api/Middleware/ServiceCredentialMiddleware.cs"] = 1,
+        ["backend/src/AzureBank.Api/ModelBinding/EmptyQueryValueRejectingBinder.cs"] = 2,
+        ["backend/src/AzureBank.Api/Observability/RequestLogRoute.cs"] = 2,
+        ["backend/src/AzureBank.Api/Program.cs"] = 6,
+        ["backend/src/AzureBank.Api/Services/AuditKeyRingStartupCheck.cs"] = 2,
+        ["backend/src/AzureBank.Api/Services/Implementations/AccountService.cs"] = 10,
+        ["backend/src/AzureBank.Api/Services/Implementations/AuthService.cs"] = 3,
+        ["backend/src/AzureBank.Api/Services/Implementations/DailyOutflowLimitService.cs"] = 2,
+        ["backend/src/AzureBank.Api/Services/Implementations/RefreshTokenService.cs"] = 1,
+        ["backend/src/AzureBank.Api/Services/Implementations/StepUpAuthorizationService.cs"] = 1,
+        ["backend/src/AzureBank.Api/Services/Implementations/TransactionService.cs"] = 3,
+        ["backend/src/AzureBank.Api/Services/Implementations/TransferService.cs"] = 6,
+        ["backend/src/AzureBank.Api/Services/Implementations/UserService.cs"] = 1,
+        ["backend/src/AzureBank.Api/Services/RefreshTokenCleanupService.cs"] = 1,
+        ["backend/src/AzureBank.Api/Transformers/BusinessRulesDocumentTransformer.cs"] = 8,
+        ["backend/src/AzureBank.Api/Transformers/NotFoundResponseTransformer.cs"] = 1,
+        ["backend/src/AzureBank.Api/Transformers/UnsupportedMediaTypeResponseTransformer.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Middleware/AuthLevelMiddleware.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Middleware/FetchMetadataMiddleware.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Middleware/SecurityHeadersMiddleware.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Observability/RequestLogRoute.cs"] = 2,
+        ["backend/src/AzureBank.Bff/Options/ProxyOptionsValidator.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Program.cs"] = 5,
+        ["backend/src/AzureBank.Bff/Services/SessionStampWatcher.cs"] = 2,
+        ["backend/src/AzureBank.Bff/StrictForwardedFor.cs"] = 1,
+        ["backend/src/AzureBank.Bff/Transforms/BearerTokenTransformProvider.cs"] = 1,
+        ["backend/src/AzureBank.Functions.NoticeRelay/NoticeRelayHostState.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Data/AuditAnchorChain.cs"] = 3,
+        ["backend/src/AzureBank.Infrastructure/Data/AuditChain.cs"] = 19,
+        ["backend/src/AzureBank.Infrastructure/Data/AuditKeyRingException.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Data/AzureBankDbContext.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Data/Configurations/AuditAnchorConfiguration.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Data/Configurations/DemoCopyConfiguration.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Data/Configurations/SubscriberNoticeConfiguration.cs"] = 2,
+        ["backend/src/AzureBank.Infrastructure/Data/DesignTimeDbContextFactory.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Migrations/20260903000526_AddSubscriberNotices.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Migrations/20260909173646_AddSubscriberNoticeAuditEventId.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Migrations/20260928134643_AddRefreshTokenRevokedReason.cs"] = 1,
+        ["backend/src/AzureBank.Infrastructure/Notices/NoticeDeliveryRun.cs"] = 2,
+        ["backend/src/AzureBank.Infrastructure/Notices/NoticeRelayOptionsValidation.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Constants/AuditDetails.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Constants/SecurityEvents.cs"] = 7,
+        ["backend/src/AzureBank.Shared/DTOs/Auth/LoginResponse.cs"] = 1,
+        ["backend/src/AzureBank.Shared/DTOs/Auth/SessionStampDtos.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Entities/AuditAnchor.cs"] = 8,
+        ["backend/src/AzureBank.Shared/Entities/AuditEvent.cs"] = 2,
+        ["backend/src/AzureBank.Shared/Enums/AuditAnchorKind.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Exceptions/DailyLimitExceededException.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Observability/ConsoleLogFormat.cs"] = 2,
+        ["backend/src/AzureBank.Shared/Options/AuditOptions.cs"] = 6,
+        ["backend/src/AzureBank.Shared/Options/DailyLimitOptions.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Options/DatabaseOptions.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Options/RetiredChainKey.cs"] = 3,
+        ["backend/src/AzureBank.Shared/Utilities/SecretPrefix.cs"] = 1,
+        ["backend/src/AzureBank.Shared/Validation/NoNullItemsAttribute.cs"] = 1,
+        ["frontend/src/api/problemBaseQuery.ts"] = 1,
+        ["frontend/src/api/validationErrors.ts"] = 4,
+        ["frontend/src/components/AccountNumberField.tsx"] = 2,
+        ["frontend/src/components/PinInput.tsx"] = 1,
+        ["frontend/src/components/dialogs/ChangePinDialog.tsx"] = 2,
+        ["frontend/src/components/dialogs/DeleteAccountDialog.tsx"] = 1,
+        ["frontend/src/components/dialogs/WithdrawDialog.tsx"] = 2,
+        ["frontend/src/components/dialogs/deleteRules.ts"] = 1,
+        ["frontend/src/components/feedback/WaitHint.tsx"] = 1,
+        ["frontend/src/components/shared/TransactionRow.tsx"] = 2,
+        ["frontend/src/components/shared/transactionRowStyles.ts"] = 8,
+        ["frontend/src/features/api/apiSlice.ts"] = 1,
+        ["frontend/src/features/auth/sessionMiddleware.ts"] = 3,
+        ["frontend/src/forms/moneySchemas.ts"] = 2,
+        ["frontend/src/hooks/useIdempotentMutation.ts"] = 1,
+        ["frontend/src/hooks/useMoneyWizard.ts"] = 2,
+        ["frontend/src/hooks/useReturnFocus.ts"] = 1,
+        ["frontend/src/hooks/useWaitPhase.ts"] = 1,
+        ["frontend/src/pages/DashboardPage.tsx"] = 1,
+        ["frontend/src/pages/LoginPage.tsx"] = 2,
+        ["frontend/src/pages/SettingsPage.tsx"] = 1,
+        ["frontend/src/pages/TransferPage.tsx"] = 2,
+        ["frontend/src/theme/disabledButtonEdge.ts"] = 1,
+        ["frontend/src/utils/format.ts"] = 1,
+    };
+
+    private static readonly string[] FrontendFoldersNotRead =
+        ["test/", "mocks/", "contract/", "integration/", "api/generated/"];
+
+    /// <summary>
+    /// Each match is a comment or a literal, in the order they stand in the file, so that a
+    /// <c>//</c> inside a string is never read as a comment and a quote inside a comment never
+    /// opens a string.
+    /// </summary>
+    private static readonly Regex CommentOrLiteral = new(
+        @"//[^\r\n]*"
+        + @"|/\*.*?\*/"
+        + @"|(?<fence>""{3,}).*?\k<fence>"
+        + @"|@""(?:[^""]|"""")*"""
+        + @"|""(?:\\.|[^""\\\r\n])*"""
+        + @"|'(?:\\.|[^'\\\r\n])*'"
+        + @"|`(?:\\.|[^`\\])*`",
+        RegexOptions.Singleline);
+
+    private static readonly Regex MarkedComment =
+        new(@"\b20\d\d-\d\d-\d\d\b|review round|\u26A0", RegexOptions.IgnoreCase);
+
+    private static int MarkedCommentLines(string source) =>
+        CommentOrLiteral.Matches(source)
+            .Select(match => match.Value)
+            .Where(text => text.StartsWith("//", StringComparison.Ordinal)
+                || text.StartsWith("/*", StringComparison.Ordinal))
+            .SelectMany(text => text.Split('\n'))
+            .Count(MarkedComment.IsMatch);
+
+    private static IEnumerable<string> ProductionSourceFiles(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(
+                     Path.Combine(root, "backend", "src"), "*.cs", SearchOption.AllDirectories))
+        {
+            if (!file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                && !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            {
+                yield return file;
+            }
+        }
+
+        var frontend = Path.Combine(root, "frontend", "src");
+        foreach (var file in Directory.EnumerateFiles(frontend, "*.*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(frontend, file).Replace('\\', '/');
+            var isScript = relative.EndsWith(".ts", StringComparison.Ordinal)
+                || relative.EndsWith(".tsx", StringComparison.Ordinal);
+            var isNotProduction = relative.EndsWith(".d.ts", StringComparison.Ordinal)
+                || relative.Contains(".test.", StringComparison.Ordinal)
+                || relative.Contains(".spec.", StringComparison.Ordinal)
+                || FrontendFoldersNotRead.Any(folder => relative.StartsWith(folder, StringComparison.Ordinal));
+
+            if (isScript && !isNotProduction)
+            {
+                yield return file;
+            }
+        }
+    }
+
+    [Fact]
+    public void ProductionCommentsCarryNoMoreDatesReviewRoundsOrWarningSignsThanBefore()
+    {
+        var root = RepositoryFiles.Root().FullName;
+        var perFile = new Dictionary<string, int>();
+        var scanned = 0;
+
+        foreach (var file in ProductionSourceFiles(root))
+        {
+            scanned++;
+            var marked = MarkedCommentLines(File.ReadAllText(file));
+            if (marked > 0)
+            {
+                perFile[Path.GetRelativePath(root, file).Replace('\\', '/')] = marked;
+            }
+        }
+
+        scanned.Should().BeGreaterThan(300,
+            "a scan that reads nothing counts zero, and zero never rises");
+
+        var grew = perFile
+            .Select(pair => (File: pair.Key, Now: pair.Value,
+                Allowed: MarkedCommentLinesAllowed.GetValueOrDefault(pair.Key)))
+            .Where(row => row.Now > row.Allowed)
+            .OrderBy(row => row.File, StringComparer.Ordinal)
+            .Select(row => $"{row.File} {row.Now} (was {row.Allowed})")
+            .ToList();
+
+        grew.Should().BeEmpty(
+            "AGENTS.md says a comment carries no date, no review round and no capitals for emphasis, "
+            + "and the count of such lines in a file only falls. Remove the line, or write the reason "
+            + "it holds without the date or the round. A change that removes some lowers the entry "
+            + "of each file it touched in MarkedCommentLinesAllowed");
+    }
+
+    [Theory]
+    [InlineData("// 2026-09-07", 1)]
+    [InlineData("/// <summary>Review round 2</summary>", 1)]
+    [InlineData("// \u26A0 careful", 1)]
+    [InlineData("// 2026-09-07 and a review round and \u26A0", 1)]
+    [InlineData("// 2026-09-07\n// 2026-09-08", 2)]
+    [InlineData("/* first\n 2026-09-07\n last */", 1)]
+    [InlineData("var u = \"https://example.test\"; // 2026-09-07", 1)]
+    [InlineData("var s = \"2026-09-07\";", 0)]
+    [InlineData("var s = @\"say \"\"//\"\" 2026-09-07\";", 0)]
+    [InlineData("var s = \"\"\"\n// 2026-09-07\n\"\"\";", 0)]
+    [InlineData("const s = `// 2026-09-07`;", 0)]
+    [InlineData("Date.parse('2026-09-07'); // parsed", 0)]
+    [InlineData("// a comment with nothing marked", 0)]
+    [InlineData("var year = 2026; var month = 09;", 0)]
+    public void TheCountReadsCommentsAndNotStrings(string source, int expected)
+    {
+        // A count that read a string as a comment would charge every literal that holds a date, and
+        // one that skipped a comment after a string would let a dated line through.
+        MarkedCommentLines(source).Should().Be(expected);
     }
 
     [Theory]
