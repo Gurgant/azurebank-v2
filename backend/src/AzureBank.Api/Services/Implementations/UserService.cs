@@ -118,6 +118,10 @@ public class UserService : IUserService
 
         var previous = user.AzureTag;
         user.AzureTag = normalized;
+        // Every whole-row writer of the user checks the stamp, so a rename that leaves it unchanged
+        // lets a write loaded before the rename (a PIN set or change) put the old handle back. It is
+        // rotated here as RevokeAllForUserAsync and the demo claim rotate it: that write then fails.
+        user.ConcurrencyStamp = Guid.NewGuid().ToString();
         user.UpdatedAt = DateTime.UtcNow;
 
         /*
@@ -128,8 +132,8 @@ public class UserService : IUserService
 
           NEITHER HANDLE goes in the row, and that is the D5 rule rather than an oversight: a handle
           is user-chosen and public, which makes it exactly the descriptive personal data this table
-          must not hold, on a store designed never to be purged. The subject is the USER, and both
-          handles stay in the log line below, which does expire.
+          must not hold, on a store designed never to be purged. The subject is the USER, and the log
+          line below names neither handle either (ADR-0017).
         */
         _audit.Record(
             SecurityEvents.AzureTagRenamed, AuditOutcome.Succeeded,
