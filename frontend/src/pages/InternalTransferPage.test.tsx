@@ -2,13 +2,14 @@ import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
 import { COPY, emulateFocusFixup } from '../test/outage';
+import { holdTheMint } from '../test/heldMint';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
@@ -41,6 +42,7 @@ function renderInternal(routerEntries: string[] = ['/']) {
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
       <Route path="/history" element={<div>HISTORY</div>} />
       <Route path="/transfer" element={<div>SEND TO SOMEONE ELSE</div>} />
+      <Route path="/login" element={<div>SIGN IN</div>} />
     </Routes>,
     { routerEntries },
   );
@@ -564,6 +566,240 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
       ).getByRole('button', { name: 'Leave anyway' }),
     );
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+
+  /*
+    The wait for the PIN to be checked comes before the send and, on a first attempt, holds no
+    key. The browser's Back is held for it, and a visitor who leaves anyway has nothing left to
+    show a receipt in, so what the answer would have set off is not sent.
+  */
+
+  /** The form filled in, the PIN's last digit typed, and the request for the authorisation held. */
+  async function whileThePinIsBeingChecked(routerEntries: string[] = ['/dashboard', '/']) {
+    const mint = holdTheMint('*/api/transfers/internal/authorizations');
+    const view = renderInternal(routerEntries);
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    // The boxes are disabled for the request, and the browser's Back is held from that render.
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+    return { ...view, mint };
+  }
+
+  it("holds the browser's Back while the PIN is being checked, and the transfer goes on if the visitor stays", async () => {
+    const sends = watchSends();
+    const { router, mint } = await whileThePinIsBeingChecked();
+
+    await act(() => router.navigate(-1));
+    const question = await screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    await userEvent.click(within(question).getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+
+    mint.release();
+
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  it('sends nothing for a PIN checked before "Leave anyway" when the Back lands on this page, and a new PIN sends once', async () => {
+    // The Back lands on another entry of the same route, so the page is not removed: only the
+    // attempt knows that its visitor has left it.
+    const sends = watchSends();
+    const { router, store, mint } = await whileThePinIsBeingChecked(['/', '/']);
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    // The router is done with the choice, and this page is still the one on screen.
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+    // Back at the PIN, empty and ready: the PIN typed before the choice was not carried over.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+
+    await enterPin();
+
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  /** "Leave anyway" for a Back that lands on another entry of this same route: the page stays. */
+  async function leaveAnywayToThisPage(router: ReturnType<typeof renderInternal>['router']) {
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  }
+
+  /** The messages the page is saying in an alert: it also keeps an empty one for its accounts. */
+  const alertsSaid = () =>
+    screen.queryAllByRole('alert').filter((region) => region.textContent?.trim());
+
+  /** Main Account to Rainy Day, €50, on the review step. */
+  async function toReview(routerEntries: string[]) {
+    const view = renderInternal(routerEntries);
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    return view;
+  }
+
+  it('lets go of the authorisation a PIN minted after "Leave anyway", keeps the key, and sends under it for a new PIN', async () => {
+    /*
+      A send answered AUTHORIZATION_EXPIRED keeps its key and drops its authorisation, so the next
+      PIN mints a new one. If the visitor leaves during that mint, the authorisation it brings is
+      the abandoned attempt's: held, it would show a "Check again" that sends nothing, the PIN
+      being gone. The key stays, and the new PIN sends the same move under it.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transfers/internal', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+      }),
+    );
+    const { router } = await toReview(['/', '/']);
+    await confirmWithPin();
+    await screen.findByText(/your confirmation expired/);
+    expect(keys).toHaveLength(1);
+
+    // Every mint that reaches the mock from here on, whoever answers it. The new PIN has to mint
+    // again: a send that re-presented what the abandoned attempt brought would skip it.
+    let mints = 0;
+    const countMints = ({ request }: { request: Request }) => {
+      if (new URL(request.url).pathname.endsWith('/api/transfers/internal/authorizations'))
+        mints += 1;
+    };
+    server.events.on('request:start', countMints);
+    onTestFinished(() => {
+      server.events.removeListener('request:start', countMints);
+    });
+
+    const mint = holdTheMint('*/api/transfers/internal/authorizations');
+    await enterPin();
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+    await leaveAnywayToThisPage(router);
+    mint.release();
+
+    // The boxes are disabled until the attempt is over, so enabled again is its end.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+    expect(keys).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    expect(mints).toBe(1);
+
+    await enterPin();
+
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(mints).toBe(2);
+  });
+
+  it.each([
+    { status: 422, errorCode: 'PIN_REQUIRED' },
+    { status: 401, errorCode: 'INVALID_PIN' },
+  ])(
+    'acts on nothing of a $errorCode that answers the PIN after "Leave anyway" to this page',
+    async ({ status, errorCode }) => {
+      // The visitor chose to leave: a refusal that arrives later must not take them to PIN setup,
+      // nor tell the page they came back to that their PIN was wrong.
+      const sends = watchSends();
+      const mint = holdTheMint('*/api/transfers/internal/authorizations', () =>
+        problem({ status, errorCode, detail: 'The check refused it.' }),
+      );
+      const { router, store } = await toReview(['/', '/']);
+      await confirmWithPin();
+      await mint.arrived;
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+      await leaveAnywayToThisPage(router);
+      const where = router.state.location.pathname + router.state.location.search;
+      mint.release();
+      await mint.answered(store, 'rejected');
+
+      expect(sends).toEqual([]);
+      expect(router.state.location.pathname + router.state.location.search).toBe(where);
+      expect(alertsSaid()).toEqual([]);
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+      expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+      expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
+    const sends = watchSends();
+    const { router, store, mint } = await whileThePinIsBeingChecked();
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+  });
+
+  it('does not move the visitor off the sign-in page when the PIN check then answers PIN_REQUIRED', async () => {
+    // The page is gone without "Leave anyway": the refusal that comes in late must not take the
+    // visitor to PIN setup, whether it finds the attempt abandoned or the page gone.
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/internal/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const { router, store } = await toReview(['/']);
+    await confirmWithPin();
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+
+    await act(() => router.navigate('/login', { replace: true }));
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+    const where = router.state.location.pathname + router.state.location.search;
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sends).toEqual([]);
+    expect(router.state.location.pathname + router.state.location.search).toBe(where);
+    expect(where).toBe('/login');
   });
 });
 

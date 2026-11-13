@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isLimiterRefusal, isProvenCommit, isUnconfirmedSend } from '../api/moneyProblem';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
+import { useMountedRef } from './useMountedRef';
 
 /**
  * Structural shape of an RTK Query mutation trigger taking an IdempotentArg.
@@ -145,6 +146,8 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   // KEPT after an IN_FLIGHT / network / parse / 5xx failure too, and abandoning it then
   // reopening would mint a fresh key = a new intent = a double-spend.
   const [keyRetained, setKeyRetained] = useState(false);
+  // Whether the page or dialog that owns this hook is still on screen: `submit` reads it.
+  const mountedRef = useMountedRef();
 
   /*
     A reload or a tab close while a key is held. The key lives only in this page, so the next
@@ -200,6 +203,15 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
       */
       extras?: { stepUpAuthorizationId?: string },
     ): Promise<TResult> => {
+      /*
+        A flow asks for its authorisation before it calls this, and a visitor who leaves during
+        that wait takes the page or dialog with them. Sending then moves the money with no
+        receipt, no error and no check view to show for it, and the key it would carry lives only
+        in this hook, so no later attempt could ask after the send. Refused before a key is made.
+      */
+      if (!mountedRef.current) {
+        throw new Error('The page that asked for this send has been left, so nothing was sent.');
+      }
       if (verifyRequiredRef.current) {
         throw new Error('Previous result unknown — verify before submitting again.');
       }
@@ -277,7 +289,7 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         throw error;
       }
     },
-    [trigger],
+    [trigger, mountedRef],
   );
 
   /*

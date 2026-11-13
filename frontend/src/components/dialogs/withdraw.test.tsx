@@ -8,6 +8,7 @@ import { problem, serviceUnavailable } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
 import { settle } from '../../test/settle';
+import { holdTheMint } from '../../test/heldMint';
 import { expectNoNestedLiveRegions } from '../../test/liveRegions';
 import {
   COPY,
@@ -1792,5 +1793,62 @@ describe('withdraw — the listing by key after a lost answer', () => {
     fireEvent.click(fifty);
     await advance(0);
     expect(screen.getByRole('button', { name: 'Continue · €50.00' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The visitor leaves while the PIN is being checked. The withdrawal follows the answer, with no key
+ * held before it, and the dialog does not hold the browser's Back: what keeps the money where it
+ * is, is that a dialog that is gone sends nothing.
+ */
+describe('withdraw — the page is left while the authorisation is being asked for', () => {
+  it('sends no withdrawal once the dialog is gone', async () => {
+    const mint = holdTheMint('*/api/transactions/withdraw/authorizations');
+    const sent = { withdrawals: 0 };
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        sent.withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
+    const { router, store } = renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await mint.arrived;
+
+    await act(() => router.navigate('/history'));
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sent.withdrawals).toBe(0);
+  });
+  it('does not move the visitor to PIN setup when the PIN check then answers PIN_REQUIRED', async () => {
+    const mint = holdTheMint('*/api/transactions/withdraw/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const sent = { withdrawals: 0 };
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        sent.withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
+    const { router, store } = renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await mint.arrived;
+
+    await act(() => router.navigate('/history'));
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sent.withdrawals).toBe(0);
+    expect(router.state.location.pathname).toBe('/history');
   });
 });
