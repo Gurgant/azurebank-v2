@@ -7,6 +7,14 @@ I am Vladislav Aleshaev, the project's architect and sole engineer. I designed t
 part of the code myself and direct the AI coding agents that write the rest. I read the code I
 merge and I merge every pull request myself.
 
+In ten minutes, by what you want to judge:
+
+- **How I work:** [My role](docs/engineering-playbook.md#my-role) and
+  [What stands between an agent and `main`](docs/engineering-playbook.md#what-stands-between-an-agent-and-main),
+  in the Engineering Playbook.
+- **The code:** [Moving money once](docs/architecture/overview.md#moving-money-once), then
+  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs) that holds it.
+
 [How it works](docs/architecture/overview.md) · [Decisions](docs/adr/README.md) ·
 [Security](SECURITY.md) · [Engineering practices](docs/engineering-practices.md)
 
