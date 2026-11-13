@@ -87,8 +87,17 @@ export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDial
     }
   };
 
+  // Cancel, the backdrop and Escape all end up here. While the save is out the dialog stays: its
+  // answer still calls `onClose`, which closes whichever dialog the page has open by then, and
+  // that would be one opened after a cancel, with its typed text lost.
+  const requestClose = () => {
+    if (!isLoading) {
+      onClose();
+    }
+  };
+
   return (
-    <Dialog open onOpenChange={(_, data) => !data.open && onClose()}>
+    <Dialog open onOpenChange={(_, data) => !data.open && requestClose()}>
       <DialogSurface>
         <form
           onSubmit={(event) => {
@@ -126,7 +135,12 @@ export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDial
               <WaitHint active={isLoading} kind="write" />
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={onClose} type="button">
+              <Button
+                appearance="secondary"
+                onClick={requestClose}
+                type="button"
+                disabled={isLoading}
+              >
                 Cancel
               </Button>
               <Button appearance="primary" type="submit" disabled={isLoading}>

@@ -33,7 +33,7 @@ import {
 } from '../features/api/apiSlice';
 import { DemoCopyPanel } from '../features/demo';
 import { abortRunning, useWaitLanding } from '../hooks/useWaitLanding';
-import { readWait } from '../hooks/useWaitPhase';
+import { readWait, type ReadState } from '../hooks/useWaitPhase';
 import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
@@ -448,6 +448,20 @@ const useStyles = makeStyles({
 // Helpers
 // ============================================
 
+/**
+ * `readWait` for a read whose argument can change under the page. RTK keeps `data` from the
+ * previous argument while the new one is on its way, and reports `isLoading` false then, so the
+ * read would be neither waiting nor failed with the last scope's answer still on screen. Only
+ * `currentData` belongs to the argument asked now: a fetch with none of it is a first load.
+ */
+function readWaitForArgument(query: ReadState & { currentData?: unknown }) {
+  return readWait({
+    isLoading: query.isLoading || (query.isFetching && query.currentData === undefined),
+    isFetching: query.isFetching,
+    error: query.error,
+  });
+}
+
 function recentRecipients(items: TransactionResponse[], limit: number): string[] {
   const out: string[] = [];
   for (const t of items) {
@@ -487,14 +501,15 @@ export function DashboardPage() {
   const scopedAccountId = resolveScopedAccountId(scope, accounts);
   const recentArg = { page: 1, pageSize: RECENT_PAGE_SIZE, accountId: scopedAccountId };
   const recentQuery = useGetTransactionsQuery(recentArg);
-  const { data: recent, refetch: refetchRecent } = recentQuery;
-  const { waiting: recentWaiting, failed: recentFailed } = readWait(recentQuery);
+  // `currentData`, not `data`: after a change of scope `data` is the previous scope's answer.
+  const { currentData: recent, refetch: refetchRecent } = recentQuery;
+  const { waiting: recentWaiting, failed: recentFailed } = readWaitForArgument(recentQuery);
 
   const [monthWindow] = useState(() => ({ fromDate: startOfMonth(new Date()).toISOString() }));
   const summaryArg = { ...monthWindow, accountId: scopedAccountId };
   const summaryQuery = useGetTransactionSummaryQuery(summaryArg);
-  const { data: summary, refetch: refetchSummary } = summaryQuery;
-  const { waiting: summaryWaiting, failed: summaryFailed } = readWait(summaryQuery);
+  const { currentData: summary, refetch: refetchSummary } = summaryQuery;
+  const { waiting: summaryWaiting, failed: summaryFailed } = readWaitForArgument(summaryQuery);
 
   /*
     One wait for the page, one hint, one "Stop waiting" for all three reads. It is the wait the page
