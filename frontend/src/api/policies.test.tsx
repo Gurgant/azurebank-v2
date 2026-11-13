@@ -1424,6 +1424,25 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
         { authorisation: A2, answer: limited },
       ],
     ],
+    // The take-back belongs to a limiter's refusal alone: every unconfirmed answer to a resend
+    // latches the check, and A2's send may have reached the action.
+    [
+      'A1 refused, then A2 answered RESULT_UNKNOWN',
+      [
+        { authorisation: A1, answer: refused },
+        {
+          authorisation: A2,
+          answer: () => problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' }),
+        },
+      ],
+    ],
+    [
+      'A1 refused, then A2 answered a 409 that names no code (HTTP_409)',
+      [
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: () => new HttpResponse(null, { status: 409 }) },
+      ],
+    ],
     [
       'A1 refused, then a send with no authorisation',
       [{ authorisation: A1, answer: refused }, { answer: noConnection }],
@@ -1459,6 +1478,26 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       expect(copy?.everyAuthorisationRefused).toBe(false);
     },
   );
+
+  it('6o — A1 refused, then A2 answered 201 with a body that fails its schema: the send may have landed, so the key may still commit', async () => {
+    // The throw is the scenario (a 2xx whose body cannot become a receipt), and this suite fails
+    // a test that writes to the error channel: hold it back and check it was the one write.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const copy = await withdrawalsUnderOneKey([
+      { authorisation: A1, answer: refused },
+      {
+        authorisation: A2,
+        answer: () =>
+          HttpResponse.json(
+            { data: { newBalance: 'one hundred' }, message: null },
+            { status: 201 },
+          ),
+      },
+    ]);
+
+    expect(copy?.everyAuthorisationRefused).toBe(false);
+    expect(logged).toHaveBeenCalledTimes(1);
+  });
 
   it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
     const keys: string[] = [];

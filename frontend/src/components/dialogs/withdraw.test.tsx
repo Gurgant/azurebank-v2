@@ -1622,6 +1622,84 @@ describe('withdraw — the listing by key after a lost answer', () => {
     expect(keys[1]).not.toBe(keys[0]);
   });
 
+  /*
+    A1 expired, the visitor gave the PIN again, and a limiter refused the resend that carried A2.
+    A limiter answers before the API's idempotency check and the action, so A2 was never checked
+    or spent, and A1 was refused: nothing under the key can land. The listing's first answer
+    settles it.
+  */
+  function expiredThenLimited(code: string) {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+        return problem({ status: 429, errorCode: code });
+      }),
+    );
+    return keys;
+  }
+
+  async function giveThePinAgain() {
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await screen.findByText(/expired/);
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+  }
+
+  it.each(['RATE_LIMIT_EXCEEDED', 'DEMO_COPY_LIMIT'])(
+    'after an expired authorisation and a PIN typed again, a limiter refusal of the resend (%s) with an empty listing says at once that it did not go through',
+    async (code) => {
+      const keys = expiredThenLimited(code);
+      await giveThePinAgain();
+
+      expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).toBe(keys[0]);
+      expect(screen.getByText("Your withdrawal didn't go through")).toBeInTheDocument();
+      expect(screen.queryByText("We couldn't confirm your withdrawal")).not.toBeInTheDocument();
+      expect(screen.queryByText(/may still go through/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: "It didn't go through — try again" }),
+      ).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+      expectNoNestedLiveRegions();
+    },
+  );
+
+  it('after an expired authorisation and a PIN typed again, a limiter refusal of the resend with a listing the same limiter refuses says it could not check, and offers the way on at once', async () => {
+    /*
+      The demo's limiter is per address and the listing read goes through the same window, so
+      the read is usually refused as well. Nothing under the key can land, but the listing has
+      not said so: the view is the unchecked one, and "try again" is offered at once. It is
+      safe: the key is let go and the next withdrawal is a new one.
+    */
+    const keys = expiredThenLimited('RATE_LIMIT_EXCEEDED');
+    whenListedByKey(() => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' }));
+    const seen = lookupsSeen();
+    await giveThePinAgain();
+
+    expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(seen).toHaveLength(1);
+    expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+    expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Too many requests/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "It didn't go through — try again" })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expectNoNestedLiveRegions();
+  });
+
   it('"Check again" asks about the same key and account again, and gives lost focus back to the first button', async () => {
     let sentAt = 0;
     server.use(
