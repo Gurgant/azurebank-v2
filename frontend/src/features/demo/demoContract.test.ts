@@ -151,6 +151,8 @@ describe("the claim's two refusals the app words", () => {
       // The mock, which refuses a claim from an empty pool as the API does.
       'src/mocks/handlers.ts': ['DEMO_POOL_EMPTY'],
       'src/api/moneyProblem.ts': ['DEMO_COPY_LIMIT'],
+      // The reveal's PIN check, which keeps the boxes as typed and says the server's sentence.
+      'src/features/auth/StepUpModal.tsx': ['DEMO_COPY_LIMIT'],
     });
     const named = [...new Set(Object.values(namedIn).flat())].sort();
     expect(Object.fromEntries(named.map((code) => [code, backendCodes.includes(code)]))).toEqual({
@@ -204,6 +206,7 @@ describe("the claim's two refusals the app words", () => {
         "DEMO_COPY_LIMIT: the API's",
       ],
       'src/pages/LoginPage.test.tsx': ["DEMO_POOL_EMPTY: the API's", "DEMO_DAILY_LIMIT: the API's"],
+      'src/features/auth/StepUpModal.test.tsx': ["DEMO_COPY_LIMIT: the API's"],
     });
   });
 });

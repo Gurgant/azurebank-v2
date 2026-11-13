@@ -82,8 +82,13 @@ const useStyles = makeStyles({
     ...shorthands.borderColor(colors.semantic.error.main),
     paddingLeft: '1px',
     paddingRight: '1px',
+    // Every box has the same red border here, so the border cannot say which one has focus, and the
+    // box's own `outline: none` leaves the caret as the only sign. The ring has the values of the
+    // app's own (`src/theme/landingRing.ts`), on `:focus` like the border it stands in for.
     ':focus': {
       ...shorthands.borderColor(colors.semantic.error.main),
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
     },
   },
   // The demo's line under the boxes: words to read, in the size of the button below it, centred

@@ -210,6 +210,10 @@ export function SessionExpiryWarning() {
   // is, and loses focus to the page the same way. When the request is refused the dialog stays,
   // so focus goes back to the button: it can be pressed again, and "Sign out now" is one Tab on.
   const stayLanding = useWaitLanding<HTMLButtonElement>(reauthPending, reauthRequest);
+  // The same for everyone else: the password field is disabled while "Sign in again" is on its
+  // way, and a refused password leaves the dialog open with focus on the page, so the corrected
+  // password would be typed into nothing. The field is the first control the dialog offers there.
+  const passwordLanding = useWaitLanding<HTMLInputElement>(reauthPending, reauthRequest);
   // The demo copy this browser keeps, read from its key each time this is drawn, and whether the
   // signed-in visitor is its owner. Off the demo there is no copy and no owner, and the key is not
   // read to find that out (src/features/demo/demoCopyStorage.ts).
@@ -333,7 +337,10 @@ export function SessionExpiryWarning() {
   const expired = remainingMs !== null && remainingMs <= 0;
 
   useEffect(() => {
-    if (!expired || ending) return;
+    // A re-authentication on its way decides: it may be minting the session that outlives this
+    // deadline, and a probe or a sign-out now would end it or race its cookie. The effect runs
+    // again when the request ends, and the probe then sees the new session, or none.
+    if (!expired || ending || reauthPending) return;
     let cancelled = false;
 
     void (async () => {
@@ -357,7 +364,7 @@ export function SessionExpiryWarning() {
     return () => {
       cancelled = true;
     };
-  }, [expired, ending, dispatch, endSession]);
+  }, [expired, ending, reauthPending, dispatch, endSession]);
 
   // Fires the keep-alive and nothing else. The dialog closes when the deadline moves, which only
   // happens if the request actually reached the BFF. A failed sign-out's words go: the visitor has
@@ -389,6 +396,8 @@ export function SessionExpiryWarning() {
       sent = kept.password;
       // The press whose wait hands focus back when it ends.
       stayLanding.arm();
+    } else {
+      passwordLanding.arm();
     }
     try {
       await reauthenticate({ password: sent }).unwrap();
@@ -410,8 +419,12 @@ export function SessionExpiryWarning() {
   // Only the sign-out they asked for: the deadline's has hidden the dialog at zero, and activity
   // that moves the deadline while it is on its way must not bring the dialog back.
   const signingOut = endingBy === 'visitor' || signOutError !== null;
+  // A Sign in again still out at zero keeps the dialog, its wait hint and its 0:00 on screen: the
+  // zero effect waits for that request, which may be held for as long as 65 s, and a page with no
+  // dialog would show the visitor no sign that anything is pending.
   const warningDue =
-    remainingMs !== null && remainingMs > 0 && (remainingMs <= WARNING_LEAD_MS || signingOut);
+    remainingMs !== null &&
+    ((remainingMs > 0 && (remainingMs <= WARNING_LEAD_MS || signingOut)) || reauthPending);
   if (status !== 'authenticated' || !warningDue) {
     return null;
   }
@@ -476,6 +489,7 @@ export function SessionExpiryWarning() {
                       hint="This starts a new session."
                     >
                       <Input
+                        ref={passwordLanding.landingRef}
                         type="password"
                         autoComplete="current-password"
                         value={password}

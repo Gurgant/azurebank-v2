@@ -111,6 +111,23 @@ describe('the PIN prompt after a refusal', () => {
       () => problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'boom' }),
       "Couldn't verify right now — please try again.",
     ],
+    [
+      'the limiter refuses it',
+      // Not the PIN's lock: the BFF's own limiter, with the server's own sentence.
+      () =>
+        problem({
+          status: 429,
+          errorCode: 'RATE_LIMIT_EXCEEDED',
+          detail: 'Too many requests. Please retry later.',
+        }),
+      'Too many requests. Please retry later.',
+    ],
+    [
+      'the limiter refuses it with no sentence',
+      // An empty detail, as the mock's own notes say a refusal can carry: no empty red bar.
+      () => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED', detail: '' }),
+      "Couldn't verify right now — please try again.",
+    ],
   ])(
     'puts the caret back in box 1 when %s, and leaves the boxes neutral',
     async (_case, answer, words) => {
@@ -132,6 +149,45 @@ describe('the PIN prompt after a refusal', () => {
       expect(getComputedStyle(bar!).alignSelf).toBe('stretch');
     },
   );
+
+  it("says the server's sentence when the copy has used up its changes, and keeps the PIN as typed", async () => {
+    // The API's refusal of any request past a demo copy's budget of changes, a PIN check included.
+    // No PIN can pass it, so the boxes are not emptied for another try.
+    server.use(
+      http.post('*/bff/auth/verify-pin', () =>
+        problem({
+          status: 429,
+          errorCode: 'DEMO_COPY_LIMIT',
+          detail:
+            'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    const { outcome } = openPrompt();
+    await screen.findByText("Verify it's you");
+
+    await enterPin(user, '123456');
+
+    await screen.findByText(
+      'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+    );
+    expect(screen.queryByText("Couldn't verify right now — please try again.")).toBeNull();
+    // The sentence is said, and the boxes still hold what was typed: box 6 its digit, the others
+    // theirs. Nothing says the PIN was wrong, so nothing marks it wrong.
+    for (const [index, digit] of ['1', '2', '3', '4', '5', '6'].entries()) {
+      expect(box(index + 1)).toHaveValue(digit);
+    }
+    for (const each of boxes()) expect(each).not.toHaveAttribute('aria-invalid');
+    // No PIN can pass, so Verify is not offered for the same six digits again.
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled();
+    // The boxes were disabled during the check, so focus fell to the page; it lands on Cancel, as
+    // after the lock, and Escape is heard there.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+    await expect(outcome).resolves.toBe('cancelled');
+  });
 
   it('puts focus on Cancel after the lock, and Escape then closes the prompt', async () => {
     // Two wrong PINs already counted: the mock's own answer to the third is the lock.

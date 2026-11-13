@@ -316,6 +316,109 @@ describe('SessionExpiryWarning', () => {
     expect(seen).toEqual(['authenticated']);
   });
 
+  it('after a refused typed password focus is back on the password field', async () => {
+    const store = await bootAbsolute();
+    // The refusal is held until the wait has been drawn: an answer that came at once would never
+    // show the field waiting.
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post('*/bff/auth/reauthenticate', async () => {
+        await held;
+        // No answer from here, so the mock's own handler gives it: a 401 for this password.
+        return undefined;
+      }),
+    );
+    // While it waits the button that was pressed is disabled, and a browser then hands its focus
+    // to the page. Without this, jsdom would leave it where it was and the test would pass
+    // whatever the dialog did.
+    const stopFixup = emulateFocusFixup();
+    try {
+      await reachTheWarning(store);
+
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      fireEvent.change(password(), { target: { value: 'Wrong1234!' } });
+      await user.click(screen.getByRole('button', { name: /sign in again/i }));
+      await waitFor(() => {
+        expect(password()).toBeDisabled();
+        expect(document.body).toHaveFocus();
+      });
+
+      answer();
+      expect(await screen.findByRole('alert')).toHaveTextContent(/incorrect password/i);
+      // On the field, which is enabled again and where the corrected password goes. Left on the
+      // page, the next key a visitor pressed would act on nothing.
+      await waitFor(() => expect(password()).toHaveFocus());
+    } finally {
+      stopFixup();
+    }
+  });
+
+  it('a sign-in again still on its way at zero is waited for, and the session is not ended', async () => {
+    const store = await bootAbsolute();
+    const before = await absoluteExpiry(store);
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let probes = 0;
+    let logouts = 0;
+    server.use(
+      // Both only count, and let the mock's own handler answer.
+      http.get('*/bff/auth/session-status', () => {
+        probes += 1;
+        return undefined;
+      }),
+      http.post('*/bff/auth/logout', () => {
+        logouts += 1;
+        return undefined;
+      }),
+      http.post('*/bff/auth/reauthenticate', async () => {
+        await held;
+        // The BFF read a live session before the cap, so it mints a new one now. The mock reads
+        // the session when it answers, past the cap: its clock is renewed first, as the request
+        // that reached the BFF in time would have renewed it.
+        mockState.sessionCreatedAt = Date.now();
+        mockState.sessionLastActivity = Date.now();
+        return undefined;
+      }),
+    );
+    await reachTheWarning(store);
+    // Close to the cap, inside the 65 s that a request may wait: the held one is not given up on.
+    await advance(100_000);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+    await user.click(screen.getByRole('button', { name: /sign in again/i }));
+    await waitFor(() => expect(password()).toBeDisabled());
+
+    // Past zero, with the request still out. The probe and the sign-out each take a round trip,
+    // so the wait that follows gives them the time they would need.
+    await advance(20_000);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    // The dialog is still there, at 0:00, with the field waiting: a page with nothing on it would
+    // show the visitor no sign that anything is pending.
+    expect(countdownText()).toContain('You will be signed out in 0:00.');
+    expect(password()).toBeDisabled();
+    expect({ probes, logouts, status: store.getState().auth.status }).toStrictEqual({
+      probes: 0,
+      logouts: 0,
+      status: 'authenticated',
+    });
+
+    answer();
+    // The new session is there, and nothing signed the visitor out on the way.
+    await waitFor(async () => expect(await absoluteExpiry(store)).toBeGreaterThan(before));
+    expect({ logouts, status: store.getState().auth.status }).toStrictEqual({
+      logouts: 0,
+      status: 'authenticated',
+    });
+  });
+
   it('an offline attempt leaves the warning up and says so', async () => {
     const store = await bootAbsolute();
     server.use(http.post('*/bff/auth/reauthenticate', () => HttpResponse.error()));
