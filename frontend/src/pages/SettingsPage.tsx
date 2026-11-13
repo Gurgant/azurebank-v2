@@ -506,9 +506,10 @@ export function SettingsPage() {
               <Text className={styles.actionTitle}>{SIGN_OUT_ACTION.label}</Text>
               <Text className={styles.actionSubtitle}>End your session in this browser.</Text>
             </div>
-            {/* While the sign-out is under way the button keeps its words and its focus and drops
-                the press, which Fluent does for `disabledFocusable`: `disabled` would drop focus
-                to the body. The spinner is hidden from assistive technology: `aria-busy` says it. */}
+            {/* While the sign-out is under way the button keeps its words and its focus and
+                drops the press, which Fluent does for `disabledFocusable`: `disabled` would drop
+                focus to the body. The spinner is hidden from assistive technology: `aria-busy`
+                says it. */}
             <Button
               appearance="secondary"
               className={styles.actionButton}

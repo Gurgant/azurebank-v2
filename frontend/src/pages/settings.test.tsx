@@ -10,6 +10,7 @@ import {
   COPY,
   advanceUntil,
   emulateFocusFixup,
+  expectSilentHintTakesNoRoom,
   fakeClockUser,
   hintRegion,
   hintShownAt,
@@ -388,6 +389,8 @@ describe('settings page: Sign out while its answer is awaited', () => {
     const pressedAt = Date.now();
     await user.click(signOut);
     const shownAt = await hintShownAt(session);
+    // Silent, it holds no room under the button, so a quick sign-out moves nothing.
+    expectSilentHintTakesNoRoom(session);
 
     await advanceUntil(pressedAt, 4_900);
     expect(within(session).queryByText(COPY.slow)).not.toBeInTheDocument();
