@@ -19,7 +19,7 @@ public class PinAttribute : ValidationAttribute
         {
             return true;
         }
-        return Pattern.IsMatch(pin);
+        return Pattern.IsWholeMatch(pin);
     }
 
     public override string FormatErrorMessage(string name) =>
