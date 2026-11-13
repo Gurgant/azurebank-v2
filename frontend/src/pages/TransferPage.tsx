@@ -751,6 +751,7 @@ export function TransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
+    const attempt = wizard.beginAttempt();
     setConfirming(true);
     try {
       let authorizationId: string;
@@ -775,6 +776,23 @@ export function TransferPage() {
         }
       }
 
+      /*
+        The visitor chose "Leave anyway" while the PIN was being checked, and the Back landed on
+        another entry of this page, which stays. Nothing is sent for the PIN they typed before they
+        left; the boxes are emptied, as for an outage of the check, and a PIN typed now is a new
+        attempt. An authorisation this attempt minted goes with it.
+      */
+      if (attempt.abandoned) {
+        setPin('');
+        enteredPin.current = '';
+        setPinNonce((n) => n + 1);
+        if (!keyLive) {
+          lastAuthorization.current = null;
+          setAuthorizationHeld(false);
+        }
+        return;
+      }
+
       const result = await wizard.run(
         {
           fromAccountId: data.fromAccountId,
@@ -783,6 +801,7 @@ export function TransferPage() {
         },
         // A HEADER at the wire, never a body field: the server fingerprints the body alone.
         { stepUpAuthorizationId: authorizationId },
+        attempt,
       );
       // `run` resolves to undefined when it failed — and it has already set the banner, the
       // in-flight note or the verify view. Under `strict` this early return is not optional:

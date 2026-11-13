@@ -56,6 +56,16 @@ import {
  */
 export type MoneyWizardStep = 'form' | 'review' | 'pin';
 
+/**
+ * One confirm, from the press that starts it. `abandoned` turns true when the visitor chooses to
+ * leave, and stays true: the router can then land on another entry of the same route, the page
+ * stays mounted, and what the attempt was still waiting for (the answer to its request for an
+ * authorisation) must not become a send. A press made after that is a new attempt.
+ */
+export interface MoneyAttempt {
+  readonly abandoned: boolean;
+}
+
 export interface MoneyWizard<TBody, TResult> {
   step: MoneyWizardStep;
   /** True from the moment Send is pressed until the request settles. Disables Send. */
@@ -123,7 +133,15 @@ export interface MoneyWizard<TBody, TResult> {
     body: TBody,
     /** Out-of-band request metadata — the step-up authorisation, which is not part of the intent. */
     extras?: { stepUpAuthorizationId?: string },
+    /** The attempt that asks for this send: refused, with nothing sent, once it is abandoned. */
+    attempt?: MoneyAttempt,
   ) => Promise<TResult | undefined>;
+
+  /**
+   * Take the attempt a confirm starts, before its first request. A flow that asks for something
+   * before it calls `run` takes it, reads `abandoned` when the answer comes, and passes it to `run`.
+   */
+  beginAttempt: () => MoneyAttempt;
 
   /**
    * Apply a failure this wizard did not produce. Minting an authorisation carries no idempotency
@@ -217,6 +235,9 @@ export function useMoneyWizard<TBody, TResult>(
   // Set when "Leave anyway" is chosen. The router removes the page only once it has drawn the next
   // one, a moment after the choice, and `run` sends nothing from a page in that moment.
   const leaving = useRef(false);
+  // Counts the choices to leave. An attempt remembers the count it started under, so it is
+  // abandoned for good by the first choice after it, whatever the router then does.
+  const abandonments = useRef(0);
 
   /*
     One rule, and it is the whole policy:
@@ -269,6 +290,11 @@ export function useMoneyWizard<TBody, TResult>(
     refuses it too (`leaving`); the sign-out has no choice to mark, so for the moment the router
     takes to draw the sign-in page the refusal waits for the page to go.
 
+    A Back can also land on another entry of the same route, and that page is not removed. The
+    attempt then carries the refusal: a flow takes `beginAttempt` before its request for the
+    authorisation, "Leave anyway" abandons every attempt taken before it, and neither the flow nor
+    `run` sends for one. A press after the page is back is a new attempt.
+
     The predicate is a FUNCTION, not `useBlocker(holdsBack)`, and the `/login` exemption is not
     cosmetic: `ProtectedRoute` renders `<Navigate to="/login" replace />` the moment auth leaves
     `authenticated`, the router consults the blocker on REPLACE too, and both money routes sit
@@ -296,8 +322,9 @@ export function useMoneyWizard<TBody, TResult>(
     if (blocker.state === 'blocked' && !holdsBack) blocker.reset?.();
   }, [blocker, holdsBack]);
 
-  // The choice to leave stands only until the router has finished with it. The page can outlive
-  // it: a POP can land on another entry of the same route, and that page is not removed.
+  // The choice to leave stands only until the router has finished with it, so that a press made
+  // after it, on a page the router did not remove, can send. A POP can land on another entry of
+  // the same route. What was started before the choice stays abandoned: that is the attempt's own.
   useEffect(() => {
     if (blocker.state === 'unblocked') leaving.current = false;
   }, [blocker.state]);
@@ -330,6 +357,7 @@ export function useMoneyWizard<TBody, TResult>(
       blocker.state === 'blocked'
         ? {
             leave: () => {
+              abandonments.current += 1;
               leaving.current = true;
               blocker.proceed?.();
             },
@@ -348,9 +376,18 @@ export function useMoneyWizard<TBody, TResult>(
     confirmWentThrough,
     keyLive,
 
-    async run(body, extras) {
-      if (leaving.current) {
-        // Resolves as a failure that says nothing: the page is on its way out, and no key is made.
+    beginAttempt() {
+      const started = abandonments.current;
+      return {
+        get abandoned() {
+          return abandonments.current !== started;
+        },
+      };
+    },
+
+    async run(body, extras, attempt) {
+      if (leaving.current || attempt?.abandoned) {
+        // Resolves as a failure that says nothing: the visitor chose to leave, and no key is made.
         lastProblem.current = null;
         return undefined;
       }

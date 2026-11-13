@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { useMoneyWizard } from './useMoneyWizard';
+import { useMoneyWizard, type MoneyAttempt } from './useMoneyWizard';
 import type { IdempotentTrigger } from './useIdempotentMutation';
 
 /**
@@ -70,6 +70,8 @@ const REAL_GATEWAY_502 = { status: 502, errorCode: 'HTTP_502' };
 function Wizard({ trigger }: { trigger: IdempotentTrigger<Body, Result> }) {
   // Stands for the flow's request for an authorisation, which is its own and holds no key.
   const [minting, setMinting] = useState(false);
+  // The attempt a flow takes when its confirm starts, and sends with when the authorisation comes.
+  const attempt = useRef<MoneyAttempt | null>(null);
   // The real hook, with the real blocker, the real `keyLive` and the real `exitPrompt`.
   const wizard = useMoneyWizard<Body, Result>(trigger, {
     messages: {},
@@ -88,6 +90,10 @@ function Wizard({ trigger }: { trigger: IdempotentTrigger<Body, Result> }) {
       <button onClick={() => void wizard.run({} as Body)}>send</button>
       <button onClick={wizard.startOver}>start over</button>
       <button onClick={() => setMinting(true)}>start minting</button>
+      <button onClick={() => (attempt.current = wizard.beginAttempt())}>begin an attempt</button>
+      <button onClick={() => void wizard.run({} as Body, undefined, attempt.current ?? undefined)}>
+        send the attempt
+      </button>
       <button onClick={() => setMinting(false)}>end minting</button>
       <button onClick={() => wizard.requestLeave('/history')}>leave from the page</button>
       <Link to="/history">go to history</Link>
@@ -407,6 +413,54 @@ describe('leaving a money wizard with a live key', () => {
     expect(screen.getByText('transfer')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'send' }));
+
+    expect(sent.count).toBe(1);
+  });
+
+  it('sends nothing for an attempt begun before "Leave anyway", on the page the Back landed on', async () => {
+    // The page is not the one to go: the Back lands on another entry of the same route. The
+    // choice has been cleared by then, and the attempt is still abandoned; a new one sends.
+    const { trigger, sent } = countingTrigger();
+    const router = mount(trigger, ['/transfer', '/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'begin an attempt' }));
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await screen.findByText('Leave without finishing?');
+    await userEvent.click(screen.getByRole('button', { name: 'Leave anyway' }));
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.getByText('transfer')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'send the attempt' }));
+    expect(sent.count).toBe(0);
+    expect(screen.getByText('keyLive:false')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'begin an attempt' }));
+    await userEvent.click(screen.getByRole('button', { name: 'send the attempt' }));
+    expect(sent.count).toBe(1);
+  });
+
+  it('keeps an attempt begun after "Stay on this page" sending', async () => {
+    // The control: staying abandons nothing, so the attempt sends. Without it, "sends nothing"
+    // above would also pass against a run that refused every attempt.
+    const { trigger, sent } = countingTrigger();
+    const router = mount(trigger, ['/history', '/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'begin an attempt' }));
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await screen.findByText('Leave without finishing?');
+    await userEvent.click(screen.getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByText('Leave without finishing?')).toBeNull());
+
+    await userEvent.click(screen.getByRole('button', { name: 'send the attempt' }));
 
     expect(sent.count).toBe(1);
   });

@@ -574,9 +574,9 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
   */
 
   /** The form filled in, the PIN's last digit typed, and the request for the authorisation held. */
-  async function whileThePinIsBeingChecked() {
+  async function whileThePinIsBeingChecked(routerEntries: string[] = ['/dashboard', '/']) {
     const mint = holdTheMint('*/api/transfers/internal/authorizations');
-    const view = renderInternal(['/dashboard', '/']);
+    const view = renderInternal(routerEntries);
     await screen.findByRole('button', { name: 'From Main Account' });
     await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
@@ -599,6 +599,41 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
 
     mint.release();
+
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  it('sends nothing for a PIN checked before "Leave anyway" when the Back lands on this page, and a new PIN sends once', async () => {
+    // The Back lands on another entry of the same route, so the page is not removed: only the
+    // attempt knows that its visitor has left it.
+    const sends = watchSends();
+    const { router, store, mint } = await whileThePinIsBeingChecked(['/', '/']);
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    // The router is done with the choice, and this page is still the one on screen.
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+    // Back at the PIN, empty and ready: the PIN typed before the choice was not carried over.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+
+    await enterPin();
 
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
     expect(sends).toHaveLength(1);
