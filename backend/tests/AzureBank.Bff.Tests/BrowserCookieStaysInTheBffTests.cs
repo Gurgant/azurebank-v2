@@ -302,7 +302,7 @@ public sealed class BrowserCookieStaysInTheBffTests : IClassFixture<WebApplicati
         var session = SignIn(host, "jwt-held-for-this-session");
         using var client = host.CreateClient();
 
-        var request = Proxied(HttpMethod.Get, "/api/accounts", $"theme=dark; {session}");
+        using var request = Proxied(HttpMethod.Get, "/api/accounts", $"theme=dark; {session}");
         request.Headers.Add("Authorization", "Bearer jwt-the-browser-brought");
         await client.SendAsync(request);
 
