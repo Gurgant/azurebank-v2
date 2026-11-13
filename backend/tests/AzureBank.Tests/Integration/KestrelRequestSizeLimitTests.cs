@@ -26,6 +26,7 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     private const string AuthenticationSource = "Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler";
     private const string HandlerSource = "AzureBank.Api.Handlers.AppExceptionHandler";
     private const string DepositPath = "/api/transactions/deposit";
+    private const string RegisterRoute = "/api/auth/register";
 
     private static readonly JsonSerializerOptions Json =
         new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
@@ -86,7 +87,14 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
             && e.Level == LogEventLevel.Warning
             && e.Properties["ErrorCode"].Equals(new ScalarValue(ErrorCodes.IdempotencyPayloadTooLarge)));
 
-        var filterEvents = _factory.CapturedEvents.Where(e => IsSource(e, FilterSource)).ToList();
+        // The registration that made the account is itself limited by this filter, so its one event
+        // is here too: it is held apart, and it also shows that the filter's category is listening.
+        var registration = _factory.CapturedEvents
+            .Where(e => IsSource(e, FilterSource) && OnRoute(e, RegisterRoute)).ToList();
+        registration.Should().ContainSingle(e => HasEvent(e, 3, "MaxRequestBodySizeSet"));
+
+        var filterEvents = _factory.CapturedEvents
+            .Where(e => IsSource(e, FilterSource) && !OnRoute(e, RegisterRoute)).ToList();
         foreach (var e in filterEvents)
         {
             _output.WriteLine($"{e.Level} {e.Properties["EventId"]}: {e.RenderMessage()}");
@@ -120,7 +128,9 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     }
 
     // Controls: the four mints do not read through idempotency, so their MVC filter can still set
-    // the feature. Its Debug event also proves that this category has not been silenced.
+    // the feature. Its Debug event also proves that this category has not been silenced. The
+    // registration that makes the account is limited by the same filter and logs the same event, so
+    // the mint's event is the one on the mint's route.
     [Theory]
     [InlineData("/api/transactions/withdraw/authorizations", HttpStatusCode.BadRequest)]
     [InlineData("/api/transfers/authorizations", HttpStatusCode.BadRequest)]
@@ -129,15 +139,47 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     public async Task Control_MintFilter_SetsTheLimitWithoutAWarning(string path, HttpStatusCode status)
     {
         var (token, accountId) = await RegisterAsync();
+        var route = path.Replace("{id}", "{id:guid}", StringComparison.Ordinal);
         path = path.Replace("{id}", accountId.ToString(), StringComparison.Ordinal);
         using var response = await SendAsync(path, """{"pin":"123456"}""", token, idempotent: false);
 
         response.StatusCode.Should().Be(status);
         var events = _factory.CapturedEvents.Where(e => IsSource(e, FilterSource)).ToList();
         events.Should().NotContain(e => e.Level >= LogEventLevel.Warning);
-        var applied = events.Where(e => HasEvent(e, 3, "MaxRequestBodySizeSet")).Should().ContainSingle().Subject;
+        var applied = events.Where(e => OnRoute(e, route) && HasEvent(e, 3, "MaxRequestBodySizeSet"))
+            .Should().ContainSingle().Subject;
         applied.Level.Should().Be(LogEventLevel.Debug);
         applied.Properties["RequestSize"].Should().Be(new ScalarValue("32768"));
+    }
+
+    // Control: login, register, set PIN and verify PIN carry the same 32,768-byte limit, set once
+    // each by the same filter and without a warning. The registration is the setup's own request.
+    [Fact]
+    public async Task Control_AuthRoutes_SetTheLimitOnceWithoutAWarning()
+    {
+        var (token, _) = await RegisterAsync();
+        var requests = new[]
+        {
+            ("/api/auth/login", """{"email":"nobody@example.com","password":"TestPass123!"}""", HttpStatusCode.Unauthorized),
+            ("/api/auth/pin", """{"pin":"123456","password":"TestPass123!"}""", HttpStatusCode.OK),
+            ("/api/auth/pin/verify", """{"pin":"123456"}""", HttpStatusCode.OK),
+        };
+
+        foreach (var (path, body, status) in requests)
+        {
+            using var response = await SendAsync(path, body, token, idempotent: false);
+            response.StatusCode.Should().Be(status, path);
+        }
+
+        var events = _factory.CapturedEvents.Where(e => IsSource(e, FilterSource)).ToList();
+        events.Should().NotContain(e => e.Level >= LogEventLevel.Warning);
+        foreach (var route in new[] { RegisterRoute, "/api/auth/login", "/api/auth/pin", "/api/auth/pin/verify" })
+        {
+            var applied = events.Where(e => OnRoute(e, route) && HasEvent(e, 3, "MaxRequestBodySizeSet"))
+                .Should().ContainSingle(route).Subject;
+            applied.Level.Should().Be(LogEventLevel.Debug);
+            applied.Properties["RequestSize"].Should().Be(new ScalarValue("32768"));
+        }
     }
 
     // Controls: removing endpoint metadata or setting the limit only inside idempotency would
@@ -487,7 +529,7 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
     private async Task<(string Token, Guid AccountId)> RegisterAsync()
     {
         var unique = Guid.NewGuid().ToString("N")[..8];
-        using var response = await _client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        using var response = await _client.PostAsJsonAsync(RegisterRoute, new RegisterRequest
         {
             AzureTag = $"size_{unique}",
             Email = $"size{unique}@example.com",
@@ -555,6 +597,9 @@ public sealed class KestrelRequestSizeLimitTests : IDisposable
 
     private static bool IsSource(LogEvent e, string source) =>
         e.Properties.TryGetValue("SourceContext", out var value) && value.Equals(new ScalarValue(source));
+
+    private static bool OnRoute(LogEvent e, string routePattern) =>
+        e.Properties.TryGetValue("RoutePattern", out var value) && value.Equals(new ScalarValue(routePattern));
 
     private static bool HasEvent(LogEvent e, int id, string name) =>
         e.Properties.TryGetValue("EventId", out var value)
