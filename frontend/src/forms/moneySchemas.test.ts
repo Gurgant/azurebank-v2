@@ -145,6 +145,17 @@ describe('normalizeAzureTag', () => {
     expect(normalizeAzureTag(' @john_d ')).toBe('john_d');
     expect(normalizeAzureTag('jane')).toBe('jane');
   });
+
+  it('lower-cases, because handles are stored in lower case and a phone types a capital first', () => {
+    expect(normalizeAzureTag('Jane_02ga')).toBe('jane_02ga');
+    expect(normalizeAzureTag(' @JANE_02GA ')).toBe('jane_02ga');
+  });
+
+  it('lower-cases A to Z only: the Kelvin sign U+212A is not turned into a k', () => {
+    // `toLowerCase()` would give `kate`, a valid handle that the server refuses as typed.
+    expect(normalizeAzureTag('Kate')).toBe('Kate');
+    expect(normalizeAzureTag('Kate')).not.toMatch(/^[a-z][a-z0-9_]{2,19}$/);
+  });
 });
 
 describe('money form schemas', () => {

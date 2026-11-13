@@ -78,6 +78,10 @@ const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 const PIN_LENGTH = 6;
 const NO_ACCOUNT_SENTENCE =
   "That recipient can't receive money right now. Choose another recipient.";
+// The API answers a handle of the wrong form with a 400 that has no sentence for a visitor, and its
+// message per rule names either the length or the letters, never both: the page says the rule whole.
+const HANDLE_FORMAT_SENTENCE =
+  'A handle is 3 to 20 letters, numbers or underscores, and starts with a letter.';
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 interface Recipient {
@@ -558,7 +562,7 @@ export function TransferPage() {
     setRecipientError(null);
     setOwnHandle(false);
     onBodyEdit();
-    if (user && tag.toLowerCase() === normalizeAzureTag(user.azureTag).toLowerCase()) {
+    if (user && tag === normalizeAzureTag(user.azureTag)) {
       // A lookup's wait commits the empty alert before its answer. Nothing waits here, and React
       // would fold the two into one render: the same sentence again would change nothing to say.
       flushSync(() => setRecipientError(null));
@@ -602,6 +606,9 @@ export function TransferPage() {
         setRecipientError(SERVICE_UNAVAILABLE);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         setRecipientError(CONNECTION_FAILED);
+      } else if (problem.errorCode === 'VALIDATION_ERROR') {
+        // The only thing this route validates is the handle, and the answer carries no `detail`.
+        setRecipientError(HANDLE_FORMAT_SENTENCE);
       } else {
         setRecipientError(problem.detail || "We couldn't check that handle. Please try again.");
       }
@@ -650,6 +657,12 @@ export function TransferPage() {
   ).success;
   const nobodyHasTheHandle =
     recipientError !== null && !lookupState.isError && lookupState.currentData?.exists === false;
+  // The API refused the handle's form, which no other word of the check says: the same press gets
+  // the same refusal, so this too asks for another handle and not for "Verify".
+  const handleRefused =
+    recipientError !== null &&
+    lookupState.isError &&
+    (lookupState.error as ApiProblem | undefined)?.errorCode === 'VALIDATION_ERROR';
   const reviewWaitsFor = canReview
     ? null
     : !selectedAccount
@@ -661,7 +674,7 @@ export function TransferPage() {
         : !recipient
           ? lookupState.isFetching
             ? 'Checking the handle…'
-            : ownHandle || nobodyHasTheHandle
+            : ownHandle || nobodyHasTheHandle || handleRefused
               ? 'Change the handle to continue.'
               : 'Press Verify to check the handle.'
           : watch('amount').trim() === ''
@@ -1277,6 +1290,10 @@ export function TransferPage() {
                       className={styles.input}
                       placeholder="@handle"
                       aria-label="Recipient handle"
+                      // The field keeps what was typed and the page sends it lower-cased, so a phone must not capitalise or correct it.
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       ref={field.ref}
                       name={field.name}
                       value={field.value}

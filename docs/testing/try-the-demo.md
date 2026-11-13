@@ -434,9 +434,13 @@ saw unless it says otherwise.
    same of its account, and its **Continue** stays switched off.
 2. **Pay a handle that does not exist.** Type `zz_nobody_here` and press **Verify**. You should
    see `We couldn't find @zz_nobody_here. Check the handle and try again.` Your own handle
-   gets the same sentence. One letter gets "We couldn't check that handle. Please try again."
-   A handle of another visitor's copy reads as one nobody has: the second walk had two copies,
-   and from one of them two handles of the other got that sentence.
+   gets its own sentence: "That's your own handle. To move money between your own accounts, use
+   "Between your own accounts" below." Two letters get "A handle is 3 to 20 letters, numbers
+   or underscores, and starts with a letter." (a page test holds this; no walk has seen it). A
+   capital letter is no refusal: the page sends the handle in lower case (a page test holds
+   this too; no walk has seen it). A handle of another visitor's copy reads as one nobody
+   has: the second walk had two copies, and from one of them two handles of the other got
+   the "We couldn't find" sentence.
 3. **Send the same payment twice.** Double-click **Deposit €5.00**. You should see one deposit:
    the total goes up by €5.00, not €10.00.
 4. **Reload mid-way.** On "Review Transfer", reload the page. You should see an empty "Send

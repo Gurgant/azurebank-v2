@@ -291,6 +291,67 @@ describe('external transfer (PR-11)', () => {
     },
   );
 
+  it('sends the handle in lower case, which is how handles are stored, and a phone types a capital', async () => {
+    /*
+      A phone capitalises the first letter of a text field, so the guide's `jane_02ga` arrives as
+      `Jane_02ga`. Handles are stored in lower case, so the page sends the lower-case one: what it
+      shows, and what it compares with the visitor's own handle, is what the server stores.
+    */
+    const asked: string[] = [];
+    server.use(
+      http.get('*/api/users/:azureTag', ({ params }) => {
+        asked.push(String(params.azureTag));
+      }),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    await verifyRecipient('@Friend');
+
+    expect(await screen.findByText('A. Friend')).toBeInTheDocument();
+    expect(asked).toEqual(['friend']);
+  });
+
+  it('asks the phone for no capital and no correction in the handle field', async () => {
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    const field = screen.getByLabelText('Recipient handle');
+
+    expect(field).toHaveAttribute('autocapitalize', 'none');
+    expect(field).toHaveAttribute('autocorrect', 'off');
+    expect(field).toHaveAttribute('spellcheck', 'false');
+  });
+
+  it.each(['ab', 'my-handle', 'a'.repeat(21), '9friend'])(
+    'a handle the API refuses (%s) is told what a handle is, and Review asks for another',
+    async (tag) => {
+      /*
+        The refusal is a model-state 400 with no `detail`, which the page said nothing true about:
+        "We couldn't check that handle. Please try again." and, under Review, "Press Verify to
+        check the handle." The same press gets the same 400 and spends one of the 20 lookups a minute.
+      */
+      const sentence =
+        'A handle is 3 to 20 letters, numbers or underscores, and starts with a letter.';
+      renderTransfer();
+      await screen.findByText('Main Account');
+      const review = screen.getByRole('button', { name: 'Review Transfer' });
+
+      await verifyRecipient(tag);
+
+      expect((await screen.findByText(sentence)).closest('[role="alert"]')).not.toBeNull();
+      expect(screen.queryByText(/We couldn't check that handle/)).not.toBeInTheDocument();
+      expect(review).toBeDisabled();
+      expect(review).toHaveAccessibleDescription('Change the handle to continue.');
+
+      // Edited, it is a handle nobody has checked.
+      await userEvent.type(screen.getByLabelText('Recipient handle'), 'x');
+
+      expect(screen.queryByText(sentence)).not.toBeInTheDocument();
+      expect(review).toHaveAccessibleDescription('Press Verify to check the handle.');
+    },
+  );
+
   it('a failed Send is ANNOUNCED, not just displayed', async () => {
     /*
       Measured before fixing: the money banners rendered a bare <MessageBar intent="error"> with no
