@@ -314,6 +314,8 @@ export function SettingsPage() {
   const navigate = useNavigate();
   // This page's own pending state, from the press to the answer. The shell's two Sign out
   // controls hold theirs apart from it, so a press there and one here still send two requests.
+  // Without a fixedCacheKey RTK Query also drops it when the page unmounts: leave Settings during
+  // a slow sign-out and come back, and Sign out is live again until the first answer lands.
   const [logout, { isLoading: signingOut }] = useLogoutMutation();
   const showProblem = useProblemToast();
   const [renameOpen, setRenameOpen] = useState(false);
