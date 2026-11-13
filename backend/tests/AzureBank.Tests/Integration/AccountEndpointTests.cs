@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.Enums;
@@ -148,6 +150,73 @@ public class AccountEndpointTests : IntegrationTestBase
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    #endregion
+
+    #region Account Ownership Tests
+
+    // The only object-level guard on these routes is the ownership check in AccountService, so each
+    // one is sent another user's account and must answer 403 ACCESS_DENIED without touching it.
+    [Theory]
+    [InlineData("CurrentBalance")]
+    [InlineData("HistoricalBalance")]
+    [InlineData("Rename")]
+    [InlineData("SetPrimary")]
+    public async Task AccountRoutes_BelongingToOtherUser_ReturnForbiddenAndLeaveTheOwnerUnchanged(
+        string operation)
+    {
+        // Arrange - the owner holds a primary account and a second one, the target, which is not primary
+        var (callerToken, _, _) = await RegisterTestUserAsync();
+        var (ownerToken, _, ownerPrimaryId) = await RegisterTestUserAsync();
+        SetAuthHeader(ownerToken);
+
+        var createResponse = await Client.PostAsJsonAsync("/api/accounts", new CreateAccountRequest
+        {
+            Name = "Owner Savings Account",
+            Type = AccountType.Savings
+        }, JsonOptions);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions);
+        var targetId = created!.Data!.Id;
+
+        var before = await ListOwnerAccountsAsync();
+        before.Should().HaveCount(2);
+        before.Single(a => a.Id == ownerPrimaryId).IsPrimary.Should().BeTrue();
+        before.Single(a => a.Id == targetId).IsPrimary.Should().BeFalse();
+
+        // Act - the other user sends the owner's account id
+        SetAuthHeader(callerToken);
+        var response = operation switch
+        {
+            "CurrentBalance" => await Client.GetAsync($"/api/accounts/{targetId}/balance"),
+            "HistoricalBalance" => await Client.GetAsync(
+                $"/api/accounts/{targetId}/balance?at={DateTime.UtcNow.AddDays(-1):o}"),
+            "Rename" => await Client.PatchAsJsonAsync(
+                $"/api/accounts/{targetId}", new UpdateAccountRequest { Name = "Unauthorised Rename" }, JsonOptions),
+            "SetPrimary" => await Client.PatchAsync($"/api/accounts/{targetId}/set-primary", null),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null)
+        };
+
+        // Assert - refused with the access-denied code, and nothing changed for the owner
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        problem.RootElement.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccessDenied);
+        problem.RootElement.GetProperty("detail").GetString().Should()
+            .Be("You do not have access to this account.");
+
+        SetAuthHeader(ownerToken);
+        var after = await ListOwnerAccountsAsync();
+        after.Select(a => new { a.Id, a.Name, a.IsPrimary }).Should()
+            .BeEquivalentTo(before.Select(a => new { a.Id, a.Name, a.IsPrimary }));
+    }
+
+    private async Task<List<AccountResponse>> ListOwnerAccountsAsync()
+    {
+        var response = await Client.GetAsync("/api/accounts");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var list = await response.Content.ReadFromJsonAsync<ApiResponse<List<AccountResponse>>>(JsonOptions);
+        return list!.Data!;
     }
 
     #endregion
