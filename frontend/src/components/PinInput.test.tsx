@@ -476,7 +476,7 @@ describe('PinInput on the demo', () => {
     const withOne = { attribute: describedByAttribute(), described: described() };
     one.unmount();
 
-    // A caller may pass a list of ids as well as one (src/pages/TransferPage.tsx does).
+    // A caller may pass a list of ids as well as one (src/pages/TransferPinStep.tsx does).
     renderWithProviders(<Boxes ariaDescribedBy="what-to-do why-it-was-refused" />);
     const withAList = { attribute: describedByAttribute(), described: described() };
 
@@ -564,7 +564,7 @@ describe('PinInput on the demo', () => {
 
   it('two groups on one page are each described by the line under them', () => {
     enableDemoMode();
-    // Both under one name, the one five of the six places that ask for a PIN give their boxes
+    // Both under one name, the one four of the five places that ask for a PIN give their boxes
     // (the list in the last test): an id made from the group's name would be one id for both.
     renderWithProviders(
       <>
@@ -601,7 +601,7 @@ describe('PinInput on the demo', () => {
     transfers, a deleted account and "Current PIN". It must stay away from the four groups where a
     PIN is being chosen, where the starting digits would read as the PIN to choose.
 
-    One list for all ten, and not a render of each page: a place that draws the boxes later is one
+    One list for all nine, and not a render of each page: a place that draws the boxes later is one
     more line here before this is green again, and that line says which of the two it is.
   */
   it('says, place by place, which boxes choose a PIN and which ask for one', () => {
@@ -629,10 +629,9 @@ describe('PinInput on the demo', () => {
       'src/components/dialogs/DeleteAccountDialog.tsx | Enter your PIN | says nothing',
       'src/components/dialogs/WithdrawDialog.tsx | Enter your PIN | says nothing',
       'src/features/auth/StepUpModal.tsx | Enter your PIN | says nothing',
-      'src/pages/InternalTransferPage.tsx | Enter your PIN | says nothing',
       'src/pages/PinSetupPage.tsx | Confirm your PIN | new',
       'src/pages/PinSetupPage.tsx | Create your PIN | new',
-      'src/pages/TransferPage.tsx | Enter your PIN | says nothing',
+      'src/pages/TransferPinStep.tsx | Enter your PIN | says nothing',
     ]);
   });
 });
