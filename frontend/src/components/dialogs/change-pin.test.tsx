@@ -285,7 +285,8 @@ describe('ChangePinDialog', () => {
       await userEvent.tab();
       expect(done).toHaveFocus();
 
-      // Back on the sentence, where the send left focus: from there one Escape is enough.
+      // Back on the sentence, where the landing put it (Shift+Tab cannot reach a tabindex -1
+      // paragraph): from there one Escape is enough.
       sentence.focus();
       expect(sentence).toHaveFocus();
       await userEvent.keyboard('{Escape}');
