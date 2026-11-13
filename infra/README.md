@@ -251,7 +251,7 @@ Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60`.
   it has run, two roads: stop the app; or a new, empty database, in this order: delete the pool
   job; remove the lock `keep-the-database` and delete the database; the same run with
   `@('demo=false')`; `./infra/sql-principals.ps1`; the workflow's `deploy`; `--check`.
-- **If something was stolen**: no password exists to change. First run
+- **If something was stolen**: no password exists to change. First, run
   `./infra/secrets.ps1 -Action Remove`: a parameter file left on this machine by a run that
   stopped would give the new app the old values, which may be the stolen ones, and the only sign
   would be the report's `kept from the earlier file`. Then delete the app and both jobs; delete
