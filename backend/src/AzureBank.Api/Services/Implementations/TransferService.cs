@@ -110,7 +110,9 @@ public class TransferService : ITransferService
     /// stops that request and no other: a well-formed reference that names nothing passes it and
     /// reaches the payee resolution, which answers 404 or 422 for a handle that cannot be paid
     /// before <see cref="IStepUpAuthorizationService.ValidateAsync"/> answers 401 for one that can.
-    /// The mint answers the same before the PIN, and ADR-0014 says what limits both.
+    /// The mint answers the same before the PIN, and ADR-0014 says what limits both. What the
+    /// placement still keeps is the order ADR-0050's rung table records: a request presenting
+    /// nothing is told so before any answer about the payee.
     /// </para>
     /// <para>
     /// Split from <see cref="IStepUpAuthorizationService.ValidateAsync"/> deliberately, because the

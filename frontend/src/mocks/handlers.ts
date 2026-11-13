@@ -3396,9 +3396,10 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
     /*
-      OWNERSHIP BEFORE THE PIN, and this order is measured rather than assumed. `TransferAsync`
-      opens with `GetAccountWithOwnershipCheckAsync` and only then calls `VerifyPinOrThrowAsync`.
-      Observed against the real API — same unknown account id, two different pins:
+      OWNERSHIP FIRST, and this order is measured rather than assumed. `TransferAsync` opens with
+      `GetAccountWithOwnershipCheckAsync`, before anything about the authorisation. Observed
+      against the real API while the PIN still rode in the transfer body (ADR-0042 removed it) —
+      same unknown account id, two different pins:
 
         correct pin -> 404 ACCOUNT_NOT_FOUND
         WRONG   pin -> 404 ACCOUNT_NOT_FOUND    (not 401, and no attempt counted)
