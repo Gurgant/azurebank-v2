@@ -206,8 +206,8 @@ describe('account number reveal (ADR-0020)', () => {
 
   /*
     Copy is on the page only while the number shows. When the focused node is removed, jsdom
-    leaves focus on the page itself, as a browser does: a keyboard visitor on Copy at 20 s stays
-    there unless the field puts focus on the eye button, which is still beside the number.
+    moves focus to the page itself, as a browser does: focus that was on Copy at 20 s is left on
+    the page itself unless the field puts it on the eye button, which is still beside the number.
   */
   it('hiding itself while Copy has focus, the number puts focus on the eye button under its new name', async () => {
     installFakeClock();
@@ -220,6 +220,14 @@ describe('account number reveal (ADR-0020)', () => {
     const copy = screen.getByRole('button', { name: `Copy account number for ${MAIN}` });
     copy.focus();
     expect(copy).toHaveFocus();
+    // The eye button's name at the moment it takes focus. After the act its name is the new one
+    // whichever came first, the focus or the hidden state, because act draws the hidden state
+    // before it ends: only a name read on the focus event can tell the two orders apart.
+    const eye = screen.getByRole('button', { name: `Hide account number for ${MAIN}` });
+    const namesOnFocus: (string | null)[] = [];
+    eye.addEventListener('focus', () => {
+      namesOnFocus.push(eye.getAttribute('aria-label'));
+    });
 
     await act(async () => {
       vi.advanceTimersByTime(REVEAL_TIMEOUT_MS);
@@ -228,6 +236,7 @@ describe('account number reveal (ADR-0020)', () => {
     await waitFor(() => expect(screen.getByText(MASKED_MAIN)).toBeInTheDocument());
     expect(copy).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: revealName })).toHaveFocus();
+    expect(namesOnFocus).toEqual([revealName]);
   });
 
   it('hiding itself while another control has focus, the number leaves focus there', async () => {

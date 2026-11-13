@@ -120,13 +120,14 @@ export function AccountNumberField({
   // The timer takes Copy off the page, and a button removed while it has focus leaves focus on
   // the page itself. Focus that was on Copy goes to the eye button, and only once `flushSync` has
   // drawn the hidden state: focused before, the button is read as "Hide …", a name that is wrong
-  // a moment later. Focus anywhere else stays where it is. Hide needs none of this: it is pressed
-  // on the eye button, which stays.
+  // a moment later. The page does not scroll to it: the timer moves focus, not the visitor, and a
+  // visitor who scrolled the card away keeps the view they chose. Focus anywhere else stays where
+  // it is. Hide needs none of this: it is pressed on the eye button, which stays.
   const hideAgain = () => {
     const copyHadFocus =
       copyButton.current !== null && document.activeElement === copyButton.current;
     flushSync(() => conceal('hiddenAgain'));
-    if (copyHadFocus) eyeButton.current?.focus();
+    if (copyHadFocus) eyeButton.current?.focus({ preventScroll: true });
   };
 
   const reveal = async () => {
