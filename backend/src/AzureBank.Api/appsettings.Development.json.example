@@ -63,8 +63,10 @@
   "ServiceCredential": {
     // The key the BFF presents in X-AzureBank-Service-Key on every call (ADR-0055). Server-side
     // only, never stored in the database. Generate a random string, 32+ chars, and give the BFF
-    // the SAME value: the API answers 401 to a key it does not hold.
-    "BffKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+    // the SAME value: the API answers 401 to a key it does not hold. The placeholder is shorter
+    // than 32 on purpose: left as it is, the API refuses to start rather than take a key that
+    // this file publishes.
+    "BffKey": "<set-it-with-user-secrets>"
   },
 
   "SeedData": {

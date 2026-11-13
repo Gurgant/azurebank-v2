@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
@@ -19,7 +20,9 @@ namespace AzureBank.Tests.Architecture;
 /// from both examples while the recipe set it on both hosts, and nothing read either file.
 /// </para>
 /// <para>
-/// The API's example also holds a placeholder for each secret. The BFF's holds none on purpose:
+/// The API's example also holds a placeholder for each secret, and the one for the BFF's key is
+/// shorter than the key's minimum, so an API started from the file as it is refuses to start
+/// instead of taking a key this repository publishes. The BFF's holds none on purpose:
 /// the recipe copies that file as it is, so a placeholder there would become the key whenever the
 /// user-secret is missing, and the BFF would start with a key the API does not hold instead of
 /// refusing to start and saying why.
@@ -67,6 +70,18 @@ public class DevelopmentExampleSecretsTests
             HasMember(settings.RootElement, name).Should().BeTrue(
                 "the API's example holds a placeholder for {0}, as it does for every other secret", name);
         }
+    }
+
+    [Fact]
+    public void TheApiExample_HoldsABffKeyPlaceholderTheApiRefusesToStartWith()
+    {
+        using var settings = JsonDocument.Parse(File.ReadAllText(Example("AzureBank.Api")), SettingsFile);
+        var placeholder = Member(settings.RootElement, "ServiceCredential:BffKey")?.GetString();
+
+        placeholder.Should().NotBeNullOrEmpty("the API's example holds a placeholder for the BFF's key");
+        ServiceCredentialOptions.IsUsable(placeholder).Should().BeFalse(
+            "an API started from the example as it is, with the user-secret missing, would otherwise "
+            + "start with a key this repository publishes, where it should refuse to start");
     }
 
     [Fact]
@@ -126,17 +141,23 @@ public class DevelopmentExampleSecretsTests
     /// Whether the settings hold the configuration key <paramref name="name"/>, whose sections are
     /// separated by colons, as nested members.
     /// </summary>
-    private static bool HasMember(JsonElement root, string name)
+    private static bool HasMember(JsonElement root, string name) => Member(root, name) is not null;
+
+    /// <summary>
+    /// The member at the configuration key <paramref name="name"/>, whose sections are separated
+    /// by colons, or null when the settings do not hold it.
+    /// </summary>
+    private static JsonElement? Member(JsonElement root, string name)
     {
         var element = root;
         foreach (var section in name.Split(':'))
         {
             if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(section, out element))
             {
-                return false;
+                return null;
             }
         }
 
-        return true;
+        return element;
     }
 }
