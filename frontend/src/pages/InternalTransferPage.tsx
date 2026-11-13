@@ -118,6 +118,9 @@ export function InternalTransferPage() {
   const accountsHoldThePage =
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
   const [transferTrigger] = useTransferInternalMutation();
+  // Before the wizard, which holds the browser's Back for the request for an authorisation.
+  const [authoriseInternalTransfer, { isLoading: isMinting }] =
+    useAuthoriseInternalTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
     // of those here a compile error. SAME_ACCOUNT_TRANSFER is kept although it is UNREACHABLE over
@@ -133,6 +136,7 @@ export function InternalTransferPage() {
       ACCOUNT_NOT_FOUND: MOVE_ACCOUNT_CLOSED,
     },
     fallback: 'Transfer failed. Please try again.',
+    minting: isMinting,
   });
   // Destructured under the names the markup already used, so this change is confined to the machine.
   const {
@@ -149,20 +153,18 @@ export function InternalTransferPage() {
   } = wizard;
 
   // ===== PIN step (ADR-0041) — same shape as TransferPage and WithdrawDialog. =====
-  const [authoriseInternalTransfer, { isLoading: isMinting }] =
-    useAuthoriseInternalTransferMutation();
-
   /*
     Every exit, held for BOTH phases of the submit.
 
-    `keyLive` is `isSubmitting || keyRetained` (useMoneyWizard.ts:142), and neither is set until
+    `keyLive` is `isSubmitting || keyRetained` (`useMoneyWizard`), and neither is set until
     `wizard.run` starts — so for the whole MINT round trip `keyLive` is false and every control it
     guards is live. The PIN input was taught the two-phase guard when the mint landed; the exits
     were not, so a user could press Back mid-mint, watch the wizard step backwards, and have the
     transfer complete underneath them.
 
     One name for the rule, used by the header and by the PIN step's own Back, so the two cannot
-    answer differently.
+    answer differently. The browser's Back is not a control of the page: the wizard holds it for
+    the mint (`minting`).
   */
   const exitLocked = keyLive || isMinting;
 
@@ -1132,8 +1134,11 @@ export function InternalTransferPage() {
         )}
       </div>
 
-      {/* The browser's Back, held. Every other exit refuses while a key is live; this one ASKS,
-          because after a KEEP-class failure it is the only exit left (ADR-0028). */}
+      {/* The browser's Back, held. Every other exit refuses while a key is live or the PIN is
+          being checked; this one ASKS, because after a KEEP-class failure it is the only exit
+          left (ADR-0028). It is held for the PIN check too, where leaving anyway sends
+          nothing: the words, which say "if it did reach the bank", are cautious there and not
+          untrue. */}
       <ConfirmDialog
         isOpen={wizard.exitPrompt !== null}
         onClose={() => wizard.exitPrompt?.stay()}

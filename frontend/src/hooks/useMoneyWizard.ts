@@ -160,7 +160,10 @@ export interface MoneyWizard<TBody, TResult> {
    * (`requireVerify` in `useIdempotentMutation`).
    */
   requireVerify: () => void;
-  /** The ONLY way out. Refuses while a key is live. */
+  /**
+   * The ONLY way out. Refuses while a key is live. It is the page's own exit and not the
+   * browser's Back, so the blocker does not hold it.
+   */
   requestLeave: (to: string) => void;
   /**
    * The browser's own Back, which no in-app guard can reach.
@@ -173,7 +176,16 @@ export interface MoneyWizard<TBody, TResult> {
 
 export function useMoneyWizard<TBody, TResult>(
   trigger: IdempotentTrigger<TBody, TResult>,
-  options: { messages: DomainMessages; fallback: string },
+  options: {
+    messages: DomainMessages;
+    fallback: string;
+    /**
+     * The flow's request for an authorisation is out. It comes before the send, and on a first
+     * attempt no key is held yet, so `keyLive` can be false for all of it: the browser's Back is
+     * held for it all the same.
+     */
+    minting: boolean;
+  },
 ): MoneyWizard<TBody, TResult> {
   const navigate = useNavigate();
   const {
@@ -197,6 +209,14 @@ export function useMoneyWizard<TBody, TResult>(
   const lastProblem = useRef<ApiProblem | null>(null);
 
   const keyLive = isSubmitting || keyRetained;
+  // What the browser's Back is held for: a live key, and the request for an authorisation that
+  // comes before the send, when a first attempt holds no key yet.
+  const holdsBack = keyLive || options.minting;
+  // Set while `requestLeave` navigates, so the blocker below lets the page's own exit through.
+  const leavingByItself = useRef(false);
+  // Set when "Leave anyway" is chosen. The router removes the page only once it has drawn the next
+  // one, a moment after the choice, and `run` sends nothing from a page in that moment.
+  const leaving = useRef(false);
 
   /*
     One rule, and it is the whole policy:
@@ -241,26 +261,46 @@ export function useMoneyWizard<TBody, TResult>(
     It does not close the double-spend window — an abandoned key is still lost until TTL — it makes
     the abandonment deliberate instead of silent.
 
-    The predicate is a FUNCTION, not `useBlocker(keyLive)`, and the `/login` exemption is not
+    It is held from the sixth digit, not from the send. The request for the authorisation comes
+    first and the send follows its answer with nothing between them, so on a first attempt a visitor
+    who went back in that wait left with no key held and no way to ask after the send. One who
+    leaves anyway, by "Leave anyway" or by the sign-out below, takes the page with them, and
+    `useIdempotentMutation` then refuses the send. Between the choice and the page going, `run`
+    refuses it too (`leaving`); the sign-out has no choice to mark, so for the moment the router
+    takes to draw the sign-in page the refusal waits for the page to go.
+
+    The predicate is a FUNCTION, not `useBlocker(holdsBack)`, and the `/login` exemption is not
     cosmetic: `ProtectedRoute` renders `<Navigate to="/login" replace />` the moment auth leaves
     `authenticated`, the router consults the blocker on REPLACE too, and both money routes sit
     inside `ProtectedRoute`. A boolean blocker would put "are you sure?" in front of a FORCED
     session-expiry logout, holding the user on a page whose credentials are already dead.
+
+    The page's own exit is not the browser's Back. When the authorisation is refused and the answer
+    sends the visitor on (PIN_REQUIRED), `requestLeave` navigates before the render that ends
+    `minting` has reached the blocker: it would be held, and then released into the page it was
+    to leave.
   */
   const blocker = useBlocker(
     useCallback(
       ({ nextLocation }: { nextLocation: { pathname: string } }) =>
-        keyLive && nextLocation.pathname !== '/login',
-      [keyLive],
+        !leavingByItself.current && holdsBack && nextLocation.pathname !== '/login',
+      [holdsBack],
     ),
   );
 
-  // The key can clear while the prompt is still up: leave the dialog open, press Send again, and a
-  // success clears the intent underneath it — leaving "you have unsent money" standing over a
-  // completed transfer. Reset closes it.
+  // What is held can clear while the prompt is still up: leave the dialog open, press Send again,
+  // and a success clears the intent underneath it — leaving "you have unsent money" standing over
+  // a completed transfer. The same when the authorisation is refused and no key is held.
+  // Reset closes it.
   useEffect(() => {
-    if (blocker.state === 'blocked' && !keyLive) blocker.reset?.();
-  }, [blocker, keyLive]);
+    if (blocker.state === 'blocked' && !holdsBack) blocker.reset?.();
+  }, [blocker, holdsBack]);
+
+  // The choice to leave stands only until the router has finished with it. The page can outlive
+  // it: a POP can land on another entry of the same route, and that page is not removed.
+  useEffect(() => {
+    if (blocker.state === 'unblocked') leaving.current = false;
+  }, [blocker.state]);
 
   // The other path no in-app control covers, a refresh or tab-close while a key is live, is
   // `useIdempotentMutation`'s, for every money send. Kept ALONGSIDE the blocker, not replaced by
@@ -273,7 +313,11 @@ export function useMoneyWizard<TBody, TResult>(
     lastProblem.current = caught ?? null;
     // The latest failure decides, so a later one without `applied: false` takes the words back.
     setNothingChanged(phase === 'send' && caught?.applied === false);
-    const failure = classifyMoneyProblem(caught, { ...options, phase });
+    const failure = classifyMoneyProblem(caught, {
+      messages: options.messages,
+      fallback: options.fallback,
+      phase,
+    });
     if (failure.kind === 'inFlight') {
       setInFlight(true);
     } else if (failure.kind === 'message') {
@@ -284,7 +328,13 @@ export function useMoneyWizard<TBody, TResult>(
   return {
     exitPrompt:
       blocker.state === 'blocked'
-        ? { leave: () => blocker.proceed?.(), stay: () => blocker.reset?.() }
+        ? {
+            leave: () => {
+              leaving.current = true;
+              blocker.proceed?.();
+            },
+            stay: () => blocker.reset?.(),
+          }
         : null,
     step,
     isSubmitting,
@@ -299,6 +349,11 @@ export function useMoneyWizard<TBody, TResult>(
     keyLive,
 
     async run(body, extras) {
+      if (leaving.current) {
+        // Resolves as a failure that says nothing: the page is on its way out, and no key is made.
+        lastProblem.current = null;
+        return undefined;
+      }
       setFailure(null);
       lastProblem.current = null;
       setInFlight(false);
@@ -379,7 +434,14 @@ export function useMoneyWizard<TBody, TResult>(
     requireVerify,
 
     requestLeave(to) {
-      if (!keyLive) navigate(to);
+      if (keyLive) return;
+      // The router asks the blocker inside this call, so the flag is read there and no later.
+      leavingByItself.current = true;
+      try {
+        navigate(to);
+      } finally {
+        leavingByItself.current = false;
+      }
     },
   };
 }

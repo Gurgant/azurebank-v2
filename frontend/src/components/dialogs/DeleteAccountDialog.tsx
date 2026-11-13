@@ -17,6 +17,7 @@ import {
   useAuthoriseAccountDeletionMutation,
   useDeleteAccountMutation,
 } from '../../features/api/apiSlice';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { RetryCountdown, WaitHint, retryDeadline, useAccountClosedToast } from '../feedback';
 import { PinInput } from '../PinInput';
 import { MoneyDialogShell } from './MoneyDialogShell';
@@ -108,6 +109,7 @@ export function DeleteAccountDialog({
   const [authoriseAccountDeletion, { isLoading: isMinting }] =
     useAuthoriseAccountDeletionMutation();
   const [deleteAccount, { isLoading: isDeleting }] = useDeleteAccountMutation();
+  const mounted = useMountedRef();
 
   const [step, setStep] = useState<Step>('confirm');
   const [pin, setPin] = useState('');
@@ -228,6 +230,9 @@ export function DeleteAccountDialog({
     setError(null);
     try {
       const minted = await authoriseAccountDeletion({ id: account.id, pin: entered }).unwrap();
+      // The visitor left while the PIN was being checked. Nothing is left to show the answer in,
+      // and a closed account cannot be undone, so the DELETE is not sent.
+      if (!mounted.current) return;
       await deleteAccount({
         id: account.id,
         stepUpAuthorizationId: minted.authorizationId,

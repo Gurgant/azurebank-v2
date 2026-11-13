@@ -13,6 +13,7 @@ import { TransferPage } from './TransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
 import { COPY, emulateFocusFixup } from '../test/outage';
+import { holdTheMint } from '../test/heldMint';
 
 /**
  * PR-11 — the external transfer end to end, PIN collected in the page (ADR-0041/0042): pick an
@@ -41,6 +42,7 @@ function renderTransfer(routerEntries: RouterEntries = ['/']) {
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
       <Route path="/history" element={<div>HISTORY</div>} />
+      <Route path="/login" element={<div>SIGN IN</div>} />
       <Route path="/transfer/internal" element={<div>BETWEEN MY ACCOUNTS</div>} />
     </Routes>,
     { routerEntries },
@@ -1106,6 +1108,80 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     await act(() => router.navigate(-1));
     await userEvent.click(within(await question()).getByRole('button', { name: 'Leave anyway' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+
+  /*
+    The wait for the PIN to be checked comes before the send and, on a first attempt, holds no
+    key. The page's own exits are disabled for it and the browser's Back is held; and a visitor
+    who is gone, by "Leave anyway" or by a sign-out, has nothing left to show a receipt in, so
+    what the answer would have set off is not sent.
+  */
+
+  /**
+   * The request for the authorisation is out, and the page has drawn it: the boxes are disabled
+   * for it. The browser's Back is held from that render, not from the request.
+   */
+  async function untilThePinIsBeingChecked(mint: ReturnType<typeof holdTheMint>) {
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+  }
+
+  it("holds the browser's Back while the PIN is being checked, and the transfer goes on if the visitor stays", async () => {
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router } = await toReview('50', ['/dashboard', '/']);
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate(-1));
+    const question = await screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    await userEvent.click(within(question).getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+
+    mint.release();
+
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router } = await toReview('50', ['/dashboard', '/']);
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered();
+
+    expect(sends).toEqual([]);
+  });
+
+  it('sends nothing when the session ends while the PIN is being checked', async () => {
+    // The sign-in page is the one place the browser's Back is not held (ADR-0028), so the page's
+    // refusal to send once it is gone is all that stands between the answer and the transfer.
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router } = await toReview();
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate('/login', { replace: true }));
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered();
+
+    expect(sends).toEqual([]);
   });
 });
 

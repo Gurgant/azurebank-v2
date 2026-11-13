@@ -10,6 +10,7 @@ import { mockState } from '../../mocks/state';
 import { apiSlice } from '../../features/api/apiSlice';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { enterPin, TEST_PIN } from '../../test/pinFlow';
+import { holdTheMint } from '../../test/heldMint';
 import {
   COPY,
   advanceUntil,
@@ -712,5 +713,38 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     await advanceUntil(shownAt, 20_000);
     hintRegion(COPY.stillTrying, dialog);
     expect(within(dialog).queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+  });
+});
+
+/**
+ * The visitor leaves while the PIN is being checked. The DELETE follows the answer, and the dialog
+ * does not hold the browser's Back: what keeps the account open is that a dialog that is gone
+ * sends nothing, because a closed account cannot be undone.
+ */
+describe('DeleteAccountDialog — the page is left while the PIN is being checked', () => {
+  it('does not send the DELETE once the dialog is gone, and the account stays open', async () => {
+    seedTempFund();
+    const mint = holdTheMint(MINT_URL);
+    const sent = { deletes: 0 };
+    server.use(
+      http.delete(ACCOUNT_URL, () => {
+        sent.deletes += 1;
+        return undefined;
+      }),
+    );
+    const { router, onDeleted } = renderDialog();
+    await reachPinStep();
+    await enterPin();
+    await mint.arrived;
+
+    await act(() => router.navigate('/pin-setup'));
+    expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered();
+
+    expect(sent.deletes).toBe(0);
+    expect(mockState.accounts.some((account) => account.id === TEMP_FUND.id)).toBe(true);
+    expect(onDeleted).not.toHaveBeenCalled();
   });
 });

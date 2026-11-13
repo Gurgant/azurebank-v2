@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -67,10 +68,13 @@ function rejectingTrigger(problem: unknown): IdempotentTrigger<Body, Result> {
 const REAL_GATEWAY_502 = { status: 502, errorCode: 'HTTP_502' };
 
 function Wizard({ trigger }: { trigger: IdempotentTrigger<Body, Result> }) {
+  // Stands for the flow's request for an authorisation, which is its own and holds no key.
+  const [minting, setMinting] = useState(false);
   // The real hook, with the real blocker, the real `keyLive` and the real `exitPrompt`.
   const wizard = useMoneyWizard<Body, Result>(trigger, {
     messages: {},
     fallback: 'Something went wrong.',
+    minting,
   });
 
   return (
@@ -83,12 +87,24 @@ function Wizard({ trigger }: { trigger: IdempotentTrigger<Body, Result> }) {
       <p>wentThrough:{String(wizard.wentThrough)}</p>
       <button onClick={() => void wizard.run({} as Body)}>send</button>
       <button onClick={wizard.startOver}>start over</button>
+      <button onClick={() => setMinting(true)}>start minting</button>
+      <button onClick={() => setMinting(false)}>end minting</button>
+      <button onClick={() => wizard.requestLeave('/history')}>leave from the page</button>
       <Link to="/history">go to history</Link>
       <Link to="/login">forced logout</Link>
       {wizard.exitPrompt && (
         <div>
           <p>Leave without finishing?</p>
           <button onClick={wizard.exitPrompt.leave}>Leave anyway</button>
+          {/* The choice and a send in one press: the page has not gone when `run` is called. */}
+          <button
+            onClick={() => {
+              wizard.exitPrompt?.leave();
+              void wizard.run({} as Body);
+            }}
+          >
+            leave and send at once
+          </button>
           <button onClick={wizard.exitPrompt.stay}>Stay on this page</button>
         </div>
       )}
@@ -289,6 +305,110 @@ describe('leaving a money wizard with a live key', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Leave anyway' }));
 
     expect(await screen.findByText('history')).toBeInTheDocument();
+  });
+
+  it("holds the browser's Back while the authorisation is being asked for, with no key held", async () => {
+    // The request for the authorisation comes before the send and, on a first attempt, holds no
+    // key, so `keyLive` is false for all of it. A visitor who went back in that wait left, and the
+    // send followed the answer into a page that was gone.
+    const { router } = renderAt(['/history', '/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    expect(screen.getByText('keyLive:false')).toBeInTheDocument();
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(await screen.findByText('Leave without finishing?')).toBeInTheDocument();
+    expect(screen.getByText('transfer')).toBeInTheDocument();
+    expect(screen.queryByText('history')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Leave anyway' }));
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
+  });
+
+  it('closes the prompt by itself when the authorisation is refused and no key was ever held', async () => {
+    renderAt();
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await userEvent.click(screen.getByRole('link', { name: 'go to history' }));
+    await screen.findByText('Leave without finishing?');
+
+    await userEvent.click(screen.getByRole('button', { name: 'end minting' }));
+
+    await waitFor(() => expect(screen.queryByText('Leave without finishing?')).toBeNull());
+    expect(screen.getByText('transfer')).toBeInTheDocument();
+  });
+
+  it("holds the browser's Back for the authorisation, and not the page's own way out", async () => {
+    // A refusal of the authorisation that sends the visitor on navigates through `requestLeave`
+    // before the render that ends the request has reached the blocker. Held there, the visitor
+    // would be asked, and then released into the page they were leaving.
+    renderAt();
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await userEvent.click(screen.getByRole('link', { name: 'go to history' }));
+    await screen.findByText('Leave without finishing?');
+    await userEvent.click(screen.getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByText('Leave without finishing?')).toBeNull());
+
+    await userEvent.click(screen.getByRole('button', { name: 'leave from the page' }));
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
+    expect(screen.queryByText('Leave without finishing?')).toBeNull();
+  });
+
+  /** A trigger that counts the sends that reach it, and never answers them. */
+  function countingTrigger() {
+    const sent = { count: 0 };
+    const trigger: IdempotentTrigger<Body, Result> = () => {
+      sent.count += 1;
+      return { unwrap: () => new Promise<Result>(() => {}) };
+    };
+    return { trigger, sent };
+  }
+
+  it('sends nothing from the moment "Leave anyway" is chosen, before the page has gone', async () => {
+    // The router removes the page once it has drawn the next one, and that comes after the choice:
+    // for that moment the page is still mounted, so the answer to the request for the authorisation
+    // would send from a page the visitor has already walked out of.
+    const { trigger, sent } = countingTrigger();
+    const router = mount(trigger, ['/history', '/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await screen.findByText('Leave without finishing?');
+
+    await userEvent.click(screen.getByRole('button', { name: 'leave and send at once' }));
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
+    expect(sent.count).toBe(0);
+  });
+
+  it('sends again once the router is done with the choice, when the page was not the one to go', async () => {
+    // A POP can land on another entry of the same route, and that page is not removed: a refusal
+    // that outlived the choice would leave it unable to send.
+    const { trigger, sent } = countingTrigger();
+    const router = mount(trigger, ['/transfer', '/transfer']);
+    await userEvent.click(screen.getByRole('button', { name: 'start minting' }));
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await screen.findByText('Leave without finishing?');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Leave anyway' }));
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    // The render that follows, with its effects.
+    await act(async () => {});
+    expect(screen.getByText('transfer')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'send' }));
+
+    expect(sent.count).toBe(1);
   });
 
   it('does not interfere at all when no key is live', async () => {

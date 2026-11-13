@@ -9,6 +9,7 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
 import { COPY, emulateFocusFixup } from '../test/outage';
+import { holdTheMint } from '../test/heldMint';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
@@ -564,6 +565,61 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
       ).getByRole('button', { name: 'Leave anyway' }),
     );
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+
+  /*
+    The wait for the PIN to be checked comes before the send and, on a first attempt, holds no
+    key. The browser's Back is held for it, and a visitor who leaves anyway has nothing left to
+    show a receipt in, so what the answer would have set off is not sent.
+  */
+
+  /** The form filled in, the PIN's last digit typed, and the request for the authorisation held. */
+  async function whileThePinIsBeingChecked() {
+    const mint = holdTheMint('*/api/transfers/internal/authorizations');
+    const view = renderInternal(['/dashboard', '/']);
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    // The boxes are disabled for the request, and the browser's Back is held from that render.
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+    return { ...view, mint };
+  }
+
+  it("holds the browser's Back while the PIN is being checked, and the transfer goes on if the visitor stays", async () => {
+    const sends = watchSends();
+    const { router, mint } = await whileThePinIsBeingChecked();
+
+    await act(() => router.navigate(-1));
+    const question = await screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    await userEvent.click(within(question).getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+
+    mint.release();
+
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
+    const sends = watchSends();
+    const { router, mint } = await whileThePinIsBeingChecked();
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered();
+
+    expect(sends).toEqual([]);
   });
 });
 
