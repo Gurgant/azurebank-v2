@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.Validation;
 using FluentAssertions;
@@ -63,12 +64,15 @@ public class PatternAttributeLineFeedTests
     [Fact]
     public void AzureTagQuery_RefusesAHandleEndingInALineFeed()
     {
-        var context = new ValidationContext(new object()) { MemberName = "azureTag" };
+        // A name that differs from the attribute's own "azureTag" fallback, so the assertion shows the
+        // context's name was used; the message shows the pattern branch refused, not a length branch.
+        var context = new ValidationContext(new object()) { MemberName = "NewAzureTag" };
 
         var result = new AzureTagQueryAttribute().GetValidationResult("alice\n", context);
 
         result.Should().NotBe(ValidationResult.Success);
-        result!.MemberNames.Should().Equal("azureTag");
+        result!.ErrorMessage.Should().Be(ValidationRules.AzureTagPatternMessage);
+        result.MemberNames.Should().Equal("NewAzureTag");
     }
 
     [Fact]
