@@ -392,6 +392,24 @@ describe('PIN setup during an outage', () => {
     await waitFor(() => expect(heading).toHaveFocus());
   });
 
+  it('a connection that drops after the PIN is saved is found, and the page says it is set', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () => HttpResponse.error());
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('a connection that drops says the PIN may have been saved, not "check your connection"', async () => {
+    server.use(http.post('*/bff/auth/set-pin', () => HttpResponse.error()));
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+  });
+
   it('when the session cannot be read either, typing the PIN again finds it', async () => {
     loseAnswerAfterCommit('/bff/auth/set-pin', () =>
       serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
@@ -1017,8 +1035,8 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     ]);
   });
 
-  it('says to check the connection when the request never reaches the server', async () => {
-    const alert = await refusedWith(() => HttpResponse.error());
+  it('says to check the connection when the answer cannot be read', async () => {
+    const alert = await refusedWith(() => new HttpResponse('crash page', { status: 500 }));
 
     expect(alert).toHaveTextContent(CONNECTION_FAILED);
     expect(alert).not.toHaveTextContent(COPY.saveUnknown);
@@ -1041,7 +1059,7 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
       http.post('*/bff/auth/set-pin', async ({ request }) => {
         saves.push(await request.clone().json());
         // The first save is refused; the second goes on to the mock's own answer.
-        if (saves.length === 1) return HttpResponse.error();
+        if (saves.length === 1) return new HttpResponse('crash page', { status: 500 });
       }),
     );
     await toTheConfirmation();

@@ -328,14 +328,15 @@ export function PinSetupPage() {
         void readSession();
         if (saveUnknown) setPinRefused(true);
         refusal = pinError(ALREADY_HAS_PIN);
-      } else if (isServiceOutage(problem)) {
-        // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'`
-        // too, and the connection was not the problem. The PIN may have been saved, and the
-        // request carries no key, so this cannot say it failed.
+      } else if (isServiceOutage(problem) || problem.status === 'NETWORK') {
+        // A connection that drops can drop after the server committed the PIN and before the
+        // answer arrived, as a 503 or no answer in 65 s can: the browser cannot tell the two
+        // apart. The PIN may have been saved, and the request carries no key, so this cannot say
+        // it failed.
         setLostSaves((lost) => (lost.includes(confirmed) ? lost : [...lost, confirmed]));
         void readSession();
         refusal = pinError(SAVE_OUTCOME_UNKNOWN);
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+      } else if (problem.status === 'PARSE') {
         refusal = pinError(CONNECTION_FAILED);
       } else {
         refusal = pinError(problem.detail || 'Could not set your PIN. Please try again.');
