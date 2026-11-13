@@ -1,6 +1,6 @@
 # How AzureBank works
 
-**The one document to read.** It is complete on its own: every rule below is stated with its
+**The design in one document.** It is complete on its own: every rule below is stated with its
 reason, and the links are footnotes for depth, never detours you have to take. If a sentence here
 only makes sense after following a link, that is a defect — report it.
 
