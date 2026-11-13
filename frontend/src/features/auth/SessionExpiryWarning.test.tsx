@@ -15,6 +15,7 @@ import { emulateFocusFixup } from '../../test/outage';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 import { AuthBootstrap } from './AuthBootstrap';
+import { getSessionDeadline } from './sessionActivity';
 import { SessionExpiryWarning } from './SessionExpiryWarning';
 
 /**
@@ -356,9 +357,25 @@ describe('SessionExpiryWarning', () => {
     }
   });
 
-  it('a sign-in again still on its way at zero is waited for, and the session is not ended', async () => {
-    const store = await bootAbsolute();
-    const before = await absoluteExpiry(store);
+  /**
+   * A re-authentication that reached the BFF in time and is answered only once the cap has passed:
+   * the answer is held, the clock runs past zero, and only then does the request end. `press` sends
+   * it and returns once the dialog shows it waiting; `shows` is what else the dialog must still
+   * show at 0:00.
+   *
+   * Held, a Sign in again keeps the dialog on screen and the page quiet: no probe, no sign-out.
+   * After the answer the check is on what the app itself has done. The mock's own clock moves when
+   * the held request is answered, so asking the mock for the new cap would be met by the test's own
+   * edit before the app had been handed the 200. The app has learned the new cap when its own
+   * deadline is later and the dialog is gone; the zero effect, which runs again when the request
+   * ends, has had its round trips once they are flushed, and only then is a sign-out ruled out.
+   */
+  async function heldPastZero(
+    store: TestStore,
+    press: () => Promise<void>,
+    shows: () => void,
+  ): Promise<void> {
+    const capBefore = getSessionDeadline()!;
     let answer = () => {};
     const held = new Promise<void>((resolve) => {
       answer = resolve;
@@ -389,10 +406,7 @@ describe('SessionExpiryWarning', () => {
     // Close to the cap, inside the 65 s that a request may wait: the held one is not given up on.
     await advance(100_000);
 
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
-    await user.click(screen.getByRole('button', { name: /sign in again/i }));
-    await waitFor(() => expect(password()).toBeDisabled());
+    await press();
 
     // Past zero, with the request still out. The probe and the sign-out each take a round trip,
     // so the wait that follows gives them the time they would need.
@@ -400,23 +414,45 @@ describe('SessionExpiryWarning', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
-    // The dialog is still there, at 0:00, with the field waiting: a page with nothing on it would
-    // show the visitor no sign that anything is pending.
-    expect(countdownText()).toContain('You will be signed out in 0:00.');
-    expect(password()).toBeDisabled();
+    // Nothing was asked and nothing ended. This is read before the dialog, which a sign-out would
+    // take down: the counts are what say which of the two guards is missing.
     expect({ probes, logouts, status: store.getState().auth.status }).toStrictEqual({
       probes: 0,
       logouts: 0,
       status: 'authenticated',
     });
+    // The dialog is still there, at 0:00, with the wait showing: a page with nothing on it would
+    // show the visitor no sign that anything is pending.
+    expect(countdownText()).toContain('You will be signed out in 0:00.');
+    shows();
 
     answer();
-    // The new session is there, and nothing signed the visitor out on the way.
-    await waitFor(async () => expect(await absoluteExpiry(store)).toBeGreaterThan(before));
+    await waitFor(() => expect(getSessionDeadline()!).toBeGreaterThan(capBefore));
+    await waitFor(() => expect(dialog()).not.toBeInTheDocument());
+    // Whatever the zero effect sends when it runs again has its answer before this is read.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await Promise.all(store.dispatch(apiSlice.util.getRunningMutationsThunk()));
+      await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+    });
     expect({ logouts, status: store.getState().auth.status }).toStrictEqual({
       logouts: 0,
       status: 'authenticated',
     });
+  }
+
+  it('a sign-in again still on its way at zero is waited for, and the session is not ended', async () => {
+    const store = await bootAbsolute();
+    await heldPastZero(
+      store,
+      async () => {
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        fireEvent.change(password(), { target: { value: MOCK_PASSWORD } });
+        await user.click(screen.getByRole('button', { name: /sign in again/i }));
+        await waitFor(() => expect(password()).toBeDisabled());
+      },
+      () => expect(password()).toBeDisabled(),
+    );
   });
 
   it('an offline attempt leaves the warning up and says so', async () => {
@@ -931,6 +967,23 @@ describe('SessionExpiryWarning', () => {
         kept,
         status: 'authenticated',
       });
+    });
+
+    it("the owner's button still on its way at zero is waited for, and the session is not ended", async () => {
+      // The same hold as for a typed password, for the branch that sends the kept one.
+      const { store } = await bootOnACopy();
+      await heldPastZero(
+        store,
+        async () => {
+          const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+          await waitFor(() => expect(focused()).toBe(THE_OWNERS[0]));
+          await user.click(screen.getByRole('button', { name: WORDS.stay }));
+          await waitFor(() =>
+            expect(stayButtons().map((button) => button.disabled)).toStrictEqual([true]),
+          );
+        },
+        () => expect(stayButtons().map((button) => button.disabled)).toStrictEqual([true]),
+      );
     });
 
     it('after a refused request focus is back on "Stay signed in"', async () => {

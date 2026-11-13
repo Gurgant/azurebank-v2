@@ -83,12 +83,15 @@ const useStyles = makeStyles({
     paddingLeft: '1px',
     paddingRight: '1px',
     // Every box has the same red border here, so the border cannot say which one has focus, and the
-    // box's own `outline: none` leaves the caret as the only sign. The ring has the values of the
-    // app's own (`src/theme/landingRing.ts`), on `:focus` like the border it stands in for.
+    // box's own `outline: none` leaves the caret as the only sign. The ring is the colour and width
+    // of the app's own (`src/theme/landingRing.ts`), on `:focus` like the border it stands in for.
+    // It has no offset, unlike that one: the step-up dialog's content scrolls and has 2 px of
+    // padding, and where the row fills the width (a phone) the first and last box would have a ring
+    // of 2 px at an offset of 2 px drawn 2 px outside the padding, which clips it.
     ':focus': {
       ...shorthands.borderColor(colors.semantic.error.main),
       outline: `2px solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: '2px',
+      outlineOffset: 0,
     },
   },
   // The demo's line under the boxes: words to read, in the size of the button below it, centred
