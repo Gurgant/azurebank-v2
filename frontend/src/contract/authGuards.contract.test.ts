@@ -161,4 +161,22 @@ describe('contract: endpoints that require a session', () => {
     expect(Object.keys(body as object).sort()).toEqual(['detail', 'status', 'title']);
     expect((body as { detail: string }).detail).toBe('Session expired or invalid');
   });
+
+  it.each(['/api/accounts', '/bff/auth/me'])(
+    'forbids caching the 401 it gives %s',
+    async (path) => {
+      /*
+        The BFF's default under /api and /bff (`SecurityHeadersMiddleware`) covers a refusal as well
+        as a success: it is added as the response starts. Here and not beside the 200s in
+        `envelopes.contract.test.ts` because those sign in, and the mock reads its session from
+        memory, not from the cookie, so an anonymous call there would be answered as the signed-in
+        user. `AnswersUnderApiAndBff_AreNotStorable` in the BFF's suite pins the same two.
+      */
+      const { status, headers } = await call(path, { anonymous: true });
+
+      expect(status).toBe(401);
+      expect(headers.get('cache-control')).toBe('no-store');
+      expect(headers.get('pragma')).toBe('no-cache');
+    },
+  );
 });

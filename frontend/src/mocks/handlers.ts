@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, type RequestHandler } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
@@ -766,8 +766,9 @@ function apiOffsetInstant(ms: number): string {
 /**
  * BFF ACTIONS forward the upstream problem through `ForwardUpstreamError`: the API's status and
  * body, so `instance` stays the API's own path, and the API's `Retry-After` through
- * `KeepTheApisRetryHeaders`. Proxied routes keep the header because YARP copies it. The mock sends
- * no `Cache-Control` on either, as on its other answers.
+ * `KeepTheApisRetryHeaders`. Proxied routes keep the header because YARP copies it. On either the
+ * mock sends the BFF's default `no-store` (`withBffCachePolicy`), not the `no-store, no-cache` that
+ * the API's own 429 was measured to carry on verify-pin on 2026-10-17.
  */
 const BFF_ACTION_INSTANCES: Record<string, string> = {
   'verify-pin': '/api/auth/pin/verify',
@@ -1501,15 +1502,17 @@ const revealAccountNumber = api.get(
       {
         /*
           The one response in the system that carries an unmasked account number, and the only one
-          the controller gives cache directives to (ASVS 14.3.2). Measured on the running stack,
-          and measured on a NEIGHBOUR to be sure it is specific rather than global:
+          the API's controller gives cache directives to (ASVS 14.3.2). Measured on the running
+          stack, before the BFF put a default of its own on the answers under /api and /bff, and
+          measured on a NEIGHBOUR to be sure it was specific rather than global:
 
             GET /api/accounts/{id}/full-number -> Cache-Control: no-store, Pragma: no-cache
             GET /api/accounts                  -> neither header present
 
-          It matters here and not only in production: this is exactly the kind of header a
-          front-end change could silently drop — a `fetch` with the wrong `cache` mode, a service
-          worker added later — and a mock that never sets it can never fail the test that notices.
+          Since that default the neighbour carries the same pair, so only the BFF's tests tell the
+          reveal's own headers from it. They are set here all the same, as the API sets them: a
+          mock that never sets them cannot drift from the API on them, and the default
+          (`withBffCachePolicy`) leaves an answer that names its own policy as it is.
         */
         headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
       },
@@ -4619,6 +4622,38 @@ const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
   });
 });
 
+/**
+ * What the BFF does to every answer under `/api` and `/bff` that names no `Cache-Control` of its
+ * own: `no-store` and `Pragma: no-cache`, added when the response starts, after the proxy has
+ * copied the API's headers in (`SecurityHeadersMiddleware`). An answer that names a policy keeps
+ * it, as the reveal's and the 429's do. A path that only begins like a prefix (`/apix`) gets
+ * nothing, and none of the mock's handlers answers one.
+ *
+ * Applied to the handler instead of to each answer: a great many responses are built in this
+ * file, and the rule is the BFF's, not any one route's. `run` is MSW's public entry for a handler,
+ * and a response built by `HttpResponse.error()` has no headers to set, so it is left alone.
+ */
+const BFF_CACHE_POLICY_PATH = /^\/(?:api|bff)(?:\/|$)/;
+
+function withBffCachePolicy<T extends RequestHandler>(handler: T): T {
+  const run = handler.run.bind(handler);
+  handler.run = async (args) => {
+    const result = await run(args);
+    const response = result?.response;
+    if (
+      response &&
+      response.type !== 'error' &&
+      BFF_CACHE_POLICY_PATH.test(new URL(args.request.url).pathname) &&
+      !response.headers.has('Cache-Control')
+    ) {
+      response.headers.set('Cache-Control', 'no-store');
+      response.headers.set('Pragma', 'no-cache');
+    }
+    return result;
+  };
+  return handler;
+}
+
 export const handlers = [
   sessionActivity,
   listAccounts,
@@ -4653,4 +4688,4 @@ export const handlers = [
   sessionStatus,
   // LAST, always. Everything above declines before this speaks.
   unmockedApiRoute,
-];
+].map(withBffCachePolicy);
