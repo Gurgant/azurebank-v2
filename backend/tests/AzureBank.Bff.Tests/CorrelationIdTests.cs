@@ -272,21 +272,9 @@ public class CorrelationIdTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task TheHandler_SendsNoIdOutsideARequest_AndTheRequestsIdInsideOne()
     {
         var sent = new List<string[]>();
-        using var invoker = new HttpMessageInvoker(new CorrelationIdHandler
-        {
-            InnerHandler = new FakeBackendApiHandler(request =>
-            {
-                sent.Add(request.Headers.TryGetValues(Header, out var values) ? [.. values] : []);
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }),
-        });
+        using var invoker = HandlerRecordingInto(sent);
 
-        async Task CallTheApi()
-        {
-            using var request = new HttpRequestMessage(
-                HttpMethod.Post, "https://localhost:7215/api/auth/revoke");
-            using var response = await invoker.SendAsync(request, CancellationToken.None);
-        }
+        Task CallTheApi() => SendRevoke(invoker);
 
         await CallTheApi();
 
@@ -300,5 +288,57 @@ public class CorrelationIdTests : IClassFixture<WebApplicationFactory<Program>>
         sent[0].Should().BeEmpty("outside any request there is no id, and the handler invents none");
         sent[1].Should().Equal("bff-own-call-2");
         sent[2].Should().BeEmpty("the id ends with the request that settled on it");
+    }
+
+    /*
+      The reason the id sits in an AsyncLocal and not on the request. A renewal that TokenRefresher
+      starts with Task.Run takes the id with it and can still be sending when its request has
+      ended; the gate keeps this one waiting until the middleware has returned, which is the
+      control, and it must still go out under the id of the request that started it.
+    */
+    [Fact]
+    public async Task ARenewalStartedWithTaskRun_GoesOutUnderItsRequestsId_AfterTheRequestHasEnded()
+    {
+        var sent = new List<string[]>();
+        using var invoker = HandlerRecordingInto(sent);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewal = Task.CompletedTask;
+
+        var context = new DefaultHttpContext();
+        context.Request.Headers[Header] = "bff-own-call-3";
+        await new AzureBank.Bff.Middleware.CorrelationIdMiddleware(_ =>
+        {
+            renewal = Task.Run(async () =>
+            {
+                await gate.Task;
+                await SendRevoke(invoker);
+            });
+            return Task.CompletedTask;
+        }).InvokeAsync(context);
+
+        sent.Should().BeEmpty("the control: the request has ended and the renewal has not yet sent");
+
+        gate.SetResult();
+        await renewal;
+
+        sent.Should().ContainSingle().Which.Should().Equal("bff-own-call-3");
+    }
+
+    /// <summary>The handler under test, in front of a stand-in API that keeps each call's ids.</summary>
+    private static HttpMessageInvoker HandlerRecordingInto(List<string[]> sent) =>
+        new(new CorrelationIdHandler
+        {
+            InnerHandler = new FakeBackendApiHandler(request =>
+            {
+                sent.Add(request.Headers.TryGetValues(Header, out var values) ? [.. values] : []);
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }),
+        });
+
+    private static async Task SendRevoke(HttpMessageInvoker invoker)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "https://localhost:7215/api/auth/revoke");
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
     }
 }

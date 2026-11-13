@@ -84,8 +84,8 @@ public partial class CorrelationIdMiddleware
             return Task.CompletedTask;
         });
 
-        // Set inside this async method, so the value ends when the method does: the next request
-        // handled on this thread starts without it.
+        // Set inside this async method, so its caller never sees it: the next request handled on
+        // this thread starts without it. Work started from here keeps its own copy.
         SettledId.Value = correlationId;
 
         using (LogContext.PushProperty("CorrelationId", correlationId))

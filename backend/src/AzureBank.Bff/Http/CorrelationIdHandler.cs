@@ -14,7 +14,9 @@ namespace AzureBank.Bff.Http;
 /// <b>It reads <see cref="CorrelationIdMiddleware.CurrentId"/>, never the request.</b> A renewal
 /// that <c>TokenRefresher</c> starts with <c>Task.Run</c> carries the execution context of the
 /// request that started it, and can still be sending after that request has ended, when its
-/// headers are not to be read.
+/// headers are not to be read. A session has one renewal at a time, so a request that joins a
+/// renewal already running adds no call of its own: the API logs that renewal under the id of the
+/// request that started it, and the joiner's id does not reach the API.
 /// </para>
 /// <para>
 /// <b>Outside a request it adds nothing, and invents nothing.</b> The grant revoker's workers and
