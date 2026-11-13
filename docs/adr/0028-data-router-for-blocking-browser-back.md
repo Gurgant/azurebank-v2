@@ -48,12 +48,17 @@ throws.
    it would leave with no key to ask after, and the money would still move. The page's own exit is
    not held. `useIdempotentMutation` and `DeleteAccountDialog` refuse to send once their page has
    unmounted, and the wizard's `run` refuses from the moment "Leave anyway" is chosen, because the
-   router removes the page only once it has drawn the next one. A Back can also land on another
-   entry of the same route, and that page stays: so a confirm takes an attempt when it starts, the
-   choice abandons every attempt taken before it, and neither the page nor `run` sends for one. A
-   press made after the choice is a new attempt. The question is the one a held key gets. Its
-   words, for a send that may have reached the bank, are cautious while the PIN is still being
-   checked and not untrue.
+   router removes the page only once it has drawn the next one. A sign-out sends nothing for another
+   reason: `ProtectedRoute` puts `<Navigate to="/login">` in the place of the page the moment the
+   session leaves `authenticated`, so the page, its mounted ref and its blocker are gone before
+   the router is asked for `/login`, and the mounted check refuses the send. The same holds for a
+   dialog, which sits under the same `ProtectedRoute`. A navigation to `/login` that does reach a
+   page still mounted (a Back onto a `/login` entry) is not held, and it abandons every attempt as
+   it starts. A Back can also land on another entry of the same route, and that page stays: so a
+   confirm takes an attempt when it starts, the choice abandons every attempt taken before it, and
+   neither the page nor `run` sends for one. A press made after the choice is a new attempt. The
+   question is the one a held key gets. Its words, for a send that may have reached the bank, are
+   cautious while the PIN is still being checked and not untrue.
 
 ## Rejected
 
@@ -78,9 +83,6 @@ throws.
 - Not covered: the double-spend window ADR-0022 accepts: an abandoned key is lost until its TTL.
 - Not covered: deposit and withdraw are dialogs, not routes: `beforeunload` is their only guard.
   A withdrawal left during its PIN check sends nothing (decision 9).
-- Not covered: the sign-out has no choice to mark. For the moment the router takes to draw the
-  sign-in page, the page it leaves is still mounted and a send is not refused; only the page's
-  going refuses it.
 - Not covered: no test fails when `keyLive` is reduced to `keyRetained`. `isSubmitting` alone holds
   the guard for one render that no navigation reaches, and a render-trace assertion would break on
   React's scheduling, not on the app's behaviour.

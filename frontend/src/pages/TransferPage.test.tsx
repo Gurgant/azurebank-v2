@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vit
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
-import { StepUpModal } from '../features/auth';
+import { StepUpModal, sessionExpired } from '../features/auth';
+import { apiSlice } from '../features/api/apiSlice';
+import { ProtectedRoute } from '../components/layout/ProtectedRoute';
 import { TransferPage } from './TransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
@@ -1314,9 +1316,9 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     },
   );
 
-  it('sends nothing when the session ends while the PIN is being checked', async () => {
-    // The sign-in page is the one place the browser's Back is not held (ADR-0028), so the page's
-    // refusal to send once it is gone is all that stands between the answer and the transfer.
+  it('sends nothing when the visitor is sent to the sign-in page while the PIN is being checked', async () => {
+    // A navigation to the sign-in page is not held (ADR-0028), and it abandons the attempts of the
+    // page it reaches. This one reaches the page mounted; a sign-out does not (next describe).
     const sends = watchSends();
     const mint = holdTheMint('*/api/transfers/authorizations');
     const { router, store } = await toReview();
@@ -1333,8 +1335,8 @@ describe('external transfer: the shortcuts of the form and the ways off the page
   });
 
   it('does not move the visitor off the sign-in page when the PIN check then answers PIN_REQUIRED', async () => {
-    // The page is gone without "Leave anyway", so the attempt is not abandoned: the refusal that
-    // comes in late has to find that out from the page, or it takes the visitor to PIN setup.
+    // The page is gone without "Leave anyway": the refusal that comes in late must not take the
+    // visitor to PIN setup, whether it finds the attempt abandoned or the page gone.
     const sends = watchSends();
     const mint = holdTheMint('*/api/transfers/authorizations', () =>
       problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
@@ -1353,6 +1355,66 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     expect(sends).toEqual([]);
     expect(router.state.location.pathname + router.state.location.search).toBe(where);
     expect(where).toBe('/login');
+  });
+
+  it('sends nothing when the session ends while the PIN is being checked, through the real ProtectedRoute', async () => {
+    /*
+      The way the app ends a session: the auth status leaves 'authenticated' (a 401 that logs out,
+      the expiry warning), and ProtectedRoute puts <Navigate to="/login"> in the place of the page.
+      The page, its mounted ref and its blocker are gone before the router is asked for /login, so
+      the blocker is never consulted and the mounted check refuses the send.
+
+      Evidence, not a red proof: this passes at cb07be52, before the blocker counted a navigation
+      to /login, because the send was refused on this path already.
+    */
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const store = makeTestStore();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
+    const { router } = renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <TransferPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/login" element={<div>SIGN IN</div>} />
+      </Routes>,
+      { routerEntries: ['/'], store },
+    );
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    // The mint is released at the moment the router is asked for /login, and the page is looked
+    // for at the same moment.
+    const asked: { to: string; pageThere: boolean }[] = [];
+    const navigate = router.navigate.bind(router);
+    router.navigate = ((to: unknown, opts?: unknown) => {
+      // `Navigate` hands the router a location object, `navigate('/login')` a string.
+      const path = typeof to === 'string' ? to : ((to as { pathname?: string }).pathname ?? '');
+      asked.push({ to: path, pageThere: screen.queryByLabelText('Digit 1 of 6') !== null });
+      if (path === '/login') mint.release();
+      return (navigate as (a: unknown, b?: unknown) => Promise<void>)(to, opts);
+    }) as typeof router.navigate;
+
+    await act(async () => {
+      store.dispatch(sessionExpired());
+    });
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+    await mint.answered(store);
+
+    expect(asked).toEqual([{ to: '/login', pageThere: false }]);
+    expect(sends).toEqual([]);
+    expect(router.state.location.pathname).toBe('/login');
   });
 });
 

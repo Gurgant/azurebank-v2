@@ -59,9 +59,10 @@ export type MoneyWizardStep = 'form' | 'review' | 'pin';
 
 /**
  * One confirm, from the press that starts it. `abandoned` turns true when the visitor chooses to
- * leave, and stays true: the router can then land on another entry of the same route, the page
- * stays mounted, and what the attempt was still waiting for (the answer to its request for an
- * authorisation) must not become a send. A press made after that is a new attempt.
+ * leave, or navigates to the sign-in page, and stays true: the router can then land on another
+ * entry of the same route, the page stays mounted, and what the attempt was still waiting for (the
+ * answer to its request for an authorisation) must not become a send. A press made after that is
+ * a new attempt.
  */
 export interface MoneyAttempt {
   readonly abandoned: boolean;
@@ -237,8 +238,9 @@ export function useMoneyWizard<TBody, TResult>(
   // Set when "Leave anyway" is chosen. The router removes the page only once it has drawn the next
   // one, a moment after the choice, and `run` sends nothing from a page in that moment.
   const leaving = useRef(false);
-  // Counts the choices to leave. An attempt remembers the count it started under, so it is
-  // abandoned for good by the first choice after it, whatever the router then does.
+  // Counts the choices to leave and the navigations to /login. An attempt remembers the count it
+  // started under, so it is abandoned for good by the first choice after it, whatever the router
+  // then does.
   const abandonments = useRef(0);
 
   /*
@@ -287,10 +289,14 @@ export function useMoneyWizard<TBody, TResult>(
     It is held from the sixth digit, not from the send. The request for the authorisation comes
     first and the send follows its answer with nothing between them, so on a first attempt a visitor
     who went back in that wait left with no key held and no way to ask after the send. One who
-    leaves anyway, by "Leave anyway" or by the sign-out below, takes the page with them, and
-    `useIdempotentMutation` then refuses the send. Between the choice and the page going, `run`
-    refuses it too (`leaving`); the sign-out has no choice to mark, so for the moment the router
-    takes to draw the sign-in page the refusal waits for the page to go.
+    leaves anyway, by "Leave anyway", takes the page with them, and `useIdempotentMutation` then
+    refuses the send. Between the choice and the page going, `run` refuses it too (`leaving`).
+    A sign-out is not that: `ProtectedRoute` puts `<Navigate to="/login">` in the place of the
+    page the moment the session leaves `authenticated`, so the page, its mounted ref and this
+    blocker are gone before the router is asked for `/login`, and the mounted check refuses the
+    send. A navigation to the sign-in page that does reach a page still mounted (a Back onto a
+    `/login` entry) is not held and has no choice to wait for, so the predicate abandons every
+    attempt as it starts.
 
     A Back can also land on another entry of the same route, and that page is not removed. The
     attempt then carries the refusal: a flow takes `beginAttempt` before its request for the
@@ -298,10 +304,11 @@ export function useMoneyWizard<TBody, TResult>(
     `run` sends for one. A press after the page is back is a new attempt.
 
     The predicate is a FUNCTION, not `useBlocker(holdsBack)`, and the `/login` exemption is not
-    cosmetic: `ProtectedRoute` renders `<Navigate to="/login" replace />` the moment auth leaves
-    `authenticated`, the router consults the blocker on REPLACE too, and both money routes sit
-    inside `ProtectedRoute`. A boolean blocker would put "are you sure?" in front of a FORCED
-    session-expiry logout, holding the user on a page whose credentials are already dead.
+    cosmetic: both money routes sit inside `ProtectedRoute`, which replaces the page with
+    `<Navigate to="/login" replace />` the moment auth leaves `authenticated`, and the router
+    consults the blocker on REPLACE too. A boolean blocker that were still in place would put
+    "are you sure?" in front of a forced sign-out, holding the user on a page whose credentials
+    are already dead.
 
     The page's own exit is not the browser's Back. When the authorisation is refused and the answer
     sends the visitor on (PIN_REQUIRED), `requestLeave` navigates before the render that ends
@@ -310,8 +317,17 @@ export function useMoneyWizard<TBody, TResult>(
   */
   const blocker = useBlocker(
     useCallback(
-      ({ nextLocation }: { nextLocation: { pathname: string } }) =>
-        !leavingByItself.current && holdsBack && nextLocation.pathname !== '/login',
+      ({ nextLocation }: { nextLocation: { pathname: string } }) => {
+        if (nextLocation.pathname === '/login') {
+          // A navigation to /login that reaches a mounted page (a Back onto a /login entry):
+          // never held, and not read from `holdsBack` either, which can be one render behind
+          // between the authorisation's answer and the send. An attempt that is not pending loses
+          // nothing by being counted. `leaving` is left alone: nothing would clear it.
+          abandonments.current += 1;
+          return false;
+        }
+        return !leavingByItself.current && holdsBack;
+      },
       [holdsBack],
     ),
   );

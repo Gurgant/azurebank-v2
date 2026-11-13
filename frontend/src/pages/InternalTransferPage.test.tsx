@@ -779,8 +779,8 @@ describe('internal transfer: the shortcuts of the form and the ways off the page
   });
 
   it('does not move the visitor off the sign-in page when the PIN check then answers PIN_REQUIRED', async () => {
-    // The page is gone without "Leave anyway", so the attempt is not abandoned: the refusal that
-    // comes in late has to find that out from the page, or it takes the visitor to PIN setup.
+    // The page is gone without "Leave anyway": the refusal that comes in late must not take the
+    // visitor to PIN setup, whether it finds the attempt abandoned or the page gone.
     const sends = watchSends();
     const mint = holdTheMint('*/api/transfers/internal/authorizations', () =>
       problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
