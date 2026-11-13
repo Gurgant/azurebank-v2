@@ -30,17 +30,18 @@ sequenceDiagram
     participant D as SQL Server
 
     B->>F: POST /api/transfers/authorizations, the PIN, the session cookie
-    F->>A: the same request, plus the service key and the bearer
+    F->>A: the same request without the cookie, plus the service key and the bearer
     A->>D: check the PIN, store a one-shot authorisation
     A-->>F: 201 and the authorisation's id
     F-->>B: the same answer
     B->>F: POST /api/transfers, Idempotency-Key, Step-Up-Authorization, the cookie
-    F->>A: the same request, plus the service key and the bearer
+    F->>A: the same request without the cookie, plus the service key and the bearer
     A->>D: claim the key, committed at once
     A->>D: in one transaction, spend the authorisation, move the money, mark the key executed
+    A->>D: store the answer under the key
     A-->>F: 201 and the transfer's result
     F-->>B: the same answer
-    Note over A: the same request sent again gets the stored answer, marked Idempotency-Replayed
+    Note over A: sent again, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_RESULT_UNKNOWN if the answer was not stored
 ```
 
 The messages are the whole security story: **the browser holds a cookie, never the JWT.** "The
