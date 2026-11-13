@@ -283,7 +283,7 @@ describe('deposit during an outage', () => {
     ],
     [
       'typing a character the amount field drops',
-      () => userEvent.type(screen.getByLabelText('Deposit amount'), ','),
+      () => userEvent.type(screen.getByLabelText('Deposit amount'), 'x'),
     ],
   ])(
     'after an unknown outcome, %s is no edit: Deposit again re-sends the same key',
