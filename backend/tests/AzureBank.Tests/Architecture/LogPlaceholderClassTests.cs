@@ -156,7 +156,7 @@ public class LogPlaceholderClassTests
         ["RequestDeadlineSeconds"] = Operational, // a setting the API starts with (ADR-0058)
         ["RequestMethod"] = Operational,
         ["Revoked"] = Operational, // grants a graceful stop revoked: a count
-        ["Resource"] = Operational, // one of five constants the BFF derives from the first path segment, never the segment itself
+        ["Resource"] = Operational, // one of six constants the BFF derives from the first path segment, never the segment itself
         ["RoutePattern"] = Operational, // "/api/users/{azureTag}": a constant of the code, never a value
         ["Runner"] = Operational,
         ["RunnerName"] = Operational,

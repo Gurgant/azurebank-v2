@@ -40,7 +40,7 @@ public static class RequestLogRoute
             : Unmatched;
 
     /// <summary>
-    /// The resource class a request addresses, as one of five constants: the first segment after
+    /// The resource class a request addresses, as one of six constants: the first segment after
     /// <c>/api/</c> when it names a controller the API has, else <c>other</c>. YARP's catch-all
     /// pattern is the same for the ledger and the reveal endpoint, so a security line naming only
     /// the pattern lost what a probe hit; this gives it back without a value that could be a
@@ -60,7 +60,7 @@ public static class RequestLogRoute
 
     private static readonly HashSet<string> Resources = new(StringComparer.Ordinal)
     {
-        "accounts", "auth", "transfers", "users",
+        "accounts", "auth", "transactions", "transfers", "users",
     };
 
     /// <summary>
