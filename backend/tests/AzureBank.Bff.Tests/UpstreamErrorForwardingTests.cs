@@ -155,7 +155,9 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
     public async Task TheApis503_IsForwardedWithItsNoStore()
     {
         // The API marks its outage 503 no-store (ADR-0058): it describes a moment. The BFF's copy of
-        // it kept the status and the body and dropped the header.
+        // it kept the status and the body and dropped the header. The upstream also says private,
+        // which the BFF's own default for /bff answers (a bare no-store) never writes, so a dropped
+        // forward shows up here instead of hiding behind that default.
         var client = ClientWithUpstream(
             HttpStatusCode.ServiceUnavailable,
             """{"status":503,"title":"Service Unavailable","errorCode":"SERVICE_UNAVAILABLE","retryAfterSeconds":10}""",
@@ -163,7 +165,7 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
             upstream =>
             {
                 upstream.Headers.Add("Retry-After", "10");
-                upstream.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+                upstream.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true, Private = true };
             });
 
         var response = await PostLogin(client);
@@ -171,6 +173,7 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
         response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
         response.Headers.CacheControl.Should().NotBeNull("the API's Cache-Control is forwarded with its 503");
         response.Headers.CacheControl!.NoStore.Should().BeTrue();
+        response.Headers.CacheControl.Private.Should().BeTrue("the value is the API's own, not the BFF's default");
     }
 
     [Fact]
