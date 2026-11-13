@@ -1,6 +1,7 @@
 # ADR-0028: A data router, bought for one hook — blocking browser Back on a live idempotency key
 
-**Status:** Accepted · **Date:** 2026-07-31 · **Amended:** 2026-08-04 (decision 6, ADR-0033) ·
+**Status:** Accepted · **Date:** 2026-07-31 · **Amended:** 2026-08-04 (decision 6, ADR-0033),
+2026-11-13 (decision 9) ·
 **Decision Makers:** Vladislav Aleshaev
 
 ## Context
@@ -41,6 +42,23 @@ throws.
    the original request lives inside the base query, and TanStack has no equivalent seam.
 8. **`fetch` stays; axios is not added**, because `problemBaseQuery` already does interceptors,
    error normalisation and retry, and cancellation comes from RTK Query's `AbortSignal`.
+9. **The blocker also holds while the PIN is being checked, and a page that has gone sends
+   nothing**, because the authorisation is asked for first and the send follows its answer with
+   nothing between: on a first attempt no key is held in that wait, so a visitor who went back in
+   it would leave with no key to ask after, and the money would still move. The page's own exit is
+   not held. `useIdempotentMutation` and `DeleteAccountDialog` refuse to send once their page has
+   unmounted, and the wizard's `run` refuses from the moment "Leave anyway" is chosen, because the
+   router removes the page only once it has drawn the next one. A sign-out sends nothing for another
+   reason: `ProtectedRoute` puts `<Navigate to="/login">` in the place of the page the moment the
+   session leaves `authenticated`, so the page, its mounted ref and its blocker are gone before
+   the router is asked for `/login`, and the mounted check refuses the send. The same holds for a
+   dialog, which sits under the same `ProtectedRoute`. A navigation to `/login` that does reach a
+   page still mounted (a Back onto a `/login` entry) is not held, and it abandons every attempt as
+   it starts. A Back can also land on another entry of the same route, and that page stays: so a
+   confirm takes an attempt when it starts, the choice abandons every attempt taken before it, and
+   neither the page nor `run` sends for one. A press made after the choice is a new attempt. The
+   question is the one a held key gets. Its words, for a send that may have reached the bank, are
+   cautious while the PIN is still being checked and not untrue.
 
 ## Rejected
 
@@ -64,6 +82,7 @@ throws.
   `{ status: 502, errorCode: 'HTTP_502' }`, so the key is retained by the `status >= 500` branch.
 - Not covered: the double-spend window ADR-0022 accepts: an abandoned key is lost until its TTL.
 - Not covered: deposit and withdraw are dialogs, not routes: `beforeunload` is their only guard.
+  A withdrawal left during its PIN check sends nothing (decision 9).
 - Not covered: no test fails when `keyLive` is reduced to `keyRetained`. `isSubmitting` alone holds
   the guard for one render that no navigation reaches, and a render-trace assertion would break on
   React's scheduling, not on the app's behaviour.
@@ -71,7 +90,12 @@ throws.
 ## Verified by
 
 - `useMoneyWizard.blocker.test.tsx`: warn, leave, stay, the `/login` exemption, REPLACE, POP, the
-  retryable 5xx, the prompt that closes itself. `renderWithProviders.test.tsx`: the test helper.
+  retryable 5xx, the prompt that closes itself, the PIN check, the page's own exit and the choice
+  to leave.
+  `renderWithProviders.test.tsx`: the test helper.
+- Decision 9's refused send: `policies.test.tsx`, `useMountedRef.test.tsx`, `TransferPage.test.tsx`,
+  `InternalTransferPage.test.tsx`, `withdraw.test.tsx` and `DeleteAccountDialog.test.tsx`; the
+  page's own exit to PIN setup while the PIN is checked: `transfer-pin-recovery.test.tsx`.
 - `RouteError.test.tsx`: a throwing route, and a throw above `RouterProvider`.
 
 ## Related

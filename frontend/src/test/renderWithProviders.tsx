@@ -23,17 +23,54 @@ import { apiSlice } from '../features/api/apiSlice';
  * store of the worker's shared page, a store an earlier test left behind included.
  */
 export function makeTestStore(...observers: Middleware[]) {
-  return configureStore({
+  const seen: SeenAction[] = [];
+  const store = configureStore({
     reducer: {
       auth: authReducer,
       [apiSlice.reducerPath]: apiSlice.reducer,
     },
     middleware: (getDefaultMiddleware) =>
-      getDefaultMiddleware().concat(apiSlice.middleware, sessionMiddleware, ...observers),
+      getDefaultMiddleware().concat(
+        apiSlice.middleware,
+        sessionMiddleware,
+        remember(seen),
+        ...observers,
+      ),
   });
+  actionsSeenBy.set(store, seen);
+  return store;
 }
 
 export type TestStore = ReturnType<typeof makeTestStore>;
+
+/** An action that reached a test store: its type, and the endpoint when RTK Query made it. */
+export interface SeenAction {
+  type: string;
+  endpointName?: string;
+}
+
+const actionsSeenBy = new WeakMap<object, SeenAction[]>();
+
+/** Notes every action in order. A thunk's own dispatches pass through the chain, so they are noted. */
+function remember(seen: SeenAction[]): Middleware {
+  return () => (next) => (action) => {
+    const { type, meta } = action as { type?: unknown; meta?: { arg?: { endpointName?: string } } };
+    if (typeof type === 'string') seen.push({ type, endpointName: meta?.arg?.endpointName });
+    return next(action);
+  };
+}
+
+/**
+ * Every action the store has seen so far, oldest first. A test that has to know the client has
+ * finished with an answer reads it: the answer to a request is an action, and what the client does
+ * next, a send included, starts with another.
+ */
+export function actionsSeen(store: TestStore): readonly SeenAction[] {
+  const seen = actionsSeenBy.get(store);
+  if (!seen)
+    throw new Error('This store was not made by makeTestStore, so its actions are not kept.');
+  return seen;
+}
 
 type RouterEntry = string | { pathname: string; state?: unknown };
 

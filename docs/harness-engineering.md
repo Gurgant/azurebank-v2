@@ -1,10 +1,12 @@
 # Harness engineering on AzureBank
 
 AzureBank is a banking application (a .NET API, a React frontend, SQL Server) that I build
-alone, with four AI coding agents working under my direction. I designed it and I read every
-change I merge; 64 [decision records][adr] say why it is built the way it is. Harness
-engineering is the part of that work that is not the application: what I build around agents
-made by others. It has three parts:
+alone, with four AI coding agents working under my direction. I designed it, and before I merge
+a change I read its diff with a list of the test and workflow files it edits, because those are
+the files where a check can be made easier to pass; that reading is
+[my own statement](#what-this-does-not-show). 64 [decision records][adr] say why it is built the
+way it is. Harness engineering is the part of that work that is not the application: what I
+build around agents made by others. It has three parts:
 
 - **what they read:** I give every agent the same public [instruction file][ag], with the
   commands, what "done" means and [what an agent never does][never];

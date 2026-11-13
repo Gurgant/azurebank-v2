@@ -1649,6 +1649,33 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(sent.count).toBe(1);
   });
 
+  it('8j — a send asked for after the page or dialog that owns the intent has gone is refused', async () => {
+    /*
+      A flow asks for its authorisation before it calls `submit`, and a visitor can leave in that
+      wait, which takes the page or dialog with it. The send that follows has nowhere to show a
+      receipt, an error or the check view, and its key would live only in this hook: so it is
+      refused, before a key is made, and no request leaves.
+    */
+    const sent = countDeposits(() => depositOk());
+    const { Wrapper } = hookWrapper();
+    const { result, unmount } = renderHook(() => useDepositIntent(), { wrapper: Wrapper });
+    const { submit } = result.current;
+    unmount();
+    // The key is made by `crypto.randomUUID()`: a refusal that came after it would show as a call.
+    const makeKey = vi.spyOn(crypto, 'randomUUID');
+    try {
+      const refused = await settle(submit({ accountId: UUID, amount: 50 }));
+
+      expect(refused.ok).toBe(false);
+      if (refused.ok) throw new Error('unreachable');
+      expect(refused.error).toBeInstanceOf(Error);
+      expect(sent.count).toBe(0);
+      expect(makeKey).not.toHaveBeenCalled();
+    } finally {
+      makeKey.mockRestore();
+    }
+  });
+
   it('8d — the money classifier words a 409 that names no code as a check for a send, as a failure for a mint', () => {
     // What `toApiProblem` makes of a 409 whose body it could not trust: the status, and the code
     // derived from it. The hook latches the check for it (6g), so the words must match the view.

@@ -9,6 +9,7 @@
   //   dotnet user-secrets set "Audit:AnchorKey" "<random string, 32+ chars>"
   //   dotnet user-secrets set "Security:PinPepper" "<random string, 32+ chars>"
   //   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<connection string>"
+  //   dotnet user-secrets set "ServiceCredential:BffKey" "<random string, 32+ chars, the same value in the BFF>"
   "ConnectionStrings": {
     "DefaultConnection": "Server=(localdb)\\MSSQLLocalDB;Database=AzureBank;Trusted_Connection=True;TrustServerCertificate=True"
   },
@@ -57,6 +58,15 @@
     // (user-secrets/Key Vault), NEVER here in appsettings (config merges dictionaries
     // across providers, so a value left here can never be removed and leaks a secret).
     // "PreviousPinPeppers": { "1": "<the-previous-pepper-being-rotated-out>" }
+  },
+
+  "ServiceCredential": {
+    // The key the BFF presents in X-AzureBank-Service-Key on every call (ADR-0055). Server-side
+    // only, never stored in the database. Generate a random string, 32+ chars, and give the BFF
+    // the SAME value: the API answers 401 to a key it does not hold. The placeholder is shorter
+    // than 32 on purpose: left as it is, the API refuses to start rather than take a key that
+    // this file publishes.
+    "BffKey": "<set-it-with-user-secrets>"
   },
 
   "SeedData": {

@@ -43,6 +43,12 @@ digits are exhausted instantly, so the PIN is also peppered (ADR-0011).
 - Rejected: scrypt, because it is memory-hard but OWASP ranks it below Argon2id.
 - Rejected: PBKDF2 for the PIN, because it is not memory-hard and is vulnerable to GPU
   acceleration.
+- Rejected: Argon2id for account passwords, because Identity already writes and verifies its PBKDF2
+  format and says when a hash needs a higher count, and a second function would make the equal
+  cost of every sign-in path, which the tests count in PBKDF2 rounds, approximate in time or twice
+  as high (ADR-0012). At the PIN's 19 MiB profile, about 50 checks at once would fill the API's
+  1 GiB container. On the demo every password is drawn with about 92 bits and registration is
+  closed, so no function changes offline cracking there.
 
 ## Consequences
 

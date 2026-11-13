@@ -118,6 +118,9 @@ export function InternalTransferPage() {
   const accountsHoldThePage =
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
   const [transferTrigger] = useTransferInternalMutation();
+  // Before the wizard, which holds the browser's Back for the request for an authorisation.
+  const [authoriseInternalTransfer, { isLoading: isMinting }] =
+    useAuthoriseInternalTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
     // of those here a compile error. SAME_ACCOUNT_TRANSFER is kept although it is UNREACHABLE over
@@ -133,6 +136,7 @@ export function InternalTransferPage() {
       ACCOUNT_NOT_FOUND: MOVE_ACCOUNT_CLOSED,
     },
     fallback: 'Transfer failed. Please try again.',
+    minting: isMinting,
   });
   // Destructured under the names the markup already used, so this change is confined to the machine.
   const {
@@ -149,20 +153,18 @@ export function InternalTransferPage() {
   } = wizard;
 
   // ===== PIN step (ADR-0041) — same shape as TransferPage and WithdrawDialog. =====
-  const [authoriseInternalTransfer, { isLoading: isMinting }] =
-    useAuthoriseInternalTransferMutation();
-
   /*
     Every exit, held for BOTH phases of the submit.
 
-    `keyLive` is `isSubmitting || keyRetained` (useMoneyWizard.ts:142), and neither is set until
+    `keyLive` is `isSubmitting || keyRetained` (`useMoneyWizard`), and neither is set until
     `wizard.run` starts — so for the whole MINT round trip `keyLive` is false and every control it
     guards is live. The PIN input was taught the two-phase guard when the mint landed; the exits
     were not, so a user could press Back mid-mint, watch the wizard step backwards, and have the
     transfer complete underneath them.
 
     One name for the rule, used by the header and by the PIN step's own Back, so the two cannot
-    answer differently.
+    answer differently. The browser's Back is not a control of the page: the wizard holds it for
+    the mint (`minting`).
   */
   const exitLocked = keyLive || isMinting;
 
@@ -507,6 +509,23 @@ export function InternalTransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
+    const attempt = wizard.beginAttempt();
+    /*
+      What the page lets go of when the attempt is abandoned: the PIN, and the authorisation this
+      attempt minted, which goes with it. The key stays. An attempt that re-presents a held
+      authorisation sends at once, with no wait in which the visitor could leave, so it never ends
+      here.
+    */
+    const letGoOfTheAttempt = (mintedHere: boolean) => {
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      if (mintedHere) {
+        lastAuthorization.current = null;
+        setAuthorizationHeld(false);
+      }
+    };
+    let mintedHere = false;
     setConfirming(true);
     try {
       let authorizationId: string;
@@ -523,11 +542,31 @@ export function InternalTransferPage() {
           authorizationId = minted.authorizationId;
           lastAuthorization.current = authorizationId;
           setAuthorizationHeld(true);
+          mintedHere = true;
         } catch (caught) {
+          // The visitor has left, and this answer is for a page they are no longer on: a refusal
+          // here must not navigate to PIN setup nor show a wrong PIN on the page they came back to.
+          if (attempt.abandoned) {
+            letGoOfTheAttempt(false);
+            return;
+          }
           wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
           handleRefusal(caught as ApiProblem, 'mint');
           return;
         }
+      }
+
+      /*
+        The visitor chose "Leave anyway" while the PIN was being checked. The Back may have landed
+        on another entry of this page, which stays, or on another route, whose page is going.
+        Nothing is sent for the PIN they typed before they left; the boxes are emptied, as for an
+        outage of the check, and a PIN typed now is a new attempt. An authorisation this attempt
+        minted goes with it; the answer of a refused mint is dropped the same way, in the catch
+        above.
+      */
+      if (attempt.abandoned) {
+        letGoOfTheAttempt(mintedHere);
+        return;
       }
 
       const result = await wizard.run(
@@ -538,6 +577,7 @@ export function InternalTransferPage() {
         },
         // A HEADER at the wire: the server fingerprints the body alone.
         { stepUpAuthorizationId: authorizationId },
+        attempt,
       );
       // undefined means it failed and the wizard has already set the banner, the in-flight note or
       // the verify view. Under `strict` this early return is not optional.
@@ -1132,8 +1172,11 @@ export function InternalTransferPage() {
         )}
       </div>
 
-      {/* The browser's Back, held. Every other exit refuses while a key is live; this one ASKS,
-          because after a KEEP-class failure it is the only exit left (ADR-0028). */}
+      {/* The browser's Back, held. Every other exit refuses while a key is live or the PIN is
+          being checked; this one ASKS, because after a KEEP-class failure it is the only exit
+          left (ADR-0028). It is held for the PIN check too, where leaving anyway sends
+          nothing: the words, which say "if it did reach the bank", are cautious there and not
+          untrue. */}
       <ConfirmDialog
         isOpen={wizard.exitPrompt !== null}
         onClose={() => wizard.exitPrompt?.stay()}
