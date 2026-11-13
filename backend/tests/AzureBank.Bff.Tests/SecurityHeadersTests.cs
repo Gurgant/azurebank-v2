@@ -1,6 +1,17 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using AzureBank.Bff.Options;
+using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.DTOs.Auth;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
+using Yarp.ReverseProxy.Forwarder;
 
 namespace AzureBank.Bff.Tests;
 
@@ -37,6 +48,122 @@ public class SecurityHeadersTests : IClassFixture<WebApplicationFactory<Program>
         var response = await _factory.CreateClient().GetAsync(path);
 
         AssertTheWholeSet(response);
+    }
+
+    [Theory]
+    [InlineData("/bff/auth/me")]  // 401, the BFF's own problem body
+    [InlineData("/api/accounts")] // 401, AuthLevelMiddleware refusing an anonymous /api call
+    public async Task AnswersUnderApiAndBff_AreNotStorable(string path)
+    {
+        // Nothing on these two answers sets a Cache-Control of its own, so the middleware's default
+        // is what shows. The signed-in answers that carry the data are pinned next to their routes
+        // (MeReadsThroughToTheApiTests).
+        var response = await _factory.CreateClient().GetAsync(path);
+
+        response.Headers.CacheControl.Should().NotBeNull("the middleware names a policy when none is set");
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+        response.Headers.Pragma.ToString().Should().Be("no-cache", "no-store travels with its Pragma");
+    }
+
+    [Theory]
+    [InlineData("/apix")]
+    [InlineData("/bffx")]
+    public async Task APathThatOnlyBeginsLikeAPrefix_IsGivenNoPolicy(string path)
+    {
+        // The default is for /api and /bff by segment, and for nothing else: a path that merely
+        // starts with the same letters is answered 404 here (no Spa:RootPath), and nothing else on
+        // that road sets a Cache-Control. The probes are no example: the framework names no-store on
+        // them itself.
+        var response = await _factory.CreateClient().GetAsync(path);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.Headers.CacheControl.Should().BeNull();
+        response.Headers.Pragma.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AProxiedAnswer_ThatNamesNoPolicy_IsNotStorable()
+    {
+        // The signed-in answers that carry balances and transactions go through the proxy, which
+        // copies the API's headers in: the API sends no Cache-Control on them.
+        var response = await SignedInGet("/api/accounts", _ => { });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.CacheControl.Should().NotBeNull("the middleware names a policy when none is set");
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+        response.Headers.Pragma.ToString().Should().Be("no-cache");
+    }
+
+    [Fact]
+    public async Task AProxiedAnswer_ThatNamesItsOwnPolicy_KeepsIt()
+    {
+        // The default fills a gap and overrides nothing: the callback runs after the proxy has
+        // copied the API's headers in, so a policy the API chose stays, and Pragma is not added.
+        var response = await SignedInGet(
+            "/api/accounts",
+            upstream => upstream.Headers.CacheControl =
+                new CacheControlHeaderValue { Private = true, MaxAge = TimeSpan.FromSeconds(60) });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.CacheControl.Should().NotBeNull();
+        response.Headers.CacheControl!.Private.Should().BeTrue();
+        response.Headers.CacheControl.MaxAge.Should().Be(TimeSpan.FromSeconds(60));
+        response.Headers.CacheControl.NoStore.Should().BeFalse("the API's own policy is not replaced");
+        response.Headers.Pragma.Should().BeEmpty();
+    }
+
+    /// <summary>Stands in for the API on the proxy's road and lets the test shape its answer.</summary>
+    private sealed class StubUpstream(Action<HttpResponseMessage> shape) : IForwarderHttpClientFactory
+    {
+        public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context) =>
+            new(new FakeBackendApiHandler(_ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"data":[],"message":null}""", Encoding.UTF8, "application/json"),
+                };
+                shape(response);
+                return response;
+            }));
+    }
+
+    /// <summary>A GET through the proxy with a live session's cookie, the upstream answering as shaped.</summary>
+    private async Task<HttpResponseMessage> SignedInGet(string path, Action<HttpResponseMessage> shapeUpstream)
+    {
+        using var host = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(
+                    new StubUpstream(shapeUpstream)));
+
+                // The BFF's own client, which a host that stops uses to revoke the grants it held.
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
+                    new FakeBackendApiHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""{"message":"ok"}""", Encoding.UTF8, "application/json"),
+                    }));
+            }));
+
+        var sessionId = host.Services.GetRequiredService<ISessionService>().CreateSession(
+            "jwt-held-for-this-session",
+            DateTime.UtcNow.AddHours(1),
+            "fake-refresh",
+            DateTime.UtcNow.AddMinutes(60),
+            new UserLoginInfo
+            {
+                Id = Guid.NewGuid(),
+                AzureTag = "cacheuser",
+                Email = "cacheuser@example.com",
+                FirstName = "Cache",
+                LastName = "User",
+                HasPin = true,
+            });
+        var cookieName = host.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+
+        using var client = host.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.TryAddWithoutValidation("Cookie", $"{cookieName}={sessionId}");
+        return await client.SendAsync(request);
     }
 
     [Fact]

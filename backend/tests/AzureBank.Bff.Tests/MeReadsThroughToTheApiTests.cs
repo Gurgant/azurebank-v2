@@ -254,6 +254,19 @@ public class MeReadsThroughToTheApiTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
+    public async Task TheMeAnswerCannotBeStoredByTheBrowser()
+    {
+        // It carries the user's name and e-mail, and the SPA's fetch uses the default cache mode.
+        var (host, _) = NewHost();
+        var client = await SignedIn(host);
+
+        var response = await client.GetAsync("/bff/auth/me");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (response.Headers.CacheControl?.NoStore).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task AReadNeverWritesTheCache()
     {
         /*
