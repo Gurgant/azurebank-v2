@@ -69,6 +69,8 @@ public class AuthController : ControllerBase
     /// <param name="request">Login credentials</param>
     /// <returns>JWT token and user information</returns>
     [HttpPost("login")]
+    [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [AllowAnonymous]
     [TokenEndpoint]
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
@@ -95,6 +97,8 @@ public class AuthController : ControllerBase
     /// <param name="request">Registration details</param>
     /// <returns>User, account, and token information</returns>
     [HttpPost("register")]
+    [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [AllowAnonymous]
     [TokenEndpoint]
     [ClosedInDemo]
@@ -273,6 +277,8 @@ public class AuthController : ControllerBase
     /// <param name="request">PIN to set</param>
     /// <returns>Success message</returns>
     [HttpPost("pin")]
+    [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -302,6 +308,8 @@ public class AuthController : ControllerBase
     /// <param name="request">PIN to verify</param>
     /// <returns>Verification result</returns>
     [HttpPost("pin/verify")]
+    [RequestSizeLimit(32_768)]
+    [RefuseOversizedBody]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

@@ -9,8 +9,9 @@ namespace AzureBank.Api.Attributes;
 
 /// <summary>
 /// Answers 413 <c>PAYLOAD_TOO_LARGE</c> when the action it marks is sent a body over the limit its
-/// endpoint declares: the four authorisation mints, 32,768 bytes each. A resource filter, so it
-/// runs after authentication: with no token the 401 still comes first.
+/// endpoint declares, 32,768 bytes on each: the four authorisation mints, and login, register, set
+/// PIN and verify PIN in <c>AuthController</c>. A resource filter, so it runs after
+/// authentication: with no token the 401 still comes first.
 /// </summary>
 /// <remarks>
 /// A body whose <c>Content-Length</c> is over the limit is read and thrown away first by
@@ -21,8 +22,10 @@ namespace AzureBank.Api.Attributes;
 /// <c>Connection: close</c>. A chunked body has no length to check first: the server's own 413
 /// during the read becomes the same refusal, with the rest of the body unread and
 /// <c>Connection: close</c>. Any other refusal of the server's is left as it is. Held on Kestrel
-/// by <c>KestrelRequestSizeLimitTests</c> and in memory by <c>MintOversizedBodyDrainTests</c>; on
-/// Kestrel no test sends a mint more than 1 MiB or stalls a body.
+/// at the mints by <c>KestrelRequestSizeLimitTests</c>, and in memory by
+/// <c>MintOversizedBodyDrainTests</c> and, for the four routes of <c>AuthController</c>, by
+/// <c>AuthOversizedBodyTests</c>. On Kestrel no test sends a mint more than 1 MiB or stalls a
+/// body, and none sends those four routes an oversized or chunked body.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class RefuseOversizedBodyAttribute : Attribute, IAsyncResourceFilter
