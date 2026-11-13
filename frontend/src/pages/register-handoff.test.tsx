@@ -187,7 +187,7 @@ describe('register: a failure with no banner of its own', () => {
 
     // A MessageBar with no role is a group, not a live region, and Fluent's own announcement of
     // it goes nowhere: this app mounts no AnnounceProvider. Without the role nothing is said.
-    expect(await screen.findByRole('alert')).toHaveTextContent(COPY.unavailable);
+    expect((await screen.findByRole('alert')).textContent).toBe(COPY.unavailable);
     expect(screen.queryByText('PIN SETUP PAGE')).not.toBeInTheDocument();
   });
 });
