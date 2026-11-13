@@ -52,7 +52,7 @@ once.
   after the commit would free the key of a payment that went through, and a retry would pay it
   again. Here the record changes state in the same commit as the money, so it shows whether the
   payment happened. A key's record is kept for 24 hours: the same request sent again later than
-  that is a new payment. Held under 24 concurrent duplicates on a real SQL Server.
+  that is handled as a new request. Held under 24 concurrent duplicates on a real SQL Server.
   [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
   [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs), run on
