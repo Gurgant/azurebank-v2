@@ -628,9 +628,9 @@ export function InternalTransferPage() {
       // a key-DROP class, so this one goes through.
       requestLeave('/pin-setup?returnTo=/transfer/internal');
     } else if (phase === 'mint' && keyLive && refusal !== null && isLimiterRefusal(refusal)) {
-      // A limiter refused the mint made under a held key. The key would keep every exit shut over
-      // boxes that can only ask the limiter again, so the PIN copies go and the check view lets
-      // the key go, as for ACCOUNT_NOT_FOUND above. TransferPage has the reasoning.
+      // A limiter refused the mint made under a held key. The key would keep Back and Close shut
+      // over boxes that can only ask the limiter again, so the PIN copies go and the check view
+      // lets the key go, as for ACCOUNT_NOT_FOUND above. TransferPage has the reasoning.
       setPin('');
       enteredPin.current = '';
       setPinNonce((n) => n + 1);

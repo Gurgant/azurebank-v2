@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { getResponse, http } from 'msw';
+import { HttpResponse, getResponse, http } from 'msw';
 import { expect, vi } from 'vitest';
 import { handlers } from '../mocks/handlers';
 import { problem } from '../mocks/problem';
@@ -66,6 +66,24 @@ export const committedAnswerLost = (instance: string) =>
     extensions: { applied: true },
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
   });
+
+/**
+ * A limiter's 429, by its code. `HTTP_429` is a 429 whose body names no code, which the client
+ * reads as `HTTP_429`; the other two are the codes the API sends (`DEMO_COPY_LIMIT` is a demo copy
+ * past its limit of changes).
+ */
+export function limiterRefusal(code: string) {
+  return code === 'HTTP_429'
+    ? HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 })
+    : problem({
+        status: 429,
+        errorCode: code,
+        detail:
+          code === 'DEMO_COPY_LIMIT'
+            ? 'This demo copy has reached its limit of changes. Start over to get a fresh copy.'
+            : 'Too many requests. Please retry later.',
+      });
+}
 
 /**
  * The browser's focus fixup, which jsdom does not run. Measured in headless Chromium 151 on

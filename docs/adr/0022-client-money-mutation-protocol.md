@@ -59,8 +59,8 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
    go, when the mint of a new authorisation under a held key answers `ACCOUNT_NOT_FOUND`, because
    the account is closed and no authorisation can be had for that key again, and when a limiter
    refuses that mint (`RATE_LIMIT_EXCEEDED`, `DEMO_COPY_LIMIT`, or a 429 whose code cannot be
-   read), because the PIN step could then only mint again, with every exit shut by the key. It is
-   safe: a mint is made under a held key only after every authorisation presented under it was
+   read), because the PIN step could then only mint again, with Back and Close shut by the key. It
+   is safe: a mint is made under a held key only after every authorisation presented under it was
    refused, and the check view stands between the old key and a new one. The withdrawal dialog
    latches so too when the list it reads on Continue lacks its account while a key is held, as for
    an edit.
@@ -105,10 +105,11 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
   its key until the TTL: correctness first. An abort by the caller is decision 3, not this.
 - A record read as committed answers in the 409 itself (`applied: true`); otherwise the user is
   asked to check: with the flag absent, a rejection with no HTTP status, a 409 naming no code, an
-  edit with a key held, or a closed account met under a held key by the mint of a new
-  authorisation or by the withdrawal dialog's check on Continue. The check view then asks the
-  ledger, by key and account: `GET /api/transactions?AccountId=&IdempotencyKey=` lists the rows on
-  that account that the requests sent with the key wrote (ADR-0009), and the payee of a transfer
+  edit with a key held, a closed account or a limiter's refusal met under a held key by the mint of
+  a new authorisation, or a closed account met by the withdrawal dialog's check on Continue. The
+  check view then asks the ledger, by key and account:
+  `GET /api/transactions?AccountId=&IdempotencyKey=` lists the rows on that account that the
+  requests sent with the key wrote (ADR-0009), and the payee of a transfer
   never receives the sender's key. The page is read strictly, and only a row that carries the key
   sent, of the type the send writes there, and `Completed`, counts: an app that does not know the
   parameter, one put back by a failed check (ADR-0061), answers the account's latest page

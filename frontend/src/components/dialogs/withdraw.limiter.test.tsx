@@ -7,22 +7,8 @@ import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { settle } from '../../test/settle';
-import { COPY, lookupsSeen, whenListedByKey } from '../../test/outage';
+import { COPY, limiterRefusal, lookupsSeen, whenListedByKey } from '../../test/outage';
 import { WithdrawDialog } from './WithdrawDialog';
-
-/** A limiter's 429, by its code; `HTTP_429` is one whose body names no code. */
-function limiterRefusal(code: string) {
-  return code === 'HTTP_429'
-    ? HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 })
-    : problem({
-        status: 429,
-        errorCode: code,
-        detail:
-          code === 'DEMO_COPY_LIMIT'
-            ? 'This demo copy has reached its limit of changes. Start over to get a fresh copy.'
-            : 'Too many requests. Please retry later.',
-      });
-}
 
 it.each(['HTTP_429', 'RATE_LIMIT_EXCEEDED', 'DEMO_COPY_LIMIT'])(
   'checks the listing after NETWORK, Retry and a limiter refusal (%s), even when the read is refused',
@@ -154,5 +140,52 @@ it.each(['HTTP_429', 'RATE_LIMIT_EXCEEDED', 'DEMO_COPY_LIMIT'])(
     expect(screen.queryByText('Withdrawal failed. Please try again.')).not.toBeInTheDocument();
     expect(mints).toBe(2);
     expect(keys).toHaveLength(1);
+  },
+);
+
+/*
+  With no key held, the same refusal of the first mint is said on the PIN step, as before: nothing
+  was sent, so there is nothing to check and the X stays open.
+*/
+it.each([
+  { code: 'HTTP_429', said: 'Withdrawal failed. Please try again.' },
+  { code: 'RATE_LIMIT_EXCEEDED', said: 'Too many requests. Please retry later.' },
+  {
+    code: 'DEMO_COPY_LIMIT',
+    said: 'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+  },
+])(
+  'says it on the PIN step and keeps the X open when a limiter ($code) refuses the first authorisation',
+  async ({ code, said }) => {
+    const account = mockState.accounts[0];
+    let withdrawals = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () => limiterRefusal(code)),
+      http.post('*/api/transactions/withdraw', () => {
+        withdrawals += 1;
+        return undefined;
+      }),
+    );
+    renderWithProviders(
+      <WithdrawDialog
+        isOpen
+        onClose={() => {}}
+        accounts={[{ ...account, name: 'Main Account', accountNumber: 'AB-****-****-90' }]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }));
+    expect(await screen.findByText('Verify Withdrawal')).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText(said)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeInTheDocument();
+    expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+    expect(screen.queryByText("Your withdrawal didn't go through")).not.toBeInTheDocument();
+    expect(withdrawals).toBe(0);
   },
 );

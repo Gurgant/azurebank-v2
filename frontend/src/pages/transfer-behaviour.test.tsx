@@ -8,7 +8,14 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
-import { COPY, advance, advanceUntil, fakeClockUser, installFakeClock } from '../test/outage';
+import {
+  COPY,
+  advance,
+  advanceUntil,
+  fakeClockUser,
+  installFakeClock,
+  limiterRefusal,
+} from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
@@ -734,17 +741,18 @@ describe('money flows — the behaviour the unification must preserve', () => {
       authorisation sent under the key was refused, so the check view needs no wait to say that
       nothing went through.
     */
-    const limiterRefusal = (code: string) =>
-      code === 'HTTP_429'
-        ? HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 })
-        : problem({
-            status: 429,
-            errorCode: code,
-            detail:
-              code === 'DEMO_COPY_LIMIT'
-                ? 'This demo copy has reached its limit of changes. Start over to get a fresh copy.'
-                : 'Too many requests. Please retry later.',
-          });
+    // Drives a page to the review step with €50 to the second account or the confirmed payee.
+    async function toReviewOn(page: 'external' | 'internal') {
+      if (page === 'external') {
+        await externalToReview();
+      } else {
+        renderInternal();
+        await screen.findByRole('button', { name: 'From Main Account' });
+        await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+        await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+        await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      }
+    }
 
     it.each(
       (['external', 'internal'] as const).flatMap((page) =>
@@ -771,15 +779,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
             });
           }),
         );
-        if (page === 'external') {
-          await externalToReview();
-        } else {
-          renderInternal();
-          await screen.findByRole('button', { name: 'From Main Account' });
-          await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
-          await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
-          await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-        }
+        await toReviewOn(page);
         await confirmWithPin();
         expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
         await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
@@ -798,6 +798,44 @@ describe('money flows — the behaviour the unification must preserve', () => {
         ).not.toBeInTheDocument();
         expect(mints).toBe(2);
         expect(sends).toBe(1);
+      },
+    );
+
+    // With no key held the same refusal of the first mint is said on the PIN step, as before:
+    // nothing was sent, so there is nothing to check and the exits stay open.
+    it.each(
+      (['external', 'internal'] as const).flatMap((page) =>
+        [
+          { code: 'RATE_LIMIT_EXCEEDED', said: 'Too many requests. Please retry later.' },
+          {
+            code: 'DEMO_COPY_LIMIT',
+            said: 'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+          },
+          { code: 'HTTP_429', said: 'Transfer failed. Please try again.' },
+        ].map((refusal) => ({ page, ...refusal })),
+      ),
+    )(
+      '$page: says it on the PIN step and keeps the exits open when a limiter ($code) refuses the first confirmation',
+      async ({ page, code, said }) => {
+        const path = page === 'external' ? '/api/transfers' : '/api/transfers/internal';
+        let sends = 0;
+        server.use(
+          http.post(`*${path}/authorizations`, () => limiterRefusal(code)),
+          http.post(`*${path}`, () => {
+            sends += 1;
+            return undefined;
+          }),
+        );
+        await toReviewOn(page);
+        await confirmWithPin();
+
+        expect(await screen.findByText(said)).toBeInTheDocument();
+        expect(screen.getByLabelText('Digit 1 of 6')).toBeInTheDocument();
+        screen.getAllByRole('button', { name: 'Back' }).forEach((b) => expect(b).toBeEnabled());
+        expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+        expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+        expect(screen.queryByText("Your transfer didn't go through")).not.toBeInTheDocument();
+        expect(sends).toBe(0);
       },
     );
 
