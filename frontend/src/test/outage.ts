@@ -305,6 +305,22 @@ export function lookupsSeen() {
   return seen;
 }
 
+/** Counts the reads of the two lists, letting each one through to the mock. Not the lookups. */
+export function countListReads() {
+  const reads = { accounts: 0, transactions: 0 };
+  server.use(
+    http.get('*/api/accounts', () => {
+      reads.accounts += 1;
+      return undefined;
+    }),
+    http.get('*/api/transactions', ({ request }) => {
+      if (!new URL(request.url).searchParams.has('IdempotencyKey')) reads.transactions += 1;
+      return undefined;
+    }),
+  );
+  return reads;
+}
+
 /**
  * RTK logs a response transform that throws, once, on console.error — which this suite treats as
  * a failure. Where that error is the scenario (a money send answered 201 with no data), it is

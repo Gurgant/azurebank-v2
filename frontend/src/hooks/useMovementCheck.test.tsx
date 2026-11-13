@@ -1,16 +1,15 @@
 import type { PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { http } from 'msw';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
 import { apiSlice, useGetAccountsQuery, useGetTransactionsQuery } from '../features/api/apiSlice';
 import { serviceUnavailable } from '../mocks/problem';
-import { server } from '../mocks/server';
 import { mockState } from '../mocks/state';
 import { makeTestStore, type TestStore } from '../test/renderWithProviders';
 import {
   advance,
   advanceUntil,
+  countListReads,
   installFakeClock,
   lookupsSeen,
   whenListedByKey,
@@ -247,28 +246,12 @@ describe('useMovementCheck', () => {
 /*
   What the check has read again as a copy arrives. The listing by key finds nothing here, as for a
   send that never reached the server, so the lookup invalidates nothing itself: these hold the
-  check's own invalidation, which covers every way the check latches, a send answered with no
-  HTTP status or with a 409 that named no code among them. Asserted at the store, as
+  check's own invalidation, made for any copy the hook is given, whichever way the send latched
+  the check (no HTTP status and a 409 that named no code among them). Asserted at the store, as
   `policies.test.tsx` asserts what IDEMPOTENCY_RESULT_UNKNOWN does to the cache.
 */
 describe('useMovementCheck, as a copy arrives', () => {
   const HISTORY = { page: 1, pageSize: 20 };
-
-  /** Counts the reads of the two lists, letting each one through to the mock. Not the lookups. */
-  function countListReads() {
-    const reads = { accounts: 0, transactions: 0 };
-    server.use(
-      http.get('*/api/accounts', () => {
-        reads.accounts += 1;
-        return undefined;
-      }),
-      http.get('*/api/transactions', ({ request }) => {
-        if (!new URL(request.url).searchParams.has('IdempotencyKey')) reads.transactions += 1;
-        return undefined;
-      }),
-    );
-    return reads;
-  }
 
   it('reads the accounts and the transactions on screen again', async () => {
     const store = makeTestStore();
@@ -304,7 +287,7 @@ describe('useMovementCheck, as a copy arrives', () => {
     });
   });
 
-  it('drops a history nobody reads, so the history page reads it afresh', async () => {
+  it('drops a history nobody reads from the cache', async () => {
     /*
       "Check recent transactions" is where the view sends the visitor, and no transfer page or
       money dialog reads the history. An invalidated entry with no reader is removed, not read

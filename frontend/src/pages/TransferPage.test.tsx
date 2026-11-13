@@ -47,6 +47,9 @@ function renderTransfer(routerEntries: RouterEntries = ['/']) {
   );
 }
 
+/** The check view's first line: it says "didn't go through" once the lookup has found nothing. */
+const CHECK_VIEW_TITLE = /We couldn't confirm your transfer|Your transfer didn't go through/;
+
 async function verifyRecipient(tag: string) {
   await userEvent.type(screen.getByLabelText('Recipient handle'), tag);
   await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
@@ -471,7 +474,9 @@ describe('external transfer (PR-11)', () => {
       async (errorCode) => {
         const sends = await reachTheMintUnderAKeptKey(errorCode);
 
-        expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+        // Every authorisation was refused, so the first lookup already concludes "didn't go through":
+        // the view may have said so before this line looks.
+        expect(await screen.findByText(CHECK_VIEW_TITLE)).toBeInTheDocument();
         expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
         expect(sends).toHaveLength(1);
 
@@ -720,7 +725,8 @@ describe('external transfer (PR-11)', () => {
       closeElsewhere(SAVINGS_ACCOUNT_ID);
       await enterPin();
 
-      expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
+      // Every authorisation was refused, so the first lookup may conclude before this line looks.
+      expect(await screen.findByText(CHECK_VIEW_TITLE)).toBeInTheDocument();
       expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
       expect(screen.queryByText(/Account with identifier/)).not.toBeInTheDocument();
       expect(seen.mints).toBe(2);

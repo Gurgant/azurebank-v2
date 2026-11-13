@@ -75,11 +75,11 @@ function staleBalanceTags(error: unknown, accountIds: (string | undefined)[]) {
  * shown without the movement. Measured on the running app before this: behind a deposit that had
  * landed, the dashboard kept the old balance through the lost answer and the check view.
  *
- * Keyed on the code alone. The other ways a send ends up unconfirmed refresh nothing here: a 409
- * that named no code and a limiter's refusal of a resend invalidate as any other refusal does,
- * and a rejection with no HTTP status, a body that failed its schema or an abort, never reaches
+ * Keyed on the code alone. The other ways a send ends up unconfirmed invalidate nothing here: a
+ * 409 that named no code and a limiter's refusal of a resend carry no code that does, and a
+ * rejection with no HTTP status, a body that failed its schema or an abort never reaches
  * `invalidatesTags`. The check view invalidates these same tags itself when it is given the copy
- * of a send, whatever latched it (`foundTags`, `useMovementCheck`).
+ * of a send, whichever way the send latched it (`foundTags`, `useMovementCheck`).
  */
 function outcomeUnknown(error: unknown): boolean {
   return (error as ApiProblem | undefined)?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN';
