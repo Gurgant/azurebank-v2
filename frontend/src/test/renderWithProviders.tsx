@@ -5,7 +5,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { configureStore } from '@reduxjs/toolkit';
+import { configureStore, type Middleware } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { render, type RenderOptions } from '@testing-library/react';
@@ -17,15 +17,19 @@ import { apiSlice } from '../features/api/apiSlice';
 /**
  * A FRESH store per test (never the app singleton — RTK Query caches would leak between
  * tests). Mirrors src/app/store.ts; if the app store gains a reducer, add it here too.
+ *
+ * `observers` see this store's actions and nothing else: a test that has to count what THIS store
+ * does (the reads it starts, say) cannot count requests at the mock server, which answers every
+ * store of the worker's shared page, a store an earlier test left behind included.
  */
-export function makeTestStore() {
+export function makeTestStore(...observers: Middleware[]) {
   return configureStore({
     reducer: {
       auth: authReducer,
       [apiSlice.reducerPath]: apiSlice.reducer,
     },
     middleware: (getDefaultMiddleware) =>
-      getDefaultMiddleware().concat(apiSlice.middleware, sessionMiddleware),
+      getDefaultMiddleware().concat(apiSlice.middleware, sessionMiddleware, ...observers),
   });
 }
 

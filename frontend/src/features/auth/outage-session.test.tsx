@@ -1,4 +1,5 @@
 import { Provider } from 'react-redux';
+import type { Middleware } from '@reduxjs/toolkit';
 import {
   createMemoryRouter,
   createRoutesFromElements,
@@ -1122,28 +1123,37 @@ describe('the outage page at start-up', () => {
       reach the page in the same frame: unavailable to unavailable, with no check drawn between. A
       bar that stayed the same element would say nothing the second time.
     */
-    let calls = 0;
+    /*
+      The checks THIS page's store starts, counted where it starts them. The mock server's count
+      would also hold a request from any other store of the worker's shared page (one an earlier
+      test or file left with a read still on its way), which answers this handler all the same.
+    */
+    let started = 0;
+    const countChecks: Middleware = () => (next) => (action) => {
+      if (apiSlice.endpoints.getMe.matchPending(action)) started += 1;
+      return next(action);
+    };
     server.use(
-      http.get('*/bff/auth/me', () => {
-        calls += 1;
-        return problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' });
-      }),
+      http.get('*/bff/auth/me', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' }),
+      ),
     );
-    renderApp(makeTestStore());
+    renderApp(makeTestStore(countChecks));
     await screen.findByRole('heading', { level: 1, name: COPY.unavailableTitle });
     const barOf = () => screen.getByText(COPY.unavailable).closest<HTMLElement>('[role="group"]');
 
     for (let press = 1; press <= 2; press += 1) {
       const shown = barOf();
       expect(shown?.closest('[role="alert"]')).toBe(alertSlot());
-      const before = calls;
+      const before = started;
       await userEvent.click(screen.getByRole('button', { name: COPY.tryAgain }));
-      await waitFor(() => expect(calls).toBe(before + 1));
 
       await waitFor(() => {
         expect(barOf()).not.toBeNull();
         expect(barOf()).not.toBe(shown);
       });
+      // One press, one check: the new bar is that check's, and no other was started.
+      expect(started).toBe(before + 1);
     }
   });
 
