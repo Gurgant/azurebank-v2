@@ -796,6 +796,7 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: MOCK_PIN }),
     });
+    expect(elevated.status).toBe(200);
     expect((await elevated.json()).data.authLevel).toBe(2);
 
     const res = await fetch('/bff/auth/verify-pin', {
