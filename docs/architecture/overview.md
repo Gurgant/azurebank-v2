@@ -19,23 +19,34 @@ Two halves, both real and wired to each other:
 - **`frontend/`** — React 19, TypeScript, Fluent UI v9, Redux Toolkit Query. A full SPA talking to
   the real API through the BFF.
 
-```mermaid
-flowchart LR
-    User["Browser"]
-    SPA["React SPA<br/>Vite · :5173"]
-    BFF["BFF<br/>ASP.NET Core + YARP · :5000"]
-    API["REST API<br/>ASP.NET Core · :7215"]
-    DB[("SQL Server")]
+One transfer, as it crosses the parts. The browser runs the React SPA, which the BFF serves; the
+API listens on loopback beside the BFF and refuses an `/api` call without the BFF's service key.
 
-    User --> SPA
-    SPA -->|"HttpOnly cookie"| BFF
-    BFF -->|"Bearer, added server-side"| API
-    API -->|"EF Core"| DB
+```mermaid
+sequenceDiagram
+    participant B as Browser (React SPA)
+    participant F as BFF (ASP.NET Core + YARP)
+    participant A as API (ASP.NET Core)
+    participant D as SQL Server
+
+    B->>F: POST /api/transfers/authorizations, the PIN, the session cookie
+    F->>A: the same request, plus the service key and the bearer
+    A->>D: check the PIN, store a one-shot authorisation
+    A-->>F: 201 and the authorisation's id
+    F-->>B: the same answer
+    B->>F: POST /api/transfers, Idempotency-Key, Step-Up-Authorization, the cookie
+    F->>A: the same request, plus the service key and the bearer
+    A->>D: claim the key, committed at once
+    A->>D: in one transaction, spend the authorisation, move the money, mark the key executed
+    A-->>F: 201 and the transfer's result
+    F-->>B: the same answer
+    Note over A: the same request sent again gets the stored answer, marked Idempotency-Replayed
 ```
 
-The arrow labels are the whole security story: **the browser holds a cookie, never the JWT.**
-"The JWT" is the exact claim: the browser also holds a one-shot PIN authorisation's id, between
-the PIN and the operation it authorises.
+The messages are the whole security story: **the browser holds a cookie, never the JWT.** "The
+JWT" is the exact claim: the browser also holds a one-shot PIN authorisation's id, between the PIN
+and the operation it authorises. On a developer's machine Vite serves the SPA on `:5173` and
+forwards `/api` and `/bff` to the BFF on `:5000`.
 
 ## The one decision everything else follows from
 
