@@ -1,46 +1,32 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { useLocation } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-  Button,
-  Spinner,
-  MessageBar,
-  MessageBarBody,
-  MessageBarActions,
-  tokens,
-} from '@fluentui/react-components';
-import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
-import { Controller, useForm, type FieldErrors } from 'react-hook-form';
+import { Button, MessageBar, MessageBarBody, MessageBarActions } from '@fluentui/react-components';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { colors } from '../theme/tokens';
-import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
-import { isLimiterRefusal, isProvenCommit, type MoneyPhase } from '../api/moneyProblem';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { TransferPinStep } from './TransferPinStep';
+import { PIN_LENGTH, useTransferPin } from './transfer/useTransferPin';
+import { useRecipientCheck } from './transfer/useRecipientCheck';
+import { TransferFormStep } from './transfer/TransferFormStep';
+import { TransferReviewStep } from './transfer/TransferReviewStep';
+import { TransferReceipt } from './transfer/TransferReceipt';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { WentThroughView } from '../components/shared/WentThroughView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
-  useLazyLookupRecipientQuery,
   useAuthoriseTransferMutation,
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { selectCurrentUser } from '../features/auth/authSlice';
 import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
-import { useMovementCheck } from '../hooks/useMovementCheck';
 import { usePageRead } from '../hooks/usePageRead';
 import { useSettledPress } from '../hooks/useSettledPress';
-import { abortRunning, useWaitLanding, type StartedRead } from '../hooks/useWaitLanding';
-import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
-import { AlertSlot, ReadErrorBar, WaitHint, retryDeadline } from '../components/feedback';
+import { AlertSlot, ReadErrorBar, WaitHint } from '../components/feedback';
 import {
   insufficientFundsMessage,
   normalizeAzureTag,
@@ -49,15 +35,12 @@ import {
   type TransferFormOutput,
   type TransferFormValues,
 } from '../forms/moneySchemas';
-import { AmountField } from '../components/form/AmountField';
 import { availableBalanceOf } from '../utils/availableBalance';
 import { useFundsGate } from '../hooks/useFundsGate';
 import {
   ACCOUNT_CLOSED,
   CHECK_AGAIN,
-  CONNECTION_FAILED,
   NO_DOUBLE_CHARGE,
-  SERVICE_UNAVAILABLE,
   TRANSFER_FOUND,
   TRANSFER_WENT_THROUGH,
   TRY_AGAIN,
@@ -67,30 +50,8 @@ import {
 // CONSTANTS
 // ============================================
 
-const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
-
-const PIN_LENGTH = 6;
 const NO_ACCOUNT_SENTENCE =
   "That recipient can't receive money right now. Choose another recipient.";
-// The API answers a handle of the wrong form with a 400 that has no sentence for a visitor, and its
-// message per rule names either the length or the letters, never both: the page says the rule whole.
-const HANDLE_FORMAT_SENTENCE =
-  'A handle is 3 to 20 letters, numbers or underscores, and starts with a letter.';
-const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
-
-interface Recipient {
-  azureTag: string;
-  displayName: string;
-}
-
-interface SuccessData {
-  amount: number;
-  recipientName: string;
-  recipientAzureTag: string;
-  newBalance: number;
-  transactionNumber: string;
-  replayed: boolean;
-}
 
 /**
  * The account a navigation asked to start from: the Transfer button on an account's card puts
@@ -105,85 +66,6 @@ function requestedSourceId(state: unknown): string | null {
   return parsed.success ? parsed.data.fromAccountId : null;
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
-}
-
-// ============================================
-// STYLES
-// ============================================
-
-/**
- * The keys that belong to the recipient step — the part of this flow internal transfer does not
- * have. Everything else comes from `useTransferWizardStyles`, which both wizards share.
- */
-const useRecipientStyles = makeStyles({
-  recipientRow: { display: 'flex', gap: '8px' },
-  // The recipient check's hint, once it has words. While it is silent it takes no room at all.
-  lookupHint: { marginTop: '8px' },
-  input: {
-    flex: 1,
-    padding: '12px',
-    borderRadius: '8px',
-    border: `1px solid ${colors.neutral[300]}`,
-    fontSize: '15px',
-    fontFamily: 'inherit',
-    color: colors.neutral[800],
-    // A plain <input> the stylesheet gives no background is painted the browser's own, which is
-    // white in either theme, and its placeholder the browser's grey. The text colour above
-    // follows the theme, so in the dark theme the typed handle was near-white on white. Both are
-    // the tokens Fluent's own fields take, so this one sits on the same ground as theirs.
-    backgroundColor: tokens.colorNeutralBackground1,
-    '::placeholder': { color: tokens.colorNeutralForeground4 },
-    outline: 'none',
-    ':focus': { border: `1px solid ${colors.brand[60]}` },
-    ':disabled': { backgroundColor: colors.neutral[100] },
-  },
-  recipientCard: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '14px 16px',
-    backgroundColor: colors.semantic.success.light,
-    borderRadius: '12px',
-  },
-  avatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: colors.brandFill.rest,
-    color: tokens.colorNeutralForegroundOnBrand,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '15px',
-    fontWeight: 600,
-    flexShrink: 0,
-  },
-  recipientName: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
-  recipientTag: { fontSize: '13px', color: colors.neutral[500] },
-  /*
-    The line under "Review Transfer" that says what the button is still waiting for. One line
-    tall whether it has words or not (`minHeight` is its `lineHeight`), so the link under it
-    never moves when the words come, change or go. `display: block` because Fluent's `Text`
-    renders inline whatever element it is asked for, and an inline box has no minimum height.
-    Fluent's second foreground, as the words of a wait are (`WaitHint`): 9.13 to 1 on the light
-    page and 12.68 on the dark one, measured. The palette's `neutral[500]`, which the page's
-    other small lines take, is 4.39 to 1 on the light page: under the 4.5 words this small need.
-  */
-  reviewHint: {
-    display: 'block',
-    margin: 0,
-    minHeight: '20px',
-    fontSize: '13px',
-    lineHeight: '20px',
-    textAlign: 'center',
-    color: tokens.colorNeutralForeground2,
-  },
-});
-
 /**
  * A transfer to another user by handle, in three steps: the form, the review and the PIN.
  *
@@ -196,8 +78,7 @@ const useRecipientStyles = makeStyles({
  * `Step-Up-Authorization` header.
  */
 export function TransferPage() {
-  // Merged so the markup keeps addressing one `styles` object.
-  const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
+  const styles = useTransferWizardStyles();
 
   const accountsQuery = useGetAccountsQuery();
   const { data: accountsData, error: accountsError, requestId: accountsRequestId } = accountsQuery;
@@ -206,7 +87,6 @@ export function TransferPage() {
   // already names as it is.
   const location = useLocation();
   const [requestedSource] = useState(() => requestedSourceId(location.state));
-  const [lookup, lookupState] = useLazyLookupRecipientQuery();
   // The accounts bar follows the wait, as on the reading pages: a Retry keeps the old error while
   // it runs, so the bar goes away for the new wait and comes back, announced, only if it fails too.
   const accountsRead = usePageRead(accountsQuery, { endpoint: 'getAccounts', arg: undefined });
@@ -223,23 +103,6 @@ export function TransferPage() {
   const accountsHoldThePage =
     accounts.length === 0 && (accountsRead.waiting || accountsError !== undefined);
 
-  const dispatch = useAppDispatch();
-  const user = useAppSelector(selectCurrentUser);
-
-  /*
-    The recipient check the visitor is waiting on, kept so that "Stop waiting" can find it: a lazy
-    query has no argument on the page to name it by. Stopping it lands on Verify, which is where the
-    check starts again. Its identity also keeps an answer from writing after an edit or a new check.
-  */
-  const runningLookup = useRef<StartedRead | null>(null);
-  const lookupLanding = useWaitLanding<HTMLButtonElement>(
-    lookupState.isFetching,
-    lookupState.requestId,
-  );
-  const stopWaitingForLookup = () => {
-    const running = runningLookup.current;
-    if (running && abortRunning(dispatch, [running])) lookupLanding.arm();
-  };
   const [transferTrigger] = useTransferMutation();
   // Before the wizard, which holds the browser's Back for the request for an authorisation.
   const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
@@ -290,85 +153,44 @@ export function TransferPage() {
   */
   const exitLocked = keyLive || isMinting;
 
-  /*
-    The PIN the sixth digit just completed.
+  const recipientCheck = useRecipientCheck(onBodyEdit);
+  const { lookupState, recipient, recipientError, ownHandle } = recipientCheck;
 
-    A REF, not the state, and for the reason `lastProblem` is one: `onComplete` fires from inside
-    `onChange`, so `pin` has not re-rendered yet when the submit begins. Reading state here would be
-    one render stale — invisible in a hand test, a flake in CI. `setPin` still drives the display.
-  */
-  const enteredPin = useRef('');
+  // The PIN hook takes these three setters as arguments and calls them (the page calls them too),
+  // so the state is declared before the hook.
+  const [returnToAmount, setReturnToAmount] = useState(false);
+  const [sourceRefused, setSourceRefused] = useState(false);
+  // The payee's refusal under a held key (the RECIPIENT_NO_ACCOUNT arm), said again on the form.
+  const [payeeRefused, setPayeeRefused] = useState(false);
+  const {
+    pin,
+    setPin,
+    pinError,
+    setPinError,
+    pinNonce,
+    setPinNonce,
+    pinLockDeadline,
+    setPinLockDeadline,
+    pinHintId,
+    pinErrorId,
+    pinLockId,
+    canResend,
+    success,
+    confirming,
+    check,
+    enter,
+    dropPinAndAuthorization,
+    onValid,
+    onInvalid,
+  } = useTransferPin({
+    wizard,
+    authoriseTransfer,
+    isMinting,
+    setReturnToAmount,
+    setSourceRefused,
+    setPayeeRefused,
+  });
 
-  /*
-    The authorisation minted for the intent currently in flight.
-
-    A retry of a RETAINED key is the same intent, so it must not mint a second authorisation: the
-    first one may already have been consumed by the request whose answer never arrived, and if it
-    was not, this one is still the authorisation for these exact fields. Minting again would leave
-    an orphan row and tell the server a different story than the first attempt did.
-  */
-  const lastAuthorization = useRef<string | null>(null);
-
-  /*
-    A reactive mirror of "we are holding an authorisation", because a ref cannot gate a render.
-
-    The ref stays the source of truth — `onValid` reads it synchronously between the mint and the
-    send, and turning it into state would reintroduce exactly the stale read `useMoneyWizard`
-    documents. This is the same split `useIdempotentMutation` already uses for the key itself.
-  */
-  const [authorizationHeld, setAuthorizationHeld] = useState(false);
-
-  /*
-    When to offer a re-send, and why it is not `inFlight`.
-
-    `inFlight` is set only for 409 IDEMPOTENCY_IN_FLIGHT. But the case this control was built for —
-    a response that never arrived — is `status: 'NETWORK'`, which `classifyMoneyProblem` routes to a
-    plain message. So for the exact scenario it exists to serve, the button did not render, and with
-    every exit held by `exitLocked` the user had no control at all: not a loop, a dead end.
-
-    The honest condition is "we are holding a key AND an authorisation to re-present". That also
-    makes the two states mutually exclusive by construction rather than by invariant: holding an
-    authorisation offers the re-send, and having had it refused empties the PIN boxes and asks for
-    six digits instead.
-  */
-  const canResend = keyLive && authorizationHeld && !isSubmitting && !isMinting;
-
-  // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
-  // uses, for the same reason.
-  const [pin, setPin] = useState('');
-  const pinHintId = useId();
-  const pinErrorId = useId();
-  const pinLockId = useId();
-  const [pinError, setPinError] = useState(false);
-  const [pinNonce, setPinNonce] = useState(0);
-  /*
-    An ABSOLUTE deadline (D13), shared with the withdraw dialog and the step-up modal.
-
-    This page used to drive its own one-second decrement, and so did the sibling transfer page, and
-    the two dialogs drove nothing at all — three implementations of one requirement, two of which
-    were a frozen countdown. `RetryCountdown` is the single primitive; storing the deadline rather
-    than a duration is what makes a second lock with the identical retryAfterSeconds mint a fresh one
-    instead of reviving an elapsed number.
-  */
-  const [pinLockDeadline, setPinLockDeadline] = useState<number | null>(null);
-
-  /*
-    Under the check view, the listing is asked by the key that was sent, on the account the
-    transfer was sent from: the payee's row carries no key, so a closed source leaves nothing
-    else to ask. A movement found there is the transfer going through, and the PIN and the
-    authorisation go with it, as on `applied: true` (`handleRefusal`).
-  */
-  const check = useMovementCheck(
-    wizard.lastSent,
-    (sent) => ({ first: { accountId: sent.fromAccountId, type: 'TransferOut' } }),
-    () => {
-      wizard.confirmWentThrough();
-      setPin('');
-      enteredPin.current = '';
-      lastAuthorization.current = null;
-      setAuthorizationHeld(false);
-    },
-  );
   /*
     The check view's own actions wait until what it draws has settled (`ResultUnknownView`). Its
     "start over" takes the view away and brings back the form with its values, and the second
@@ -381,10 +203,6 @@ export function TransferPage() {
   */
   const settledPress = useSettledPress(verifyRequired, '', { afterLeaving: true });
 
-  const [recipient, setRecipient] = useState<Recipient | null>(null);
-  const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [ownHandle, setOwnHandle] = useState(false);
-  const [success, setSuccess] = useState<SuccessData | null>(null);
   /*
     The receipt's title takes the focus the send lost: the PIN boxes are disabled for the send, so
     the receipt appears with focus on `body`, where a screen reader says nothing of it. Called up
@@ -421,7 +239,6 @@ export function TransferPage() {
     `wizard` is the render the send began in, with a live key and no way to see it dropped. So the
     handler only asks, and this effect moves once a render says the key is gone.
   */
-  const [returnToAmount, setReturnToAmount] = useState(false);
   useEffect(() => {
     if (!returnToAmount || keyLive) return;
     setReturnToAmount(false);
@@ -457,9 +274,6 @@ export function TransferPage() {
     A list that failed to load is not a list without the account: only one that was received
     counts, and a failed reload keeps the last one received.
   */
-  const [sourceRefused, setSourceRefused] = useState(false);
-  // The payee's refusal under a held key (the RECIPIENT_NO_ACCOUNT arm), said again on the form.
-  const [payeeRefused, setPayeeRefused] = useState(false);
   const sourceGone =
     watchedAccountId !== '' &&
     (sourceRefused ||
@@ -469,15 +283,6 @@ export function TransferPage() {
   // with a stale one costs a PIN attempt on a request that cannot succeed.
   const confirmFunds = useFundsGate();
   const [checkingFunds, setCheckingFunds] = useState(false);
-
-  /*
-    The confirm — the mint, then the send — as the visitor sees it: one wait from the sixth digit,
-    with one hint. Not `isMinting || isSubmitting`: if a render fell between the mint's answer and
-    the send's start, the hint would take it for a new wait and count again from zero. Set only
-    once nothing can return early before a request leaves, and cleared in a `finally`, so it never
-    outlives the confirm.
-  */
-  const [confirming, setConfirming] = useState(false);
 
   // Write the default (the requested account, the primary or the first) into the form once
   // accounts load, and keep the schema's balance bound in lockstep with the selected account.
@@ -514,13 +319,10 @@ export function TransferPage() {
     setValue('fromAccountId', '', { shouldValidate: true });
     setMustChooseSource(true);
     setSourceRefused(false);
-    setPin('');
-    enteredPin.current = '';
-    lastAuthorization.current = null;
-    setAuthorizationHeld(false);
+    dropPinAndAuthorization();
     wizard.toForm();
     wizard.fail(ACCOUNT_CLOSED);
-  }, [sourceGone, exitLocked, success, verifyRequired, setValue, wizard]);
+  }, [sourceGone, exitLocked, success, verifyRequired, setValue, dropPinAndAuthorization, wizard]);
 
   // "Start over" clears the failure with the intent; the payee's refusal is said again, once, on
   // the form. The visitor's next change of recipient clears it like any input failure.
@@ -540,67 +342,6 @@ export function TransferPage() {
     if (keyLive) return;
     setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
-  };
-
-  const handleVerifyRecipient = async () => {
-    runningLookup.current = null;
-    const tag = normalizeAzureTag(watchedTag);
-    if (!tag) return;
-    setRecipient(null);
-    setRecipientError(null);
-    setOwnHandle(false);
-    onBodyEdit();
-    if (user && tag === normalizeAzureTag(user.azureTag)) {
-      // A lookup's wait commits the empty alert before its answer. Nothing waits here, and React
-      // would fold the two into one render: the same sentence again would change nothing to say.
-      flushSync(() => setRecipientError(null));
-      setOwnHandle(true);
-      setRecipientError(
-        'That\'s your own handle. To move money between your own accounts, use "Between your own accounts" below.',
-      );
-      return;
-    }
-    const request = lookup(tag);
-    runningLookup.current = request;
-    try {
-      const result = await request.unwrap();
-      if (runningLookup.current !== request) return;
-      if (result.exists) {
-        setRecipient({ azureTag: result.azureTag, displayName: result.displayName });
-      } else {
-        setRecipientError(`We couldn't find @${tag}. Check the handle and try again.`);
-      }
-    } catch (caught) {
-      if (runningLookup.current !== request) return;
-      /*
-        A bare catch here told every failure the same story — "check your connection" — and this
-        endpoint has a DEDICATED rate limiter: /api/users/* runs a tight per-user sliding window
-        (ADR-0014) and rejects with 429 + Retry-After. So the one failure a user is most likely to
-        provoke, by tapping Verify repeatedly, sent them to check a connection that was fine.
-
-        Branching on STATUS rather than on the code: any 429 here gets the same sentence.
-        `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
-      */
-      const problem = caught as ApiProblem;
-      if (problem.status === 429) {
-        setRecipientError(
-          problem.retryAfterSeconds !== undefined
-            ? `Too many lookups. Try again in ${formatLockHorizon(problem.retryAfterSeconds)}.`
-            : 'Too many lookups. Please wait a moment and try again.',
-        );
-      } else if (isServiceOutage(problem)) {
-        // Before the transport branch: a check with no answer in 65 s is `status: 'NETWORK'` too,
-        // and "check your connection" would send the visitor after the wrong problem.
-        setRecipientError(SERVICE_UNAVAILABLE);
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setRecipientError(CONNECTION_FAILED);
-      } else if (problem.errorCode === 'VALIDATION_ERROR') {
-        // The only thing this route validates is the handle, and the answer carries no `detail`.
-        setRecipientError(HANDLE_FORMAT_SENTENCE);
-      } else {
-        setRecipientError(problem.detail || "We couldn't check that handle. Please try again.");
-      }
-    }
   };
 
   // The schema owns account/tag-format/amount validity; the VERIFIED recipient is the
@@ -696,7 +437,9 @@ export function TransferPage() {
       // same list, clears the choice and says so (`sourceGone`).
       if (verdict.status === 'closed') return;
       // 'unknown' proceeds on purpose: a courtesy check must not become an outage. The server
-      // still refuses, and `INSUFFICIENT_FUNDS` is already handled below.
+      // still refuses: its `INSUFFICIENT_FUNDS` becomes the banner through `wizard.run`'s classifier
+      // (`classifyMoneyProblem`, `api/moneyProblem.ts`). `onValid` only has the local check against
+      // the cached balance (`useTransferPin.ts`).
       setPin('');
       setPinError(false);
       setPinNonce((n) => n + 1);
@@ -706,405 +449,12 @@ export function TransferPage() {
     }
   };
 
-  /**
-   * `handleSubmit`'s invalid branch. Without it, a form that went invalid while the PIN step was
-   * open made Send do nothing at all — no request, no message. The errors arrive as an argument so
-   * this reports what actually failed rather than guessing.
-   */
-  const onInvalid = (errors: FieldErrors<TransferFormValues>) => {
-    wizard.toForm();
-    wizard.fail(errors.amount?.message ?? 'Please check the details and try again.');
-  };
-
-  const onValid = async (data: TransferFormOutput) => {
-    if (!selectedAccount || !recipient) return;
-    if (enteredPin.current.length !== PIN_LENGTH || pinLockDeadline !== null) return;
-    // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
-    // review screen and the request therefore cannot name two different people.
-    const confirmed = recipient;
-
-    /*
-      The form has refused an amount over its own bound already (`onInvalid`). That bound is
-      state, copied from the cached balance by an effect, so it runs one render behind it: this
-      is for the render in which the balance has fallen and the bound has not followed yet. A
-      balance this tab has not heard of is the server's to refuse.
-    */
-    const stillAvailable = availableBalanceOf(selectedAccount);
-    if (data.amount > stillAvailable) {
-      wizard.toForm();
-      wizard.fail(insufficientFundsMessage(stillAvailable));
-      return;
-    }
-
-    /*
-      MINT, then SEND (ADR-0042). Two calls, one user action — the sixth digit starts both, so the
-      two-minute window is normally milliseconds wide and the user never learns it exists.
-
-      The mint carries no idempotency key by design, so it cannot go through `wizard.run`. Its
-      refusals are nevertheless the SAME ones the send already handles — 401 INVALID_PIN, 429
-      PIN_LOCKED, 422 PIN_REQUIRED — so both paths funnel into `handleRefusal` rather than growing a
-      second copy free to drift.
-    */
-    /*
-      `keyLive` means the idempotency hook is holding a key from an attempt whose outcome is
-      unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
-      re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
-    */
-    const attempt = wizard.beginAttempt();
-    /*
-      What the page lets go of when the attempt is abandoned: the PIN, and the authorisation this
-      attempt minted, which goes with it. The key stays. An attempt that re-presents a held
-      authorisation sends at once, with no wait in which the visitor could leave, so it never ends
-      here.
-    */
-    const letGoOfTheAttempt = (mintedHere: boolean) => {
-      setPin('');
-      enteredPin.current = '';
-      setPinNonce((n) => n + 1);
-      if (mintedHere) {
-        lastAuthorization.current = null;
-        setAuthorizationHeld(false);
-      }
-    };
-    let mintedHere = false;
-    setConfirming(true);
-    try {
-      let authorizationId: string;
-      if (keyLive && lastAuthorization.current) {
-        authorizationId = lastAuthorization.current;
-      } else {
-        try {
-          const minted = await authoriseTransfer({
-            fromAccountId: data.fromAccountId,
-            recipientAzureTag: confirmed.azureTag,
-            amount: data.amount,
-            pin: enteredPin.current,
-          }).unwrap();
-          authorizationId = minted.authorizationId;
-          lastAuthorization.current = authorizationId;
-          setAuthorizationHeld(true);
-          mintedHere = true;
-        } catch (caught) {
-          // The visitor has left, and this answer is for a page they are no longer on: a refusal
-          // here must not navigate to PIN setup nor show a wrong PIN on the page they came back to.
-          if (attempt.abandoned) {
-            letGoOfTheAttempt(false);
-            return;
-          }
-          // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
-          wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
-          handleRefusal(caught as ApiProblem, 'mint');
-          return;
-        }
-      }
-
-      /*
-        The visitor chose "Leave anyway" while the PIN was being checked. The Back may have landed
-        on another entry of this page, which stays, or on another route, whose page is going.
-        Nothing is sent for the PIN they typed before they left; the boxes are emptied, as for an
-        outage of the check, and a PIN typed now is a new attempt. An authorisation this attempt
-        minted goes with it; the answer of a refused mint is dropped the same way, in the catch
-        above.
-      */
-      if (attempt.abandoned) {
-        letGoOfTheAttempt(mintedHere);
-        return;
-      }
-
-      const result = await wizard.run(
-        {
-          fromAccountId: data.fromAccountId,
-          recipientAzureTag: confirmed.azureTag,
-          amount: data.amount,
-        },
-        // A HEADER at the wire, never a body field: the server fingerprints the body alone.
-        { stepUpAuthorizationId: authorizationId },
-        attempt,
-      );
-      // `run` resolves to undefined when it failed — and it has already set the banner, the
-      // in-flight note or the verify view. Under `strict` this early return is not optional:
-      // reading `result.newBalance` without it does not compile.
-      if (!result) {
-        /*
-          The PIN outcomes, keyed on the CODE rather than the rendered sentence (the wizard exposes
-          `lastProblem` as a REF precisely so this does not have to match on prose, and so the read
-          is not one render stale).
-
-          A wrong PIN is safe to retry in place: 401 is exempt from the global logout, and the
-          idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh
-          one rather than replaying the refused body.
-        */
-        handleRefusal(wizard.lastProblem.current, 'send');
-        return;
-      }
-
-      setPin('');
-      enteredPin.current = '';
-      lastAuthorization.current = null;
-      setAuthorizationHeld(false);
-
-      setSuccess({
-        amount: data.amount,
-        recipientName: confirmed.displayName,
-        recipientAzureTag: confirmed.azureTag,
-        newBalance: result.newBalance,
-        transactionNumber: result.transactionNumber,
-        replayed: result.replayed,
-      });
-    } finally {
-      setConfirming(false);
-    }
-  };
-
-  /**
-   * What the PIN step does about a refusal, shared by the mint and the send so the two cannot drift.
-   * The banner itself is the wizard's; this owns only the PIN box and the lock. `phase` is which of
-   * the two failed: the first arm is the send's alone, the last two the mint's.
-   */
-  function handleRefusal(refusal: ApiProblem | null, phase: MoneyPhase) {
-    if (phase === 'send' && isProvenCommit(refusal)) {
-      /*
-        The server said the transfer was committed: the page shows the went-through view, and
-        nothing on it sends again. So the page's own copies of the PIN and of the authorisation
-        are let go as the success path lets them go, a few lines above: the transfer they were for
-        is done. Not every copy: the two mutation hooks keep their last arguments and answer, the
-        PIN and the authorisation among them, until this page unmounts, after a success too. Read
-        from the wizard's ref, like every arm here, so it is this answer and not the one before it.
-
-        Only the send. A mint carries no key, so the same answer to it proves nothing and brings
-        no view: emptying the boxes there would leave the visitor on the PIN step with nothing
-        typed and nothing said. WithdrawDialog's arm has the same condition.
-      */
-      setPin('');
-      enteredPin.current = '';
-      lastAuthorization.current = null;
-      setAuthorizationHeld(false);
-    } else if (refusal?.errorCode === 'INVALID_PIN') {
-      setPin('');
-      enteredPin.current = '';
-      setPinError(true);
-      setPinNonce((n) => n + 1);
-    } else if (
-      refusal?.errorCode === 'AUTHORIZATION_EXPIRED' ||
-      refusal?.errorCode === 'AUTHORIZATION_INVALID'
-    ) {
-      /*
-          The user STAYS on this step, and the form keeps the amount and the payee.
-
-          Not a courtesy: WCAG 2.2 SC 3.3.7 Redundant Entry is LEVEL A, and its exception covers
-          security information only. The PIN is inside it; the amount and payee are not, so
-          discarding them would be a failure of the criterion rather than a UX preference.
-
-          No `setPinError` — an expiry is not a wrong PIN. It costs no attempt server-side, and
-          styling the boxes red would tell the user the lock is closer when it is not.
-        */
-      setPin('');
-      enteredPin.current = '';
-      setPinNonce((n) => n + 1);
-      /*
-          AND DROP THE AUTHORISATION — the line this whole PR exists for.
-
-          `onValid` re-presents `lastAuthorization.current` whenever a key is live, which is right
-          for a lost response (re-send the same intent) and catastrophic here: the authorisation the
-          server just refused would be re-sent forever, and the six digits the user keeps typing
-          would never reach a mint. Dropping it sends the next completion down the mint branch,
-          while `submit`'s `keyRef.current ??=` reuses the SAME idempotency key and the body is
-          rebuilt from the same unchanged form values — byte-identical, so no 422.
-
-          MEASURED end to end on the running API: key K with an expired authorisation answers 401
-          AUTHORIZATION_EXPIRED and releases the record; key K with a freshly minted one answers
-          201, no `Idempotency-Replayed`. One payment, one key, two authorisations.
-        */
-      lastAuthorization.current = null;
-      setAuthorizationHeld(false);
-    } else if (refusal?.errorCode === 'DAILY_LIMIT_EXCEEDED') {
-      /*
-          The daily outgoing-transfer bound (ADR-0050). The expiry arm's clean-up, for three reasons
-          of its own — and NO `setPinError` — and then a move the expiry arm does not make.
-
-          NO RED BOXES. A1 measured `PinAccessFailedCount` 0 → 0 after three wrong-PIN over-limit
-          mints, with 0 authorisations minted: the rung runs before the PIN is ever verified, so
-          styling the boxes red would tell the user the lockout is closer when it provably is not.
-          The arm above already makes this argument for its own case.
-
-          AND DROP THE AUTHORISATION. On the SEND path the refused authorisation stays Pending
-          server-side (measured A3.3) while `lastAuthorization.current` still holds one bound to the
-          OLD amount — the amount that must change. `onValid`'s re-present guard
-          (`keyLive && lastAuthorization.current`) is false today because a 422 is a key-DROP class
-          (`shouldKeepKey`), but leaning on an invariant three files away to keep a stale reference
-          harmless is exactly what the arm above refuses to do.
-
-          RETURN TO THE AMOUNT. The amount is what the visitor has to change, and a PIN cannot
-          help. The banner is 'input'-scoped, so it survives the move to the form. A 422 drops the
-          key, but a resend under a retained key reaches this arm before the page has rendered
-          without it, and `toForm()` refuses under a live key: the move waits for the effect on
-          `returnToAmount`, which acts once `keyLive` is false.
-
-          A MINT under a held key (the send before it answered AUTHORIZATION_EXPIRED) drops no key,
-          so that effect would wait for ever and Back stays disabled. There the page does what the
-          closed-account arm below does: `requireVerify` lets the key go and shows the check view.
-
-          Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
-          leaves the mint body either way, and every non-PIN refusal at this rung already retains it
-          today. The amount and the payee are KEPT because WCAG 2.2 SC 3.3.7's exception covers
-          security information only — the same argument the expiry arm carries.
-        */
-      setPin('');
-      enteredPin.current = '';
-      setPinNonce((n) => n + 1);
-      lastAuthorization.current = null;
-      setAuthorizationHeld(false);
-      if (phase === 'mint' && keyLive) wizard.requireVerify();
-      else setReturnToAmount(true);
-    } else if (refusal?.errorCode === 'PIN_LOCKED') {
-      setPin('');
-      enteredPin.current = '';
-      setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
-    } else if (refusal?.errorCode === 'ACCOUNT_NOT_FOUND') {
-      // The source account is closed or gone, on the mint or on the send. A 404 is a refusal:
-      // nothing moved, and the idempotency hook has dropped the key of a send. The page clears
-      // the choice once it renders with this (`sourceGone`), without waiting for the list.
-      setSourceRefused(true);
-      /*
-        Unless a key is held, which only a mint can meet: the send's is dropped on this very
-        answer. A mint is made under a held key only after the send before it was answered
-        AUTHORIZATION_EXPIRED or AUTHORIZATION_INVALID, the one answer that keeps the key and
-        drops the authorisation. Under that key the PIN step can do nothing more: the transfer it
-        is for names an account that is gone, and the clearing above waits for the key.
-
-        So the page shows the check view, as the money dialogs do for an intent they cannot carry
-        on: the key is let go, the view's two buttons are the ways on, and "start over" comes
-        back to the form, where the choice is cleared and the sentence said. Letting the key go
-        abandons no payment while the key's record lives, 24 hours (ADR-0009): the API gives that
-        answer from inside the action, which it runs only for a key under which nothing was
-        committed, and every authorisation presented under the key has been refused, so a send
-        still on its way is refused too. Past that life the same answer can follow a send that
-        was applied, which is why the view says to check the transactions first.
-      */
-      if (phase === 'mint' && keyLive) wizard.requireVerify();
-    } else if (refusal?.errorCode === 'RECIPIENT_NO_ACCOUNT') {
-      // A mint under a held key drops no key, so Back and Close would stay disabled with the PIN
-      // step in front: the closed-account arm above says why and what the check view does. Its
-      // sentence is already shown; "start over" clears it, so the effect on `payeeRefused` says
-      // it again on the form. With no key held the answer is as it was.
-      if (phase === 'mint' && keyLive) {
-        setPin('');
-        enteredPin.current = '';
-        lastAuthorization.current = null;
-        setAuthorizationHeld(false);
-        setPayeeRefused(true);
-        wizard.requireVerify();
-      }
-    } else if (refusal?.errorCode === 'PIN_REQUIRED') {
-      // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
-      // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
-      // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
-      // a key-DROP class, so this one goes through.
-      requestLeave('/pin-setup?returnTo=/transfer');
-    } else if (phase === 'mint' && keyLive && refusal !== null && isLimiterRefusal(refusal)) {
-      /*
-        A limiter refused the mint made under a held key: `RATE_LIMIT_EXCEEDED`, a demo copy past
-        its limit, which refuses every mint after this one, or a 429 whose code cannot be read.
-        The key keeps Back and Close disabled, and the full boxes send nothing until a digit
-        changes. So the page does what the closed-account arm above does: the PIN copies go, and
-        `requireVerify` lets the key go and shows the check view. Every authorisation presented
-        under the key was refused, so nothing under it can commit: the view waits for no bound,
-        and offers "start over" once the listing has answered. With no key held the exits are
-        open, and the refusal is said on the PIN step.
-      */
-      setPin('');
-      enteredPin.current = '';
-      setPinNonce((n) => n + 1);
-      wizard.requireVerify();
-    } else if (
-      phase === 'mint' &&
-      refusal !== null &&
-      (refusal.status === 'NETWORK' ||
-        refusal.status === 'PARSE' ||
-        (typeof refusal.status === 'number' && refusal.status >= 500))
-    ) {
-      /*
-        The MINT got no usable answer: an outage (a 503, or no answer in 65 s, which is NETWORK), a
-        broken connection, an unreadable answer, a 5xx. The PIN step then has no control at all —
-        the sixth digit is the send, and it cannot fire again on boxes that stay full — so empty
-        them and put the caret back in box 1: six digits are the retry.
-
-        Only the mint. After a SEND failure the boxes stay as they are: the resend bar's control
-        runs `onValid`, which returns early without six digits, so emptying them would leave that
-        bar with a button that does nothing. And `lastAuthorization` is not touched: a failed mint
-        never produced one to drop.
-
-        No `setPinError`: nothing says the PIN was wrong. Focus is on `body` when this lands — every
-        control on the step is disabled during the mint — so the refocus takes nothing from anyone.
-      */
-      setPin('');
-      enteredPin.current = '';
-      setPinNonce((n) => n + 1);
-    }
-  }
+  const sendReviewed = (data: TransferFormOutput) => onValid(data, selectedAccount, recipient);
 
   // ===== Success receipt =====
   if (success) {
     return (
-      <div className={styles.page}>
-        {/* No exits: the money has moved, so there is nothing to abandon, and the body's two
-            buttons are the way on. The bare `<span />` on the left used to leave this title 40px
-            off centre against the 40px spacer on the right. */}
-        <PageHeader title="Transfer Complete" />
-        <div className={styles.body}>
-          <div className={styles.centeredView}>
-            <div className={styles.successIcon}>
-              <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
-            </div>
-            {/* A paragraph that takes focus, in no alert or status: one landing, one reading. */}
-            <Text as="p" className={styles.successTitle} ref={receiptTitle} tabIndex={-1}>
-              Transfer Sent!
-            </Text>
-            <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
-            {success.replayed && (
-              <MessageBar intent="info" role="status">
-                <MessageBarBody>
-                  This transfer was already processed — showing the existing result.
-                </MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.reviewCard} style={{ width: '100%' }}>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>To</Text>
-                <Text className={styles.reviewValue}>
-                  {success.recipientName} (@{success.recipientAzureTag})
-                </Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>Reference</Text>
-                <Text className={styles.reviewValue}>{success.transactionNumber}</Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>New balance</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(success.newBalance)}</Text>
-              </div>
-            </div>
-          </div>
-          <div className={styles.actions}>
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => requestLeave('/history')}
-            >
-              View History
-            </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => requestLeave('/dashboard')}
-            >
-              Done
-            </Button>
-          </div>
-        </div>
-      </div>
+      <TransferReceipt success={success} receiptTitle={receiptTitle} requestLeave={requestLeave} />
     );
   }
 
@@ -1256,7 +606,7 @@ export function TransferPage() {
                   button.
                 */
                 disabled={isMinting || isSubmitting}
-                onClick={() => void handleSubmit(onValid, onInvalid)()}
+                onClick={() => void handleSubmit(sendReviewed, onInvalid)()}
               >
                 {!inFlight && nothingChanged ? TRY_AGAIN : CHECK_AGAIN}
               </Button>
@@ -1277,200 +627,25 @@ export function TransferPage() {
             empty form under the accounts' wait would show an available balance of zero, and would
             let a recipient check start beside it. */}
         {accountsHoldThePage ? null : step === 'form' ? (
-          <>
-            {/* From account */}
-            <div {...settledPress.content}>
-              <Text className={styles.sectionLabel}>From</Text>
-              <div
-                style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}
-              >
-                {accounts.map((account) => (
-                  <button
-                    key={account.id}
-                    className={`${styles.card} ${
-                      selectedAccount?.id === account.id ? styles.cardSelected : ''
-                    }`}
-                    // Drift, not a design choice: the internal wizard's identical cards have
-                    // carried both of these since it was written, so a screen-reader user picking a
-                    // source account heard "pressed" on one page and an unnamed button with no
-                    // selected state on the other. `aria-pressed` is what makes the SELECTION
-                    // audible at all — the blue border says it to sighted users only.
-                    //
-                    // `aria-label` REPLACES the contents-derived name, so this DOES drop the masked
-                    // number and the balance from the announcement. A review proposed folding both
-                    // into the label; measured, that breaks six assertions — including pre-existing
-                    // ones on the internal page, which queries its cards by exact accessible name —
-                    // and makes every card verbose. Declined, because the balance that governs the
-                    // transfer is already announced as "Available: …" beside the amount field on
-                    // both pages, and the number is masked. The short form also keeps the two
-                    // wizards identical, which is the point of this PR.
-                    aria-label={`From ${account.name}`}
-                    aria-pressed={selectedAccount?.id === account.id}
-                    onClick={() => handleSelectAccount(account)}
-                  >
-                    <div className={styles.accountInfo}>
-                      <Text className={styles.accountName}>{account.name}</Text>
-                      <Text className={styles.accountNumber}>
-                        {maskAccountNumber(account.accountNumber)}
-                      </Text>
-                    </div>
-                    <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Recipient */}
-            <div {...settledPress.content}>
-              <Text className={styles.sectionLabel}>To (recipient&apos;s @handle)</Text>
-              <div className={styles.recipientRow} style={{ marginTop: '8px' }}>
-                <Controller
-                  control={control}
-                  name="recipientTag"
-                  render={({ field }) => (
-                    <input
-                      className={styles.input}
-                      placeholder="@handle"
-                      aria-label="Recipient handle"
-                      // The field keeps what was typed and the page sends it lower-cased, so a phone must not capitalise or correct it.
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      ref={field.ref}
-                      name={field.name}
-                      value={field.value}
-                      disabled={keyLive}
-                      onBlur={field.onBlur}
-                      onChange={(e) => {
-                        const running = runningLookup.current;
-                        runningLookup.current = null;
-                        if (running) abortRunning(dispatch, [running]);
-                        field.onChange(e.target.value);
-                        setRecipient(null);
-                        setRecipientError(null);
-                        setOwnHandle(false);
-                        onBodyEdit();
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void handleVerifyRecipient();
-                      }}
-                    />
-                  )}
-                />
-                <Button
-                  ref={lookupLanding.landingRef}
-                  appearance="secondary"
-                  onClick={() => void handleVerifyRecipient()}
-                  disabled={!watchedTag.trim() || lookupState.isFetching}
-                >
-                  {lookupState.isFetching ? <Spinner size="tiny" /> : 'Verify'}
-                </Button>
-              </div>
-              {recipient && (
-                <div className={styles.recipientCard} style={{ marginTop: '10px' }}>
-                  <div className={styles.avatar}>{initials(recipient.displayName)}</div>
-                  <div>
-                    <Text className={styles.recipientName}>{recipient.displayName}</Text>
-                    <br />
-                    <Text className={styles.recipientTag}>@{recipient.azureTag}</Text>
-                  </div>
-                </div>
-              )}
-              {/* The check's own alert, there and empty before it runs, as on the read pages: its
-                  line comes and goes inside it. Verify empties it, so each failure is a change. */}
-              <AlertSlot>
-                {recipientError && (
-                  <Text className={styles.hint} style={{ marginTop: '8px', display: 'block' }}>
-                    {recipientError}
-                  </Text>
-                )}
-              </AlertSlot>
-              {/* A handle that matches nobody is an answer, not an error, but for the visitor it
-                  is the check failing: the alert above says so, and "Loaded." would contradict it. */}
-              <WaitHint
-                active={lookupState.isFetching}
-                kind="read"
-                failed={lookupState.isError || lookupState.currentData?.exists === false}
-                onStopWaiting={stopWaitingForLookup}
-                className={styles.lookupHint}
-              />
-            </div>
-
-            {/* Amount */}
-            <div className={styles.amountSection} {...settledPress.content}>
-              <Text className={styles.subtle}>Amount</Text>
-              <AmountField
-                control={control}
-                name="amount"
-                ariaLabel="Transfer amount"
-                disabled={keyLive}
-                onBodyEdit={onBodyEdit}
-                classNames={{
-                  wrapper: styles.amountWrapper,
-                  currency: styles.amountCurrency,
-                  input: styles.amountInput,
-                  hint: styles.hint,
-                  invalid: styles.amountInvalid,
-                }}
-                belowSlot={
-                  <div className={styles.availableRow}>
-                    <Text className={styles.subtle}>
-                      Available: {formatCurrency(availableBalance)}
-                    </Text>
-                    {/* The constructive half of the balance cap: reaching the maximum without
-                        retyping it is what stops the over-balance typo at the source. */}
-                    <button
-                      type="button"
-                      className={styles.useMaxBtn}
-                      onClick={() => handleQuickAmount(availableBalance)}
-                      disabled={keyLive || availableBalance <= 0}
-                      aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
-                    >
-                      Use max
-                    </button>
-                  </div>
-                }
-              />
-            </div>
-            <div className={styles.quickAmounts} {...settledPress.content}>
-              {QUICK_AMOUNTS.map((quickAmount) => (
-                <button
-                  key={quickAmount}
-                  className={`${styles.quickBtn} ${
-                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
-                  }`}
-                  onClick={() => handleQuickAmount(quickAmount)}
-                  disabled={quickAmount > availableBalance}
-                >
-                  €{quickAmount}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.actions} {...settledPress.actions}>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => wizard.toReview()}
-                disabled={!canReview}
-                aria-describedby={reviewWaitsFor ? reviewHintId : undefined}
-              >
-                Review Transfer
-              </Button>
-              {/* Always on the page, and empty once the button can be pressed: its room is kept,
-                  so nothing under it moves. Words to read and the button's description, not a
-                  region that speaks by itself: at an amount the bank cannot send, the field's
-                  own alert speaks at the same key press, and the two would be said together. */}
-              <Text as="p" id={reviewHintId} className={styles.reviewHint}>
-                {reviewWaitsFor}
-              </Text>
-              <button className={styles.linkBtn} onClick={() => requestLeave('/transfer/internal')}>
-                <ArrowSwap24Regular style={{ width: '18px', height: '18px' }} />
-                Between your own accounts
-              </button>
-            </div>
-          </>
+          <TransferFormStep
+            settledPress={settledPress}
+            accounts={accounts}
+            selectedAccount={selectedAccount}
+            handleSelectAccount={handleSelectAccount}
+            control={control}
+            keyLive={keyLive}
+            onBodyEdit={onBodyEdit}
+            watchedTag={watchedTag}
+            recipientCheck={recipientCheck}
+            availableBalance={availableBalance}
+            handleQuickAmount={handleQuickAmount}
+            amountNumber={amountNumber}
+            canReview={canReview}
+            reviewWaitsFor={reviewWaitsFor}
+            reviewHintId={reviewHintId}
+            onReview={() => wizard.toReview()}
+            requestLeave={requestLeave}
+          />
         ) : step === 'pin' ? (
           <TransferPinStep
             verb="Sending"
@@ -1500,62 +675,24 @@ export function TransferPage() {
             }}
             // The completed value goes to the REF first: `onValid` runs before `pin` re-renders.
             onPinComplete={(entered) => {
-              enteredPin.current = entered;
-              void handleSubmit(onValid, onInvalid)();
+              enter(entered);
+              void handleSubmit(sendReviewed, onInvalid)();
             }}
             onLockElapsed={() => setPinLockDeadline(null)}
             onBack={() => wizard.toReview()}
           />
         ) : (
-          <>
-            {/* Review */}
-            <div className={styles.reviewCard}>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>From</Text>
-                <Text className={styles.reviewValue}>{selectedAccount?.name}</Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>To</Text>
-                <Text className={styles.reviewValue}>
-                  {recipient?.displayName} (@{recipient?.azureTag})
-                </Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>Amount</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>New balance</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(newBalance)}</Text>
-              </div>
-            </div>
-            <Text className={styles.subtle} style={{ textAlign: 'center' }}>
-              You&apos;ll confirm with your PIN on the next step.
-            </Text>
-            <div className={styles.actions}>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void onReviewed()}
-                disabled={isSubmitting || checkingFunds}
-              >
-                {checkingFunds ? <Spinner size="tiny" /> : 'Continue'}
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => wizard.toForm()}
-                disabled={keyLive}
-              >
-                Back
-              </Button>
-            </div>
-            {/* The funds check is a read, but it offers no Stop: it fails open, so a stopped check
-                would only move on to the PIN step with the check skipped. */}
-            <WaitHint active={checkingFunds} kind="read" />
-          </>
+          <TransferReviewStep
+            selectedAccount={selectedAccount}
+            recipient={recipient}
+            amountNumber={amountNumber}
+            newBalance={newBalance}
+            onReviewed={onReviewed}
+            isSubmitting={isSubmitting}
+            checkingFunds={checkingFunds}
+            keyLive={keyLive}
+            onBack={() => wizard.toForm()}
+          />
         )}
       </div>
 

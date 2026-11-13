@@ -70,7 +70,7 @@ const BASELINE: Record<Category, Record<string, number>> = {
     'pages/RegisterPage.tsx': 1,
     'pages/SettingsPage.tsx': 12,
     'pages/TransactionDetailPage.tsx': 8,
-    'pages/TransferPage.tsx': 5,
+    'pages/transfer/TransferFormStep.tsx': 5,
     'pages/transferWizardStyles.ts': 18,
   },
   fontWeight: {
@@ -106,7 +106,7 @@ const BASELINE: Record<Category, Record<string, number>> = {
     'pages/RegisterPage.tsx': 1,
     'pages/SettingsPage.tsx': 10,
     'pages/TransactionDetailPage.tsx': 5,
-    'pages/TransferPage.tsx': 2,
+    'pages/transfer/TransferFormStep.tsx': 2,
     'pages/transferWizardStyles.ts': 14,
   },
   lineHeight: {
@@ -123,7 +123,7 @@ const BASELINE: Record<Category, Record<string, number>> = {
     'pages/AccountsPage.tsx': 1,
     'pages/DashboardPage.tsx': 1,
     'pages/PinSetupPage.tsx': 1,
-    'pages/TransferPage.tsx': 1,
+    'pages/transfer/TransferFormStep.tsx': 1,
     'pages/transferWizardStyles.ts': 2,
   },
   borderRadius: {
@@ -148,7 +148,7 @@ const BASELINE: Record<Category, Record<string, number>> = {
     'pages/PinSetupPage.tsx': 5,
     'pages/SettingsPage.tsx': 3,
     'pages/TransactionDetailPage.tsx': 6,
-    'pages/TransferPage.tsx': 3,
+    'pages/transfer/TransferFormStep.tsx': 3,
     'pages/transferWizardStyles.ts': 6,
   },
   spacing: {
@@ -192,7 +192,7 @@ const BASELINE: Record<Category, Record<string, number>> = {
     'pages/RegisterPage.tsx': 7,
     'pages/SettingsPage.tsx': 15,
     'pages/TransactionDetailPage.tsx': 14,
-    'pages/TransferPage.tsx': 9,
+    'pages/transfer/TransferFormStep.tsx': 9,
     'pages/transferWizardStyles.ts': 19,
   },
 };

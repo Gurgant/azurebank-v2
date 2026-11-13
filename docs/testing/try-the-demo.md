@@ -539,7 +539,7 @@ sentences are in [`moneyProblem.ts`](../../frontend/src/api/moneyProblem.ts)
 **The words not seen** are typed as they stand in
 [`frontend/src/features/demo/demoWords.ts`](../../frontend/src/features/demo/demoWords.ts),
 [`frontend/src/pages/LoginPage.tsx`](../../frontend/src/pages/LoginPage.tsx),
-[`frontend/src/pages/TransferPage.tsx`](../../frontend/src/pages/TransferPage.tsx),
+[`frontend/src/pages/transfer/useRecipientCheck.ts`](../../frontend/src/pages/transfer/useRecipientCheck.ts),
 [`frontend/src/api/problemMessages.ts`](../../frontend/src/api/problemMessages.ts) and
 [`DemoRefusalException.cs`](../../backend/src/AzureBank.Shared/Exceptions/DemoRefusalException.cs).
 The other lines marked not seen are read from

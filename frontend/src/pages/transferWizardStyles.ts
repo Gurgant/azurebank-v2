@@ -40,10 +40,10 @@ const landingRing = {
  *    unchanged. That is a real, visible difference on one page, and it is the reason this PR is
  *    separately revertible.
  *
- * The six recipient-only keys (`recipientRow`, `input`, `recipientCard`, `avatar`,
- * `recipientName`, `recipientTag`) stay in `TransferPage`: they belong to a step internal does not
- * have, and moving them here would make this module a place where things are put rather than a
- * place where shared things live.
+ * The eight recipient-only keys (`recipientRow`, `lookupHint`, `input`, `recipientCard`, `avatar`,
+ * `recipientName`, `recipientTag`, `reviewHint`) live in `transfer/TransferFormStep.tsx`: they
+ * belong to a step internal does not have, and moving them here would make this module a place
+ * where things are put rather than a place where shared things live.
  */
 export const useTransferWizardStyles = makeStyles({
   // A full-screen wizard sits deliberately OUTSIDE the app shell (see App.tsx), so unlike a shell
