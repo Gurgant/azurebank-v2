@@ -22,13 +22,15 @@ const MINTS: readonly (keyof typeof apiSlice.endpoints)[] = [
  * `answer` when the test gives one (a refusal). A test that fails before it releases leaves the
  * request pending, as `never` does, and the next test finds nothing of it.
  *
- * `answered(store)` is for a test that expects no send, and for the mock's own answer. It waits
- * until the client has taken the answer, which the store shows as the mint's fulfilled action, and
- * then one turn of the event loop. What the flow does with the answer is a chain of promises, and
- * a chain settles within the turn: either it has asked for its send, which the store shows as the
- * send's own action before any request leaves, or it has refused. Only then does it expect that the
- * store saw no send. A fixed wait could end before the client had the answer, and the absence of a
- * send would then be the send not having come yet.
+ * `answered(store)` is for a test that expects no send. It waits until the client has taken the
+ * answer, which the store shows as the mint's fulfilled action, or its rejected one when the test
+ * says `'rejected'` (the answer it gave was a refusal), and then one turn of the event loop. What
+ * the flow does with the answer is a chain of promises, and a chain settles within the turn: either
+ * it has asked for its send, which the store shows as the send's own action before any request
+ * leaves, or it has refused. Only then does it expect that the store saw no send. A fixed wait
+ * could end before the client had the answer, and the absence of a send would then be the send not
+ * having come yet. The outcome is named, so that a mint refused where it should have passed is a
+ * failure and not a quiet absence of a send.
  */
 export function holdTheMint(url: string, answer?: () => Response) {
   let arrive!: () => void;
@@ -51,7 +53,7 @@ export function holdTheMint(url: string, answer?: () => Response) {
   return {
     arrived,
     release,
-    async answered(store: TestStore) {
+    async answered(store: TestStore, outcome: 'fulfilled' | 'rejected' = 'fulfilled') {
       const mutations = () =>
         actionsSeen(store).filter(
           ({ type, endpointName }) =>
@@ -61,7 +63,7 @@ export function holdTheMint(url: string, answer?: () => Response) {
         MINTS.some((mint) => mint === endpointName);
       await waitFor(() =>
         expect(
-          mutations().some((action) => isMint(action) && action.type.endsWith('/fulfilled')),
+          mutations().some((action) => isMint(action) && action.type.endsWith(`/${outcome}`)),
         ).toBe(true),
       );
       await act(async () => {

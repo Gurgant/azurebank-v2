@@ -752,6 +752,22 @@ export function TransferPage() {
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
     const attempt = wizard.beginAttempt();
+    /*
+      What the page lets go of when the attempt is abandoned: the PIN, and the authorisation this
+      attempt minted, which goes with it. The key stays. An attempt that re-presents a held
+      authorisation sends at once, with no wait in which the visitor could leave, so it never ends
+      here.
+    */
+    const letGoOfTheAttempt = (mintedHere: boolean) => {
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      if (mintedHere) {
+        lastAuthorization.current = null;
+        setAuthorizationHeld(false);
+      }
+    };
+    let mintedHere = false;
     setConfirming(true);
     try {
       let authorizationId: string;
@@ -768,7 +784,14 @@ export function TransferPage() {
           authorizationId = minted.authorizationId;
           lastAuthorization.current = authorizationId;
           setAuthorizationHeld(true);
+          mintedHere = true;
         } catch (caught) {
+          // The visitor has left, and this answer is for a page they are no longer on: a refusal
+          // here must not navigate to PIN setup nor show a wrong PIN on the page they came back to.
+          if (attempt.abandoned) {
+            letGoOfTheAttempt(false);
+            return;
+          }
           // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
           wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
           handleRefusal(caught as ApiProblem, 'mint');
@@ -777,19 +800,15 @@ export function TransferPage() {
       }
 
       /*
-        The visitor chose "Leave anyway" while the PIN was being checked, and the Back landed on
-        another entry of this page, which stays. Nothing is sent for the PIN they typed before they
-        left; the boxes are emptied, as for an outage of the check, and a PIN typed now is a new
-        attempt. An authorisation this attempt minted goes with it.
+        The visitor chose "Leave anyway" while the PIN was being checked. The Back may have landed
+        on another entry of this page, which stays, or on another route, whose page is going.
+        Nothing is sent for the PIN they typed before they left; the boxes are emptied, as for an
+        outage of the check, and a PIN typed now is a new attempt. An authorisation this attempt
+        minted goes with it; the answer of a refused mint is dropped the same way, in the catch
+        above.
       */
       if (attempt.abandoned) {
-        setPin('');
-        enteredPin.current = '';
-        setPinNonce((n) => n + 1);
-        if (!keyLive) {
-          lastAuthorization.current = null;
-          setAuthorizationHeld(false);
-        }
+        letGoOfTheAttempt(mintedHere);
         return;
       }
 
