@@ -98,6 +98,18 @@ public class RequestLogRouteTests : IClassFixture<WebApplicationFactory<Program>
         refused.Properties["Resource"].Should().Be(new ScalarValue("users"));
     }
 
+    [Fact]
+    public async Task AProxiedLedgerRequest_NamesTheLedgerAsItsResource_NotOther()
+    {
+        // No session, as above, so the BFF refuses before any upstream call. YARP's catch-all
+        // pattern is the same for the ledger and for any path that names nothing, so the Resource
+        // property is all that tells the two apart in the security line.
+        var (_, _, events) = await RequestLineOf($"/api/transactions/{Guid.NewGuid()}");
+
+        var refused = events.Single(e => e.MessageTemplate.Text.Contains("no session on proxied", StringComparison.Ordinal));
+        refused.Properties["Resource"].Should().Be(new ScalarValue("transactions"));
+    }
+
     /// <summary>A stub upstream behind the REAL forwarder, so YARP's own log lines are written.</summary>
     private sealed class StubUpstream : IForwarderHttpClientFactory
     {
