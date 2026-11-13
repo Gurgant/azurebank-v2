@@ -175,8 +175,11 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetUserByAzureTagAsync_CaseInsensitiveLookup_ReturnsUser()
+    public async Task GetUserByAzureTagAsync_ACapitalisedHandle_StillResolves()
     {
+        // The endpoint lower-cases a payee's handle before it validates it (PayeeHandleCaseTests, over
+        // HTTP), so the service is handed lower case. This holds the line for a caller that does not
+        // come through the endpoint: the store holds lower case, and so does the comparison.
         // Arrange
         var currentUserId = Guid.NewGuid();
         var user = CreateTestUser("lowercase", "Test", "User");

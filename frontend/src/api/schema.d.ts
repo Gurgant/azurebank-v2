@@ -3150,7 +3150,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Full AzureTag to look up (3-20 chars, AzureTag charset). */
+                    /** @description Full AzureTag to look up (3-20 chars, AzureTag charset, any letter case: it is read in lower case). */
                     azureTag: string;
                 };
                 cookie?: never;
@@ -3927,7 +3927,7 @@ export interface components {
              * @description A valid non-empty UUID is required.
              */
             fromAccountId: string;
-            /** @description Must start with a letter and contain only lowercase letters, numbers, and underscores. */
+            /** @description A handle in any letter case: it is read in lower case. Must start with a letter and contain only letters, numbers, and underscores. */
             recipientAzureTag: string;
             /**
              * Format: double
@@ -3943,7 +3943,7 @@ export interface components {
              * @description A valid non-empty UUID is required.
              */
             fromAccountId: string;
-            /** @description Must start with a letter and contain only lowercase letters, numbers, and underscores. */
+            /** @description A handle in any letter case: it is read in lower case. Must start with a letter and contain only letters, numbers, and underscores. */
             recipientAzureTag: string;
             /**
              * Format: double

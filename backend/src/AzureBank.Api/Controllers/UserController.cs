@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.ModelBinding;
 using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
@@ -7,6 +8,7 @@ using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Validation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace AzureBank.Api.Controllers;
 
@@ -45,13 +47,14 @@ public class UserController : ControllerBase
     /// (ADR-0014; the Zelle/Cash App model).
     /// </remarks>
     /// <param name="cancellationToken">The request's token: cancelled by its deadline or by the caller hanging up (ADR-0058).</param>
-    /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
+    /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset, any letter case: it is read in lower case).</param>
     [HttpGet("{azureTag}")]
     [AlwaysFound] // An unknown handle is 200 with exists:false, never 404 (ADR-0014).
     [ProducesResponseType(typeof(ApiResponse<RecipientLookupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(
-        [Required][AzureTagQuery] string azureTag, CancellationToken cancellationToken)
+        [FromRoute][Required][AzureTagQuery][ModelBinder(typeof(LowerCasingRouteValueBinder))] string azureTag,
+        CancellationToken cancellationToken)
     {
         var userId = User.RequireUserId();
         var result = await _userService.GetUserByAzureTagAsync(azureTag, userId, cancellationToken);
