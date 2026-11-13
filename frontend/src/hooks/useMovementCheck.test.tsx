@@ -1,10 +1,17 @@
 import type { PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { http } from 'msw';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
-import { apiSlice, useGetAccountsQuery, useGetTransactionsQuery } from '../features/api/apiSlice';
+import {
+  apiSlice,
+  useGetAccountBalanceQuery,
+  useGetAccountsQuery,
+  useGetTransactionsQuery,
+} from '../features/api/apiSlice';
 import { serviceUnavailable } from '../mocks/problem';
-import { mockState } from '../mocks/state';
+import { server } from '../mocks/server';
+import { mockState, SAVINGS_ACCOUNT_ID } from '../mocks/state';
 import { makeTestStore, type TestStore } from '../test/renderWithProviders';
 import {
   advance,
@@ -253,6 +260,12 @@ describe('useMovementCheck', () => {
 describe('useMovementCheck, as a copy arrives', () => {
   const HISTORY = { page: 1, pageSize: 20 };
 
+  /** Long enough for a read the check should not make to reach the mock and be counted. */
+  const settle = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
   it('reads the accounts and the transactions on screen again', async () => {
     const store = makeTestStore();
     const reads = countListReads();
@@ -271,7 +284,7 @@ describe('useMovementCheck, as a copy arrives', () => {
     };
 
     const sent = copy();
-    const { result } = renderHook(
+    const { result, rerender } = renderHook(
       () => useMovementCheck(sent, target, () => {}),
       options({ strict: false, store }),
     );
@@ -284,6 +297,87 @@ describe('useMovementCheck, as a copy arrives', () => {
       expect(lists.current.accounts.isFetching).toBe(false);
       expect(lists.current.transactions.requestId).not.toBe(first.transactions);
       expect(lists.current.transactions.isFetching).toBe(false);
+    });
+
+    // Once per copy: a second invalidation, from a re-run of the effect, would read a third time.
+    rerender();
+    await settle();
+    expect(reads).toEqual({ accounts: 2, transactions: 2 });
+  });
+
+  it('reads nothing again when every authorisation under the key was refused', async () => {
+    // Nothing sent under the key can commit, so the send moved no money: the check says none at
+    // once, and what is on screen was read after the last change there was.
+    const store = makeTestStore();
+    const reads = countListReads();
+    const { result: lists } = renderHook(
+      () => ({ accounts: useGetAccountsQuery(), transactions: useGetTransactionsQuery(HISTORY) }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => {
+      expect(lists.current.accounts.isSuccess).toBe(true);
+      expect(lists.current.transactions.isSuccess).toBe(true);
+    });
+
+    const sent = copy({ everyAuthorisationRefused: true });
+    const { result } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => expect(result.current.verdict).toBe('none'));
+    await settle();
+    expect(reads).toEqual({ accounts: 1, transactions: 1 });
+  });
+
+  /*
+    A transfer between the visitor's own accounts: the listing is asked on one account and, if
+    that is closed, on the other, and the move changed both balances. Only the second account is
+    read on screen here, so a read of it can come only from the other-account tag or the fallback.
+  */
+  it.each([
+    [
+      'the other account of a move',
+      { first: { accountId: MAIN, type: 'TransferOut', otherAccountId: SAVINGS_ACCOUNT_ID } },
+    ],
+    [
+      'the fallback account',
+      {
+        first: { accountId: MAIN, type: 'TransferOut' },
+        fallback: { accountId: SAVINGS_ACCOUNT_ID, type: 'TransferIn' },
+      },
+    ],
+  ] as const)('reads %s again', async (_name, targets) => {
+    const store = makeTestStore();
+    let reads = 0;
+    server.use(
+      http.get(`*/api/accounts/${SAVINGS_ACCOUNT_ID}/balance`, () => {
+        reads += 1;
+        return undefined;
+      }),
+    );
+    const { result: balance } = renderHook(
+      () => useGetAccountBalanceQuery({ id: SAVINGS_ACCOUNT_ID }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => expect(balance.current.isSuccess).toBe(true));
+    expect(reads).toBe(1);
+
+    const sent = copy();
+    const { result } = renderHook(
+      () =>
+        useMovementCheck(
+          sent,
+          () => targets,
+          () => {},
+        ),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(reads).toBe(2);
+      expect(result.current.verdict).toBe('notYet');
+      expect(balance.current.isFetching).toBe(false);
     });
   });
 

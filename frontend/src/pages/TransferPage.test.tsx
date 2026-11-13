@@ -47,7 +47,10 @@ function renderTransfer(routerEntries: RouterEntries = ['/']) {
   );
 }
 
-/** The check view's first line: it says "didn't go through" once the lookup has found nothing. */
+/**
+ * The check view's first line: it says "didn't go through" once the lookup has found nothing and
+ * nothing sent under the key can still commit.
+ */
 const CHECK_VIEW_TITLE = /We couldn't confirm your transfer|Your transfer didn't go through/;
 
 async function verifyRecipient(tag: string) {
