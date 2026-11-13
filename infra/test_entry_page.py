@@ -287,6 +287,24 @@ class EntryPageTests(unittest.TestCase):
         harness = (SITE.parent / 'docs' / 'harness-engineering.md').read_text(encoding='utf-8')
         self.assertRegex(harness, r'(?m)^## What this does not show\s*$')
 
+    def test_the_checks_figure_says_before_any_merge_without_today(self):
+        flat = ' '.join(PAGE.split())
+        written = re.findall(r'<b>11</b><span>(required checks and a security scan[^<]*'
+                             r'|controlli obbligatori e una scansione[^<]*)</span>', flat)
+        self.assertEqual(written,
+                         ['required checks and a security scan before any merge',
+                          'controlli obbligatori e una scansione di sicurezza prima di ogni merge'])
+        self.assertNotIn('a security scan: today', flat)
+        self.assertNotIn('sicurezza: oggi', flat)
+
+    def test_the_third_sentence_of_the_lede_is_one_clause_with_no_parenthesis(self):
+        mores = re.findall(r'<span class="lede__more"\s*>(.*?)</span\s*>', PAGE, flags=re.S)
+        self.assertEqual(len(mores), 2)
+        for more in mores:
+            self.assertNotIn('(', more)
+            self.assertNotIn(')', more)
+        self.assertIn('A payment the app sends again after a network error is applied once,', ' '.join(mores[0].split()))
+
     def test_the_script_and_the_style_sheet_are_asked_for_under_one_version(self):
         versions = re.findall(r'(?:href|src)="entry\.(?:css|js)\?v=(\d+)"', PAGE)
         self.assertEqual(len(versions), 2)
