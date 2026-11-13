@@ -233,24 +233,77 @@ class EntryPageTests(unittest.TestCase):
         self.assertNotIn('WebSocket', script)
         self.assertNotIn('EventSource', script)
 
-    def test_the_number_is_written_once_for_each_language_in_the_link_to_the_list(self):
-        links = re.findall(r'<a href="https://github\.com/Gurgant/azurebank-v2/pulls\?q=is%3Apr\+is%3Amerged">'
-                           r'(.*?)</a>', PAGE, flags=re.S)
-        link, = [link for link in links if 'data-merged-count' in link]
-        figures = re.findall(r'<span class="fig" lang="(\w+)" data-lang="\1"><b data-merged-count="\1">'
-                             r'([^<]*)</b>', link)
+    def test_the_number_is_written_once_for_each_language_in_the_tally_of_how_i_work(self):
+        tally, = re.findall(r'<div class="tally">(.*?)<ul class="tally__links"', PAGE, flags=re.S)
+        figures = re.findall(r'<p class="fig" lang="(\w+)" data-lang="\1">\s*<b data-merged-count="\1">'
+                             r'([^<]*)</b>', tally)
         self.assertEqual([language for language, _ in figures], ['en', 'it'])
         self.assertEqual(PAGE.count('data-merged-count'), 2)
         for _, written in figures:
             self.assertRegex(written, r'^[1-9]\d{0,2}([.,]\d{3})*$')
         self.assertEqual(figures[0][1].replace(',', ''), figures[1][1].replace('.', ''))
 
-    def test_the_note_is_empty_in_the_page_and_follows_the_date_of_the_four_figures(self):
-        date, = re.findall(r'<p class="proof__date">(.*?)</p>', PAGE, flags=re.S)
+    def test_the_note_is_empty_in_the_page_and_follows_the_date_of_the_count_in_the_tally(self):
+        tally, = re.findall(r'<div class="tally">(.*?)<ul class="tally__links"', PAGE, flags=re.S)
+        date, = re.findall(r'<p class="tally__date">(.*?)</p>', tally, flags=re.S)
         notes = re.findall(r'<span lang="(\w+)" data-lang="\1">[^<]*<time datetime="[\d-]+">[^<]*</time>'
                            r'<span data-count-note="\1"></span></span>', date)
         self.assertEqual(notes, ['en', 'it'])
         self.assertEqual(PAGE.count('data-count-note'), 2)
+        self.assertLess(tally.index('data-merged-count'), tally.index('data-count-note'))
+
+    def test_the_first_screen_does_not_show_the_merge_count_or_a_note_about_it(self):
+        first, = re.findall(r'<div class="proof">(.*?)</div>', PAGE, flags=re.S)
+        self.assertNotIn('data-merged-count', first)
+        self.assertNotIn('data-count-note', first)
+        figures = re.findall(r'<b>([^<]*)</b\s*>', first)
+        self.assertEqual(figures[0::2], ['5,408', '509', '11', '4'])
+        self.assertEqual(figures[1::2], ['5.408', '509', '11', '4'])
+
+    def test_the_count_of_sql_server_proofs_is_the_same_in_the_tile_and_beside_the_payment_claim(self):
+        tile = re.findall(r'<b>(\d+)</b><span>(?:backend proofs on a real SQL Server'
+                          r'|prove del backend su un vero SQL Server)', PAGE)
+        flat = ' '.join(PAGE.split())
+        claim = re.findall(r'in two of the (\d+) proofs that a CI job runs there on every pull request to main'
+                           r'|in due delle (\d+) prove che un job di CI esegue lì a ogni pull request verso main',
+                           flat)
+        self.assertEqual(len(claim), 2)
+        counts = {claim[0][0], claim[1][1]}
+        # The tile belongs to the commit that moves the figures onto the first screen; the claim
+        # is checked alone where the tile is not there yet.
+        if tile:
+            self.assertEqual(len(tile), 2)
+            counts |= set(tile)
+            self.assertIn('job/123997976795">', PAGE)
+        self.assertEqual(len(counts), 1)
+
+    def test_the_evidence_is_linked_beside_the_claim_it_supports(self):
+        page = 'https://github.com/Gurgant/azurebank-v2/blob/main/docs/audit-trail-against-real-practice.md'
+        self.assertEqual(PAGE.count(f'href="{page}"'), 1)
+        self.assertEqual(PAGE.count('href="docs/harness-engineering#what-this-does-not-show"'), 2)
+        self.assertEqual(PAGE.count('href="docs/engineering-traps"'), 1)
+        for name in ('audit-trail-against-real-practice.md', 'engineering-traps.md'):
+            self.assertTrue((SITE.parent / 'docs' / name).is_file(), name)
+        harness = (SITE.parent / 'docs' / 'harness-engineering.md').read_text(encoding='utf-8')
+        self.assertRegex(harness, r'(?m)^## What this does not show\s*$')
+
+    def test_the_checks_figure_says_before_any_merge_without_today(self):
+        flat = ' '.join(PAGE.split())
+        written = re.findall(r'<b>11</b><span>(required checks and a security scan[^<]*'
+                             r'|controlli obbligatori e una scansione[^<]*)</span>', flat)
+        self.assertEqual(written,
+                         ['required checks and a security scan before any merge',
+                          'controlli obbligatori e una scansione di sicurezza prima di ogni merge'])
+        self.assertNotIn('a security scan: today', flat)
+        self.assertNotIn('sicurezza: oggi', flat)
+
+    def test_the_third_sentence_of_the_lede_is_one_clause_with_no_parenthesis(self):
+        mores = re.findall(r'<span class="lede__more"\s*>(.*?)</span\s*>', PAGE, flags=re.S)
+        self.assertEqual(len(mores), 2)
+        for more in mores:
+            self.assertNotIn('(', more)
+            self.assertNotIn(')', more)
+        self.assertIn('A payment the app sends again after a network error is applied once,', ' '.join(mores[0].split()))
 
     def test_the_script_and_the_style_sheet_are_asked_for_under_one_version(self):
         versions = re.findall(r'(?:href|src)="entry\.(?:css|js)\?v=(\d+)"', PAGE)
