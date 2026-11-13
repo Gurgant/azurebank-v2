@@ -143,6 +143,11 @@ public class UserService : IUserService
         {
             // A plain column update — UserName is the immutable id, so no Identity username
             // change is involved (ADR-0015). The audit row added above rides THIS save.
+            //
+            // A DbUpdateConcurrencyException from this save (the stamp rotated above, lost to a
+            // sign-out, a PIN save or another rename of this user that committed after the load)
+            // is not caught below and answers 500. AccountService.UpdateAccountAsync reloads and
+            // retries, then answers AccountBusyException; this rename has no such loop yet.
             await _context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ConcurrencyRetry.IsAzureTagCollision(ex))
