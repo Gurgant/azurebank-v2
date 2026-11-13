@@ -14,7 +14,7 @@ public class IdempotencyOptions
     /// <summary>
     /// Server-side key for HMAC-SHA256 request fingerprinting.
     /// MUST be configured (user-secrets / environment), never committed and
-    /// never stored in the database: every money body is low-entropy and
+    /// never stored in the database: a money body is low-entropy and
     /// mostly known, so a plain hash of it would let anyone with database
     /// read access confirm guesses about what somebody moved and to whom
     /// (ADR-0009 decision 3).
