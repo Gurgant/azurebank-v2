@@ -32,7 +32,8 @@ namespace AzureBank.Tests.Architecture;
 /// says. Measured by these tests before this change: 0 of the 27 actions took a token, nor 31 of the
 /// 32 service methods, and 69 of the 129 EF calls in the API and Infrastructure passed none (2 more
 /// passed <c>CancellationToken.None</c>). CA2016 (an error in both projects) catches a token a method
-/// has and does not forward; these catch the methods that never had one to forward.
+/// has and does not forward; these catch the methods that never had one to forward. The opposite rule
+/// holds at a refusal's audit row, which must never take the request's token (ADR-0058 D12).
 /// </para>
 /// <para>
 /// Three token endpoints stay without one, on purpose: refresh, revoke and logout run to completion
@@ -142,8 +143,9 @@ public class CancellationFlowTests
 
     /// <summary>
     /// Where <c>CancellationToken.None</c> is the design. A rollback must run whatever happened to the
-    /// request, so it may take None. A refusal's audit row must take it: the row is written in its
-    /// own scope so that it survives the rollback of what it refused (ADR-0044 D1), and
+    /// request, so it may take None. A refusal's audit row must take it: a caller who hangs up, or the
+    /// deadline, must not cancel the write (ADR-0058 D12), which already runs in its own scope so that
+    /// it survives the rollback of what it refused (ADR-0044 D1).
     /// <see cref="EveryRefusalsAuditRow_PassesCancellationTokenNone"/> fails on every call that does
     /// not pass it.
     /// </summary>
@@ -284,15 +286,13 @@ public class CancellationFlowTests
                 var site = $"{relative}:{LineOf(code, match.Index)}";
                 sites.Add(site);
 
-                // A call with no token is an offender too: the parameter's default lets it compile,
-                // and CA2016 reports it only where a token is in scope, so each site names None.
-                if (!token.Success)
+                // A call with no token is an offender too. The parameter's default is None, so such a
+                // call cannot be cancelled either, but it compiles, and CA2016 reports it only where a
+                // token is in scope: each site states None where the choice is made, and does not
+                // inherit it from a default declared in IAuditService.
+                if (!token.Success || !IsNone(token.Groups["token"].Value))
                 {
-                    offenders.Add($"{site} RecordRefusalAsync(...) passes no token");
-                }
-                else if (!IsNone(token.Groups["token"].Value))
-                {
-                    offenders.Add($"{site} RecordRefusalAsync(..., {last}) passes a token the request can cancel");
+                    offenders.Add($"{site} RecordRefusalAsync(..., {last}): the last argument is not CancellationToken.None");
                 }
             }
         }
@@ -300,7 +300,7 @@ public class CancellationFlowTests
         sites.Should().HaveCount(
             8,
             "these are the eight _audit.RecordRefusalAsync( calls that SecurityEventConstantTests counts; "
-            + "a scan that finds fewer is not reading them, and a new refusal site moves both counts");
+            + "a scan that finds fewer is not reading them, and a new _audit.RecordRefusalAsync( site moves both counts");
 
         offenders.Should().BeEmpty(
             "a refusal's audit row is written in its own scope so that it outlives what it refused "
