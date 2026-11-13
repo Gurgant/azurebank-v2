@@ -52,8 +52,8 @@ const MovementsPage = PaginatedResponseOfTransactionResponse.required();
 /**
  * Exported so tsc's noUnusedLocals sees a use — the tuple's only job is to force every
  * AssertExtends pair to typecheck (each entry proves one direction of one schema pair).
- * Every `as ZodType<…>` cast below needs its own pair here, both ways, with the schema it casts:
- * responseSchemas.test.ts fails on a cast that has none.
+ * Every `as ZodType<…>` cast below needs both directions of its schema against its type here (the
+ * element's, for a `z.array` list): responseSchemas.test.ts fails on a cast that lacks either.
  */
 export type _GeneratedSchemasMatchSpec = [
   AssertExtends<z.infer<typeof DepositResponse>, Schemas['DepositResponse']>,
