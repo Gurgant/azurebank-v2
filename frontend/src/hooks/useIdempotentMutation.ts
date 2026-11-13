@@ -67,7 +67,8 @@ export interface SentRequest<TBody> {
    * Every send carried an authorisation, and every one presented was refused
    * (`AUTHORIZATION_EXPIRED` or `AUTHORIZATION_INVALID`): nothing under the key can commit any
    * more (ADR-0022, decision 6). One that a limiter refused on the first send to carry it is not
-   * counted as presented: a limiter answers before the API, so the API never saw it.
+   * counted as presented: a limiter answers before the API's idempotency check and the action,
+   * so nothing was claimed or spent under it.
    */
   readonly everyAuthorisationRefused: boolean;
 }
@@ -244,13 +245,15 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         const problem = error as ApiProblem;
         if (carried && isAuthorisationRefusal(problem)) record.refused.add(carried);
         /*
-          A limiter answers before the API sees the send: the BFF's refuses it before proxying,
-          and the demo's write budget before idempotency and the action. An authorisation this
-          send was the first to carry never reached the API, then, and no later send under the
-          key carries it, because a limiter's refusal never keeps the key. It comes out of
+          A limiter answers before the send reaches the API's idempotency check and the action:
+          the BFF's limiter refuses it before proxying, and the demo's write budget before
+          either. An authorisation this send was the first to carry was never checked or spent,
+          then, and no other send under the key carries it: a later one cannot, because a
+          limiter's refusal never keeps the key, and an overlapping one cannot, because the flows
+          that reuse a key disable their controls while a send is in flight. It comes out of
           `presented`, so that the latch below can say nothing under the key can commit when
           every other one was refused. One that an earlier send carried stays: that send may
-          have reached the API.
+          have reached the action.
         */
         if (newlyPresented && isLimiterRefusal(problem)) record.presented.delete(newlyPresented);
         /*

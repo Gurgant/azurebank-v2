@@ -1384,9 +1384,10 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
   });
 
   it.each(limiterRefusals)(
-    '6n — A1 refused, then a limiter refused the resend that first carried A2 (%s): A2 never reached the API, so nothing under the key can commit any more',
+    '6n — A1 refused, then a limiter refused the resend that first carried A2 (%s): A2 was never checked or spent, so nothing under the key can commit any more',
     async (errorCode) => {
-      // A limiter answers before the API, so the API saw A1 alone, and refused it.
+      // A limiter answers before the idempotency check and the action, so only A1 was ever
+      // checked, and it was refused.
       const copy = await withdrawalsUnderOneKey([
         { authorisation: A1, answer: refused },
         { authorisation: A2, answer: () => problem({ status: 429, errorCode }) },
