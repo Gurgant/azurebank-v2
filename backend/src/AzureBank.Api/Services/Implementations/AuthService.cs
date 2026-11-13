@@ -73,7 +73,7 @@ public class AuthService : IAuthService
         _accountMapper = accountMapper;
         _timingEqualizer = timingEqualizer;
         _logger = logger;
-        // Resolve by CLASSIFICATION, not by concrete type: this service only declares that
+        // Resolve by classification, not by concrete type: this service only declares that
         // it logs PII; which masking strategy applies is the observability layer's decision
         // (see AddRedaction in ObservabilityServiceCollectionExtensions). Resolved once —
         // redactors are stateless singletons.
@@ -85,13 +85,13 @@ public class AuthService : IAuthService
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
 
-        // On the public demo, a user the gate refuses is answered as an email nobody has, HERE,
+        // On the public demo, a user the gate refuses is answered as an email nobody has, here,
         // before the password is looked at: the same cost spent, the same exception, and neither
         // the password check nor the lockout below ever runs for it. Null wherever the demo is off.
         var gateRefusal = user is null ? null : await DemoGateRefusalAsync(user, cancellationToken);
         if (user is null || gateRefusal is not null)
         {
-            // Spend the same DOMINANT (PBKDF2) password-hash cost a real account would, so
+            // Spend the same dominant (PBKDF2) password-hash cost a real account would, so
             // an unknown email can't be told apart by that latency; the response body is
             // already identical to a wrong password. A smaller write-latency residual on
             // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
@@ -138,7 +138,7 @@ public class AuthService : IAuthService
         }
 
         /*
-          THE ATTEMPT IS COUNTED BEFORE THE PASSWORD IS COMPARED (ADR-0012 decision 2), as the PIN's is
+          The attempt is counted before the password is compared (ADR-0012 decision 2), as the PIN's is
           (ADR-0010). Only an attempt the claim counted has its password compared, so requests sent
           together cannot each read "not locked" and each be compared: the row hands out
           MaxLoginAttempts comparisons a window and refuses the rest. Measured on SQL Server with the
@@ -148,7 +148,7 @@ public class AuthService : IAuthService
         if (!await ClaimLoginAttemptAsync(user, now, cancellationToken))
         {
             /*
-              LOCKED, AND THE ANSWER DOES NOT DEPEND ON THE PASSWORD (ADR-0012 decision 3). It is the
+              Locked, and the answer does not depend on the password (ADR-0012 decision 3). It is the
               401 a wrong password and an unknown email receive, whatever was sent: answered
               otherwise for the right password, the lock would tell a guesser which password is right
               (measured: 429 for the right one, 401 for a wrong one). The password is not compared;
@@ -174,7 +174,7 @@ public class AuthService : IAuthService
         }
 
         // Wrong password, already counted by the claim: the same 401 as an unknown user.
-        // On a KNOWN account: log the stable user id, not the raw email (PII).
+        // On a known account: log the stable user id, not the raw email (PII).
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
         throw new AuthenticationException(SignInRefused);
@@ -193,7 +193,7 @@ public class AuthService : IAuthService
     /// <summary>The answer to a sign-in whose password was proved: an access token and a grant.</summary>
     private async Task<LoginResponse> IssueSignInAsync(ApplicationUser user, CancellationToken cancellationToken)
     {
-        // The access token BEFORE the grant, so the grant cannot cap it; the start-up rule that a
+        // The access token before the grant, so the grant cannot cap it; the start-up rule that a
         // grant lives at least as long as an access token (JwtOptions) is what keeps it inside
         // the grant's lifetime anyway (ADR-0057 F11).
         var tokenResult = _jwtService.GenerateToken(user);
@@ -203,7 +203,7 @@ public class AuthService : IAuthService
         return new LoginResponse
         {
             /*
-              The stamp as read at the top, BEFORE the grant was issued (ADR-0057 §5.3). A
+              The stamp as read at the top, before the grant was issued (ADR-0057 §5.3). A
               sign-out everywhere that commits after that read raises the stamp above this one,
               so the BFF ends this session within one poll even though its grant may have been
               issued after the revoke. Read after the grant instead, the same race could leave a
@@ -371,11 +371,11 @@ public class AuthService : IAuthService
     // provider falls back to an equivalent tracked write (single-threaded there).
 
     /// <summary>
-    /// Counts one password attempt against <paramref name="user"/> BEFORE the password is compared:
+    /// Counts one password attempt against <paramref name="user"/> before the password is compared:
     /// increment AccessFailedCount, and when it reaches <see cref="ValidationRules.MaxLoginAttempts"/>
-    /// set LockoutEnd and reset the counter, all against the row's CURRENT value in one statement.
+    /// set LockoutEnd and reset the counter, all against the row's current value in one statement.
     /// True when the attempt was counted; false when a lock that has not expired refused it, and
-    /// then the password must not be compared. An EXPIRED lock is cleared; a FUTURE lock is never
+    /// then the password must not be compared. An expired lock is cleared; a future lock is never
     /// cleared, so the threshold cannot be bypassed by requests sent together.
     /// </summary>
     /// <remarks>
@@ -394,7 +394,7 @@ public class AuthService : IAuthService
         if (_context.Database.IsRelational())
         {
             // The WHERE excludes a currently-locked (or exempt) row, so a late concurrent
-            // increment that lands AFTER a peer already latched the lock updates zero rows —
+            // increment that lands after a peer already latched the lock updates zero rows —
             // no residual count survives onto the next window. Because a matched row is
             // therefore always null-or-expired, the LockoutEnd else-branch is just null.
             var counted = await _context.Users
@@ -438,7 +438,7 @@ public class AuthService : IAuthService
     // SaveChanges in the same request (e.g. a future unit-of-work or audit interceptor)
     // can't write those stale values back and silently revert the reset. Subsequent reads
     // (JWT generation, identity mapping) work fine on the detached entity. A caller that goes
-    // on to SAVE this user has to mirror the reset onto it and attach it again first, as
+    // on to save this user has to mirror the reset onto it and attach it again first, as
     // VerifyAccountPasswordAsync does: Identity's update cannot attach it once its own
     // validators have tracked a second instance of the row.
     private async Task ResetLoginLockoutAsync(ApplicationUser user, CancellationToken cancellationToken)
@@ -463,11 +463,11 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
-        // Reject duplicates with a single enumeration-NEUTRAL response so an anonymous
+        // Reject duplicates with a single enumeration-neutral response so an anonymous
         // caller can't read which field (email or handle) collided — the specific reason
         // is logged server-side only, as a structured SecurityEvent an operator can alert
         // on (ADR-0013). This is defense-in-depth: it removes the plaintext label, but it
-        // does NOT close the structural oracle (a duplicate returns 409 while a fresh email
+        // does not close the structural oracle (a duplicate returns 409 while a fresh email
         // returns 201 + a token). Full closure needs the deferred email-confirmation flow.
         var normalizedAzureTag = request.AzureTag.ToLower();
         if (await _userManager.FindByEmailAsync(request.Email) != null)
@@ -482,10 +482,10 @@ public class AuthService : IAuthService
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag, cancellationToken))
         {
             /*
-              NO HANDLE IN THE LINE, since 2026-09-11. A handle is a direct identifier, and ADR-0017's
-              log-identifier rule keeps those out of exported logs entirely; the email sibling above
-              logs only the redactor's MASKED form. It used to carry the claimed handle, sanitized
-              for log-forging, which answered the forging question and not the identity one.
+              No handle in the line. A handle is a direct identifier, and ADR-0017's log-identifier
+              rule keeps those out of exported logs entirely; the email sibling above logs only the
+              redactor's masked form. Sanitising a handle against log forging would answer the
+              forging question and not the identity one.
             */
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, handle already taken",
@@ -494,15 +494,15 @@ public class AuthService : IAuthService
         }
 
         /*
-          ALL OR NOTHING. Everything registration writes — the Identity user, its role, and the
+          All or nothing. Everything registration writes — the Identity user, its role, and the
           starter account — commits together or not at all.
 
-          Before this, UserManager.CreateAsync committed the user in its own unit of work, so any
-          failure at the account INSERT left a user holding the email and the AzureTag with no
+          Otherwise UserManager.CreateAsync commits the user in its own unit of work, and any
+          failure at the account insert leaves a user holding the email and the AzureTag with no
           account and no way back: the pre-checks above would then find their own row and return the
-          neutral 409 forever. ADR-0036 fixed the one cause it could (a duplicate account number,
-          still retried below) and recorded the rest as open. Measured with a non-collision fault:
-          500 to the client, user committed, role assigned, zero accounts, 409 on every retry.
+          neutral 409 forever. ADR-0036 recovers the one cause it could (a duplicate account number,
+          still retried below). Measured with a non-collision fault and no transaction: 500 to the
+          client, user committed, role assigned, zero accounts, 409 on every retry.
 
           Identity is registered with AddEntityFrameworkStores<AzureBankDbContext>, so UserManager
           writes through this same scoped context and enlists in the transaction begun here — which
@@ -510,7 +510,7 @@ public class AuthService : IAuthService
 
           Run through the execution strategy because EnableRetryOnFailure is on and EF refuses a
           user-initiated transaction under a retrying strategy otherwise. The change tracker is
-          cleared and the entities rebuilt INSIDE the delegate: a rolled-back attempt leaves them
+          cleared and the entities rebuilt inside the delegate: a rolled-back attempt leaves them
           tracked, and a retry that reused them would try to insert the previous attempt's rows
           alongside the new ones.
 
@@ -553,20 +553,19 @@ public class AuthService : IAuthService
                 // The genuine TOCTOU race: a concurrent registration passed the advisory
                 // pre-checks and Identity's validators too, then a unique index (AzureTag, or now
                 // the NormalizedEmail unique index) rejected this one at write time. Neutralise it
-                // to the SAME response as a pre-check duplicate so the race can't be used to
+                // to the same response as a pre-check duplicate so the race can't be used to
                 // enumerate accounts (ADR-0013).
                 //
-                // NARROWED BY INDEX NAME, and load-bearing now that this catch sits inside the
-                // execution-strategy delegate. DbUpdateException is EF's generic wrapper for
-                // anything that fails in the update pipeline — deadlock 1205, lock timeout 1222,
-                // connectivity 10053/40613, command timeout -2, a truncation or FK defect. Every one
-                // of those used to be reported to the caller as "these details are taken", and since
-                // ADR-0037 it would ALSO rob the strategy of the retry it performs on a transient:
-                // it decides by walking the inner exception chain, and ConflictException has none.
+                // Narrowed by index name, and load-bearing because this catch sits inside the
+                // execution-strategy delegate (ADR-0037). DbUpdateException is EF's generic wrapper
+                // for anything that fails in the update pipeline — deadlock 1205, lock timeout 1222,
+                // connectivity 10053/40613, command timeout -2, a truncation or FK defect. Each of
+                // those would be reported to the caller as "these details are taken", and would also
+                // rob the strategy of the retry it performs on a transient: it decides by walking the
+                // inner exception chain, and ConflictException has none.
                 //
-                // The same file already narrows the identical catch sixty lines below
-                // (IsAccountNumberCollision), so until now a deadlock on the ACCOUNT insert was
-                // retried while the very same deadlock on the USER insert became a 409.
+                // The account insert's catch below (IsAccountNumberCollision) is narrowed the same
+                // way, so a deadlock on the user insert is retried as one on the account insert is.
                 _logger.LogWarning(ex,
                     "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
                     SecurityEvents.DuplicateRegistration);
@@ -577,7 +576,7 @@ public class AuthService : IAuthService
             {
                 // Never echo Identity's error descriptions to the client. A duplicate that slips
                 // past the advisory pre-checks (a race) surfaces here as a Duplicate* code; it
-                // must return the SAME neutral 409 as the pre-check path or the differing
+                // must return the same neutral 409 as the pre-check path or the differing
                 // response re-opens the enumeration oracle (ADR-0013). Branch on the stable
                 // error Code, not the localisable Description. Any other failure gets a generic
                 // message (it is not an existence oracle).
@@ -599,7 +598,7 @@ public class AuthService : IAuthService
               user, the role and the account commit together (ADR-0037), and a dropped role is the
               one partial commit that could still return 201.
 
-              NOT a BusinessRuleException: that maps to 422, which would report an operator/seeding
+              Not a BusinessRuleException: that maps to 422, which would report an operator/seeding
               fault as a defect in the caller's payload. A rollback to 500 matches what the
               missing-role case already does — UserStore throws InvalidOperationException
               "Role USER does not exist." — which is why RoleSeeder must run before the first
@@ -643,45 +642,40 @@ public class AuthService : IAuthService
             _context.Accounts.Add(account);
 
             /*
-              Retried on an account-number collision. HISTORY, because the reason changed under it:
-              CreateAsync used to commit the user in its own unit of work, so an uncaught duplicate
-              here left a user holding the email and the AzureTag with no account and no way back —
-              measured as 500, user committed, role assigned, zero accounts, 409 on every retry
-              (ADR-0036). The transaction opened above now rolls all of that back, so this retry is
-              kept for a DIFFERENT reason: it turns a recoverable clash into a success rather than a
-              rollback the caller has to redo (ADR-0037).
+              Retried on an account-number collision: the retry turns a recoverable clash into a
+              success, where a rollback would leave the caller to redo the registration (ADR-0036,
+              ADR-0037).
 
               Narrowed by index name inside the predicate, which is load-bearing here: this same request
-              can legitimately lose the AzureTag or NormalizedEmail race, and THAT must stay the
+              can legitimately lose the AzureTag or NormalizedEmail race, and that must stay the
               enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
             */
             await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id, ct);
         },
         /*
-          THE AMBIGUOUS COMMIT. EF owns the transaction now, and this asks whether it landed rather
+          The ambiguous commit. EF owns the transaction, and this asks whether it landed rather
           than assuming it did not.
 
           Without it, a transient raised BY the commit — a dropped connection, a failover, a bare
           TimeoutException, all of which EnableRetryOnFailure retries — re-runs the delegate against
-          a database that ALREADY holds this registration. The pre-checks live outside the delegate
+          a database that already holds this registration. The pre-checks live outside the delegate
           so they do not re-run; Identity finds the committed row, answers DuplicateEmail, and a
-          caller whose registration SUCCEEDED gets the neutral 409 with no token and no account.
-          The same shape PR #93 fixed in the seeder.
+          caller whose registration succeeded gets the neutral 409 with no token and no account.
 
-          Invoked ONLY for a commit-phase exception: EF sets its CommitFailed flag in the statement
+          Invoked only for a commit-phase exception: EF sets its CommitFailed flag in the statement
           immediately before CommitAsync and short-circuits on it, so anything thrown from inside
-          the delegate — including every non-duplicate DbUpdateException that now propagates past the
+          the delegate — including every non-duplicate DbUpdateException that propagates past the
           narrowed catch above — skips this and goes straight to the retry decision. By the time it
           runs, `user` is always assigned.
 
-          KEYED ON THE UUIDv7 MINTED FOR THIS ATTEMPT, never on the email or the AzureTag. Either of
-          those could be satisfied by a row a CONCURRENT registration won, which would hand this
+          Keyed on the UUIDv7 minted for this attempt, never on the email or the AzureTag. Either of
+          those could be satisfied by a row a concurrent registration won, which would hand this
           caller a 201 and a JWT for somebody else's user. The user row alone suffices because the
           entire point of the transaction is that the account cannot exist without it.
 
-          ITS COMMIT GOES THROUGH THE COMMIT GATE (ADR-0058), which EF's own transaction here raises:
+          Its commit goes through the commit gate (ADR-0058), which EF's own transaction here raises:
           refused if the request deadline has already fired, and while the commit runs nothing
-          cancels the request. A commit that FAILS turns the deadline back on at its original
+          cancels the request. A commit that fails turns the deadline back on at its original
           instant, and this question then runs under that token: past the instant it is refused or
           cut short, so a registration that landed answers 503, and the same details sent again
           get the neutral 409. Unlike an audited save, it is not asked a second time (ADR-0058,
@@ -694,16 +688,14 @@ public class AuthService : IAuthService
 
         var tokenResult = _jwtService.GenerateToken(user);
 
-        // The transaction above has COMMITTED by this point, so the user and the account are
+        // The transaction above has committed by this point, so the user and the account are
         // durable. Issuing the refresh token is a best-effort convenience on top of that: if this
-        // write fails, do NOT fail the whole registration — that would 500 the client for an account
-        // that WAS created and then hand back a confusing duplicate-409 on retry. The user still
+        // write fails, do not fail the whole registration — that would 500 the client for an account
+        // that was created and then hand back a confusing duplicate-409 on retry. The user still
         // gets an access token now and a refresh token on their next login.
         //
-        // Deliberately OUTSIDE the transaction, and the reason inverted with ADR-0037. It used to be
-        // that enrolling it changed nothing, because the duplicate-409 came from an already-committed
-        // Identity user. Now it would change something, and the wrong thing: a failed token write
-        // would roll back a registration that had otherwise succeeded. Best-effort is the point.
+        // Deliberately outside the transaction: a failed token write would roll back a registration
+        // that had otherwise succeeded (ADR-0037). Best-effort is the point.
         IssuedGrant? grant = null;
         try
         {
@@ -727,13 +719,13 @@ public class AuthService : IAuthService
     }
 
     /// <summary>
-    /// The token object the THREE endpoints that open a session answer — login, registration and
+    /// The token object the three endpoints that open a session answer — login, registration and
     /// the demo claim (<see cref="DemoClaimService"/>) — one construction site, so they cannot
-    /// drift apart again. <c>ExpiresAt</c> is the token's own <c>exp</c>
+    /// drift apart. <c>ExpiresAt</c> is the token's own <c>exp</c>
     /// (ADR-0012); <c>ExpiresIn</c> is what is left of it when the response is built, truncated to
     /// whole seconds, so it reads a second or two under the lifetime: 899 on a login and 898 on a
-    /// registration, which writes to the database in between, for the 900-second token (measured
-    /// 2026-09-23). <c>RefreshTokenExpiresAt</c> is the grant's fixed expiry, which the BFF caps the
+    /// registration, which writes to the database in between, for the 900-second token (measured).
+    /// <c>RefreshTokenExpiresAt</c> is the grant's fixed expiry, which the BFF caps the
     /// session at (ADR-0057 §4.1); both grant fields are null when a registration's grant failed.
     /// <c>SessionStamp</c> is the user's, which the BFF keeps on the session (ADR-0057 §5.3).
     /// </summary>
@@ -786,7 +778,7 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task LogoutAsync(Guid userId, DateTime receivedAt)
     {
-        // EVERY grant of the user, on every device: sign out everywhere. The BFF's "Esci" ends one
+        // Every grant of the user, on every device: sign out everywhere. The BFF's "Esci" ends one
         // session through /api/auth/revoke instead (ADR-0057 §4.4); this has no caller in the UI
         // today and stays the per-user lever of ADR-0057 §5. The same transaction raises the user's
         // session stamp, which is what ends those sessions at the BFF within one poll
@@ -855,16 +847,16 @@ public class AuthService : IAuthService
             throw new NotFoundException("User", userId);
         }
 
-        // Read BEFORE the hash below is overwritten — afterwards every enrolment looks like a change.
+        // Read before the hash below is overwritten — afterwards every enrolment looks like a change.
         var enrolling = string.IsNullOrEmpty(user.PinHash);
 
         /*
-          Each transition costs a proof the SESSION cannot supply. Changing costs the old PIN;
+          Each transition costs a proof the session cannot supply. Changing costs the old PIN;
           enrolling costs the password, because there is no old PIN to ask for.
 
-          This assignment used to be unconditional, which made the whole step-up story decorative:
-          a caller holding only a session could overwrite the PIN and then pass every gate that
-          PIN protects. Measured end to end through the BFF, cookie only, before this guard:
+          Without this guard a caller holding only a session could overwrite the PIN and then pass
+          every gate that PIN protects, which would make the step-up decorative. Measured end to
+          end through the BFF, cookie only, with the assignment unconditional:
 
             register            -> 201, authLevel 1
             set-pin "131313"    -> 200   (enrolment)
@@ -873,22 +865,22 @@ public class AuthService : IAuthService
             GET .../full-number -> 200   "AB-3142-8079-89", unmasked
 
           ADR-0010's attempt-limiting never engaged, because nothing was guessed. And ADR-0008's
-          step-up gate cannot help: it checks that A PIN was entered, not that the entered PIN was
+          step-up gate cannot help: it checks that a PIN was entered, not that the entered PIN was
           the user's. The check has to live here, at the point of replacement.
 
           Verified through IPinVerifier rather than the hasher directly so a wrong CurrentPin
-          counts against the SAME lockout as every other wrong PIN — otherwise this endpoint would
+          counts against the same lockout as every other wrong PIN — otherwise this endpoint would
           be an uncounted brute-force oracle, which is strictly worse than what it replaces.
         */
         if (string.IsNullOrEmpty(user.PinHash))
         {
             /*
-              ENROLLING. The mirror of the change branch below, and it closes the half ADR-0040 left
+              Enrolling. The mirror of the change branch below, and it closes the half ADR-0040 left
               open on purpose. Its deferral said the reasoning was "worth re-examining if the
-              enrolment entry point ever moves away from the post-registration handoff" — #105 moved
-              it: there are now four ways into /pin-setup and three of them can be days after login.
+              enrolment entry point ever moves away from the post-registration handoff", and it has:
+              there are four ways into /pin-setup and three of them can be days after login.
 
-              Measured through the BFF on `main` @ 4811667, before this branch existed:
+              Measured through the BFF without the password requirement:
                 register                    -> 201, hasPin:false, authLevel 1
                 set-pin "424242"            -> 200      cookie ONLY, no password
                 verify-pin "424242"         -> 200, authLevel 2
@@ -897,9 +889,9 @@ public class AuthService : IAuthService
               A session cookie was the entire proof required to mint the credential that authorises
               every money movement.
 
-              The password is the bar and also the CEILING: NIST SP 800-63B-4 §4.1.2.1 requires
+              The password is the bar and also the ceiling: NIST SP 800-63B-4 §4.1.2.1 requires
               binding at the maximum AAL currently available on the account or the maximum at which
-              the new authenticator will be used, WHICHEVER IS LOWER. With no PIN enrolled, the account's
+              the new authenticator will be used, whichever is lower. With no PIN enrolled, the account's
               maximum is the password — so demanding anything heavier would be invention, not rigour.
             */
             if (string.IsNullOrEmpty(request.Password))
@@ -948,18 +940,17 @@ public class AuthService : IAuthService
             }
 
             /*
-              MIRROR the reset onto the TRACKED entity, or UpdateAsync below undoes it.
+              Mirror the reset onto the tracked entity, or UpdateAsync below undoes it.
 
               A successful verification clears the failure counters — but PinService does that in
-              its OWN DbContext (ResetLockoutAsync, via ExecuteUpdate on the relational path), while
+              its own DbContext (ResetLockoutAsync, via ExecuteUpdate on the relational path), while
               `user` here was loaded by _userManager and still carries the pre-verification values.
               `UpdateAsync(user)` writes the whole tracked row, so those stale counters go straight
               back over the reset.
 
-              Observed before this fix, black-box and with no database access: fail twice, change
-              the PIN with the correct current one, then fail once more — that attempt answered 429
-              instead of 401, i.e. it was counted as the third rather than the first. The reset had
-              been resurrected.
+              Seen black-box, with no database access: fail twice, change the PIN with the correct
+              current one, then fail once more. Without the mirror that attempt answers 429 instead
+              of 401, because it is counted as the third rather than the first.
 
               Same shape as the aliasing that bit this codebase in InMemoryTokenStore: two views of
               one row, one of them stale, and the stale one wins because it is written last.
@@ -973,19 +964,19 @@ public class AuthService : IAuthService
         if (enrolling)
         {
             /*
-              BEFORE UpdateAsync, NOT AFTER, and the ordering IS the control. Record only calls Add;
+              Before UpdateAsync, not after, and the ordering is the control. Record only calls Add;
               the caller's save is what persists the row (ADR-0044 D1). Identity is registered with
               AddEntityFrameworkStores<AzureBankDbContext>, so UserManager.UpdateAsync saves through
-              THIS context — which makes its SaveChanges the one this row has to ride.
+              this context — which makes its SaveChanges the one this row has to ride.
 
-              The first version added the row AFTER UpdateAsync had already saved, and nothing saved
-              again, so it was discarded when the scope disposed. Measured on the running API:
-              POST /api/auth/pin answered 200, the log line below was emitted once, and AuditEvents
-              held ZERO rows. RequireAuditChain cannot catch that — it only fires on a save, and
-              there was no save. Nor could the unit test, which verified that Record was CALLED.
+              Added after UpdateAsync had saved, the row would be discarded when the scope disposed,
+              for nothing saves again. Measured on the running API: POST /api/auth/pin answered 200,
+              the log line below was emitted once, and AuditEvents held zero rows. RequireAuditChain
+              cannot catch that, since it only fires on a save, and a unit test that verifies that
+              Record was called cannot either.
 
-              A failed UpdateAsync now discards this row together with the PIN change, which is
-              exactly D1: no enrolment, and no evidence claiming one.
+              A failed UpdateAsync discards this row together with the PIN change, which is exactly
+              D1: no enrolment, and no evidence claiming one.
 
               Detail records that the password was proved, because that is the fact the evidence
               pack (ADR-0044 D8) needs and the fact the log line will not outlive. Nothing about the PIN itself is
@@ -997,14 +988,14 @@ public class AuthService : IAuthService
                 detail: "{\"passwordProved\":true}");
 
             /*
-              THE NOTICE THE OWNER IS OWED, recorded here and not sent from here (ADR-0045).
+              The notice owed to the account's owner: recorded here, not sent from here (ADR-0045).
 
               NIST SP 800-63B-4 §4.1.2.1: "When an authenticator is added, the CSP SHALL notify the
               subscriber via a mechanism independent of the transaction binding the new
               authenticator, as described in Sec. 4.6." Nothing in this process can send, and a send
               inside the request would be worse than none: after UpdateAsync it can be lost between
               the commit and the call with no record that it was owed, and inside the save it would
-              hold the audit tail lock across I/O. So the request records the OBLIGATION, beside the
+              hold the audit tail lock across I/O. So the request records the obligation, beside the
               evidence and for the same reason it sits before UpdateAsync: the row rides the save
               below and cancels itself with it. The API's relay (NoticeRelayService, ADR-0048) or the
               operator tool's `notify` verb renders it later, addressed to the email held on the
@@ -1030,25 +1021,25 @@ public class AuthService : IAuthService
         else
         {
             /*
-              THE SAME TWO ROWS FOR A CHANGE, and the same placement rule (ADR-0047).
+              The same two rows for a change, and the same placement rule (ADR-0047).
 
-              A change is not a smaller enrolment. It costs the CURRENT PIN and never the password
+              A change is not a smaller enrolment. It costs the current PIN and never the password
               (the branch above proved it through IPinVerifier), so this is the event an attacker who
               watched a PIN entered — and never learned the password — leaves behind. ASVS 4.0.3
               2.5.5 asks for a notification when an authenticator is "changed or replaced"; ADR-0045
               D8 declined it and this reverses that, with the reasons in ADR-0047.
 
-              Measured on the running stack 2026-09-04, BEFORE this block existed: register -> enrol
-              -> change all answered 200, verify-pin with the NEW pin answered 200, and both
-              SubscriberNotices and AuditEvents still held exactly ONE row each. A PIN could be
+              Measured on the running stack without this block: register -> enrol -> change all
+              answered 200, verify-pin with the new pin answered 200, and both SubscriberNotices and
+              AuditEvents still held exactly one row each. A PIN could be
               replaced leaving no notice, no audit row and no named event — only an unnamed
               "User {UserId} set their PIN" log line.
 
-              THE AUDIT ROW IS NOT OPTIONAL HERE, for three mechanical reasons rather than symmetry:
+              The audit row is not optional here, for three mechanical reasons rather than symmetry:
               the notify verb reads a notice's evidence through the id this block is about to store
-              on it, and a notice whose evidence is absent prints NO AUDIT ROW on every run — since
-              ADR-0052 this path takes the EXACT arm, and the (ActorUserId, Event) pair named in the
-              older comments below is now the FALLBACK, for notices written before that migration;
+              on it, and a notice whose evidence is absent prints `NO AUDIT ROW` on every run — since
+              ADR-0052 this path takes the exact arm, and the (ActorUserId, Event) pair named in the
+              older comments below is the fallback, for notices written before that migration;
               the owned chain
               transaction opens only when an AuditEvent is Added (AzureBankDbContext), so without one
               this path would not have the both-directions rollback ADR-0045 D1 proved for the
@@ -1067,7 +1058,7 @@ public class AuthService : IAuthService
                 Event = SecurityEvents.PinChanged,
                 OccurredAt = DateTime.UtcNow,
 
-                // THIS change's row, which is the whole point of ADR-0052: PinChanged is repeatable,
+                // This change's row, which is the whole point of ADR-0052: PinChanged is repeatable,
                 // so (ActorUserId, Event) stopped identifying one notice the moment ADR-0047 shipped
                 // and one surviving row began answering for every change a user ever made.
                 AuditEventId = changeEvidence,
@@ -1085,19 +1076,19 @@ public class AuthService : IAuthService
         if (enrolling)
         {
             /*
-              Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
-              deliberately NOT the independent notification to the account owner that NIST
+              Detective control, in the operator's log — see SecurityEvents.PinEnrolled: this is
+              deliberately not the independent notification to the account owner that NIST
               SP 800-63B-4 §4.1.2.1 also requires. That notice is the SubscriberNotice row added
-              above, rendered later by the runner Notices:Runner NAMES — the API's relay or the
+              above, rendered later by the runner Notices:Runner names — the API's relay or the
               Function — or by the operator tool, which that flag does not gate, into a pickup
               directory (ADR-0045, ADR-0048, ADR-0051); what this system still lacks is a transport
-              that SENDS it.
+              that sends it.
               Saying so here rather than letting the line read as compliance.
 
-              AFTER the update, unlike the audit row above, and the asymmetry is deliberate rather
-              than an oversight: the row lives inside the transaction and cancels itself when the
-              save fails, while a log line has no transaction to cancel it and would stand as a
-              record of an enrolment that never happened.
+              The log line follows the update, unlike the audit row above, and the asymmetry is
+              deliberate rather than an oversight: the row lives inside the transaction and cancels
+              itself when the save fails, while a log line has no transaction to cancel it and
+              would stand as a record of an enrolment that never happened.
             */
             _logger.LogInformation(
                 "SecurityEvent {SecurityEvent}: user {UserId} enrolled a PIN after proving their password",
@@ -1131,20 +1122,20 @@ public class AuthService : IAuthService
             cancellationToken: CancellationToken.None);
 
     /// <summary>
-    /// Prove the account password for a sensitive action that is NOT a login, on the SAME lockout.
+    /// Prove the account password for a sensitive action that is not a login, on the same lockout.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The counting is the whole point, and skipping it would have been strictly worse than the hole
-    /// this closes: an endpoint that checks a password without counting failures is an UNCOUNTED
-    /// PASSWORD-GUESSING ORACLE, reachable with nothing but a session. The same sentence is already
+    /// this closes: an endpoint that checks a password without counting failures is an uncounted
+    /// password-guessing oracle, reachable with nothing but a session. The same sentence is already
     /// written a few lines above about <c>CurrentPin</c>, which is verified through
     /// <c>IPinVerifier</c> precisely so wrong values land on the shared PIN lockout.
     /// </para>
     /// <para>
     /// It counts as <see cref="LoginAsync"/> does, on the same row and the same limit: the attempt is
     /// counted before the password is compared (ADR-0012 decision 2), so a burst here is bounded as
-    /// one at the login is. What it does NOT mirror is the answer: the caller is already
+    /// one at the login is. What it does not mirror is the answer: the caller is already
     /// authenticated as a known account, so there is no enumeration to protect. A locked account is
     /// told it is locked, whatever password was sent and without reading it, as a locked PIN is
     /// (ADR-0010); a wrong password is "Invalid password.", since a vague message would only leave
@@ -1161,7 +1152,7 @@ public class AuthService : IAuthService
         if (user.LockoutEnabled && !await ClaimLoginAttemptAsync(user, now, cancellationToken))
         {
             /*
-              LOCKED: REFUSED UNREAD, as a locked PIN is (ADR-0010). The caller is signed in as this
+              Locked: refused unread, as a locked PIN is (ADR-0010). The caller is signed in as this
               account, so saying it is locked tells nobody anything new; what must not show is
               whether the password was right, and an answer given without reading it cannot show
               that (ADR-0012 decision 3).
@@ -1197,11 +1188,11 @@ public class AuthService : IAuthService
             }
 
             /*
-              THEN TRACK IT AGAIN, where the claim, the reset or the new password hash stopped
+              Then track it again, where the claim, the reset or the new password hash stopped
               tracking it. On a relational provider each of the three detaches `user`, and the login
               path can leave it so because it never saves that user again. This caller does:
               UpdateAsync first runs Identity's user validators, which look the user up by name and
-              by e-mail. With `user` detached those lookups track a SECOND instance of the row, the
+              by e-mail. With `user` detached those lookups track a second instance of the row, the
               store's Attach(user) then finds two instances under one key and throws, and a first
               PIN after a wrong password answers 500 with nothing stored. Tracked, the lookups
               resolve to this instance.

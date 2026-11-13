@@ -4,10 +4,9 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// THE authoritative concurrency proof of ADR-0009, on REAL SQL Server:
-/// unique-key violations under parallel INSERT, concurrency-token fencing
-/// and transactional atomicity behave here exactly as in production —
-/// the InMemory provider only approximates them.
+/// The concurrency proof of ADR-0009 on SQL Server: unique-key violations under parallel INSERT,
+/// concurrency-token fencing and transactional atomicity, which the InMemory provider only
+/// approximates.
 ///
 /// Gated by AZUREBANK_TEST_SQLSERVER (see SqlServerFactAttribute):
 /// - locally: LocalDB

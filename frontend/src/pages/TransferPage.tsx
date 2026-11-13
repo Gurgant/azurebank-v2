@@ -186,24 +186,16 @@ const useRecipientStyles = makeStyles({
   },
 });
 
-// ============================================
-// COMPONENT
-// ============================================
-
 /**
- * PR-11 — the real external transfer (to another user's primary account by AzureTag), now on
- * RHF+Zod (the money-forms rewrite): step-1's fields (from-account, recipient handle, amount)
- * live in react-hook-form with the balance-capped `transferFormSchema` as resolver, while the
- * VERIFIED-recipient truth stays async component state (the exact-match lookup IS the
- * validator, ADR-0014 — a schema cannot own server truth).
+ * A transfer to another user by handle, in three steps: the form, the review and the PIN.
  *
- * ADR-0041 changed where the PIN comes from. It used to be collected by the ROOT step-up modal:
- * the BFF answered 403 on a level-1 session, the base-query interceptor popped the modal, the
- * session elevated, and the same request replayed. That made the PIN a property of the SESSION —
- * one entry then covered every transfer for five minutes, and any caller reaching the API directly
- * skipped it entirely. The PIN is now collected HERE, as the last step before sending, and travels
- * in the request body for the API to verify. The review screen's promise that you confirm with your
- * PIN on the next step is, as of this change, true.
+ * The form's fields (source account, recipient handle, amount) live in react-hook-form, with the
+ * balance-capped `transferFormSchema` as resolver. The verified recipient is component state: the
+ * exact-match lookup is the validator (ADR-0014), and a schema cannot hold the server's answer.
+ *
+ * The sixth PIN digit mints a one-shot authorisation and sends the transfer with it (ADR-0042):
+ * the PIN goes to the mint, and the transfer carries the authorisation in the
+ * `Step-Up-Authorization` header.
  */
 export function TransferPage() {
   // Merged so the markup keeps addressing one `styles` object.
@@ -1414,7 +1406,10 @@ export function TransferPage() {
           </>
         ) : step === 'pin' ? (
           <>
-            {/* PIN — ADR-0041. The credential travels in THIS request; the API verifies it. */}
+            {/*
+              The PIN goes to the mint, and the transfer carries the authorisation it returns in the
+              `Step-Up-Authorization` header (ADR-0042).
+            */}
             <div className={styles.reviewCard}>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>Sending</Text>

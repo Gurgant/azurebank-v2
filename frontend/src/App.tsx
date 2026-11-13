@@ -34,10 +34,6 @@ import {
   NotFoundPage,
 } from './pages';
 
-// ============================================
-// APP COMPONENT
-// ============================================
-
 /**
  * A DATA router, and it buys exactly one thing.
  *
