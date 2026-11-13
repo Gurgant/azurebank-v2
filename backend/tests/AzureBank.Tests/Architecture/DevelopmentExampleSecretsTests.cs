@@ -90,7 +90,8 @@ public class DevelopmentExampleSecretsTests
     }
 
     /// <summary>
-    /// The names the recipe sets with <c>--project $</c><paramref name="project"/>. The test fails
+    /// The names the recipe sets with <c>--project $</c><paramref name="project"/>, each once: a
+    /// snippet elsewhere on the page that repeats a command is not a second secret. The test fails
     /// when it finds none: a guard that reads no name would pass for ever.
     /// </summary>
     private static List<string> RecipeNames(string project)
@@ -99,6 +100,7 @@ public class DevelopmentExampleSecretsTests
             .Select(line => RecipeCommand.Match(line))
             .Where(match => match.Success && match.Groups["project"].Value == project)
             .Select(match => match.Groups["name"].Value)
+            .Distinct()
             .ToList();
 
         names.Should().NotBeEmpty(
