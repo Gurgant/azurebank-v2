@@ -151,6 +151,8 @@ describe("the claim's two refusals the app words", () => {
       // The mock, which refuses a claim from an empty pool as the API does.
       'src/mocks/handlers.ts': ['DEMO_POOL_EMPTY'],
       'src/api/moneyProblem.ts': ['DEMO_COPY_LIMIT'],
+      // The test helper that answers a mint as the copy's limiter refuses it.
+      'src/test/outage.ts': ['DEMO_COPY_LIMIT'],
     });
     const named = [...new Set(Object.values(namedIn).flat())].sort();
     expect(Object.fromEntries(named.map((code) => [code, backendCodes.includes(code)]))).toEqual({
