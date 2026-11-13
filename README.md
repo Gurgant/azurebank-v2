@@ -116,9 +116,12 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
   asks GitHub's API for today's count of merged pull requests: GitHub serves the page, so the
   request tells it nothing that the visit has not. The journeys to try and the limits you can
   meet are in [Try the demo](docs/testing/try-the-demo.md).
-- **The UI alone**, against a mock that runs in the browser — Node only:
-  `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
-  PIN `123456`.
+- **The UI alone**, against a mock that runs in the browser — Node only. With Node 24.12 or
+  later, run `corepack enable pnpm` once, and the `packageManager` field of
+  `frontend/package.json` picks the version. Node 25 and later carry no Corepack: install
+  pnpm 12 another way, with pnpm's own installer or `npm install -g pnpm@12.15.0`. Then
+  `cd frontend && pnpm install --frozen-lockfile && pnpm run dev:mock`, and sign in as
+  `demo@azurebank.dev` / `Password1!`, PIN `123456`.
 - **The whole stack** — .NET 10, Node 24 and SQL Server (LocalDB is enough): the
   [local setup](docs/engineering-practices.md#local-setup). The seeded demo user is
   `john@example.com` / `Test123!`, PIN `123456`.

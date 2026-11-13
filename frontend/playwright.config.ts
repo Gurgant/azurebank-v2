@@ -83,13 +83,13 @@ export default defineConfig({
 
   /*
     Playwright owns the dev server; it does NOT own the backend.
-    `npm run dev` and never `dev:mock` — this suite has no mock target, and the setup project
+    `pnpm run dev` and never `dev:mock` — this suite has no mock target, and the setup project
     fails loudly rather than skipping if the API and BFF are not answering.
   */
   webServer: SERVED_BUILD
     ? undefined
     : {
-        command: 'npm run dev',
+        command: 'pnpm run dev',
         url: BASE_URL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

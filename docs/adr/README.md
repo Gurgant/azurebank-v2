@@ -130,6 +130,7 @@ superseded in part by ADR-0057, as their lines say. The four above are in bold.
 - [ADR-0004](0004-central-package-management.md) · Central Package Management (CPM) · Accepted
 - [ADR-0006](0006-mapperly-object-mapping.md) · Mapperly Object Mapping · Accepted
 - [ADR-0025](0025-originals-reference-mine.md) · The originals are a reference mine, not a code source · Accepted
+- [ADR-0065](0065-install-the-frontend-with-pnpm.md) · Install the frontend's packages with pnpm · Accepted
 
 ## Correcting a document
 
@@ -142,7 +143,7 @@ and other pages cite them. A withdrawn item stays under its label and names its 
 
 ## Creating a New ADR
 
-1. Copy [`0000-template.md`](0000-template.md) to a new file with the next free number, **0065**.
+1. Copy [`0000-template.md`](0000-template.md) to a new file with the next free number, **0066**.
 2. Replace each line of guidance, and keep the record to one page.
 3. Add its line to this index, under its theme in [By theme](#by-theme).
 4. Submit it as part of the pull request.
