@@ -428,13 +428,13 @@ public class AccountService : IAccountService
 
         /*
           THE GUARDS STAY AHEAD OF THE PRESENCE CHECK, and that is a deliberate departure from
-          ADR-0042, which put the transfer's refusal at the ownership rung, ahead of the payee
+          ADR-0042, which put the transfer's refusal after the ownership 404 and ahead of the payee
           lookup, so that a request presenting nothing learns nothing about the payee. That does
           not apply here: the two guards reveal only the caller's OWN account state, which
           GET /api/accounts already hands them, so there is no oracle to protect. What the order
           DOES protect is the real-stack pin in the SPA's contract suite — a headerless DELETE on
           a funded account answers 422 NON_ZERO_BALANCE, and moving the presence check above the
-          guards would turn that 401 from a backend-only change. Do not reorder (ADR-0049).
+          guards would turn that 422 into a 401 and break that pin. Do not reorder (ADR-0049).
         */
         RefuseIfNotClosable(account);
 

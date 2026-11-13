@@ -392,7 +392,8 @@ describe('contract: step-up authorisations', () => {
   it('rejects a malformed header in MODEL BINDING — a fourth 400 shape, with no errorCode', async () => {
     /*
       `[FromHeader(Name = "Step-Up-Authorization")] Guid?` is bound by MVC, so a value that is not a
-      GUID fails before the action: before ownership, before the PIN, before the service.
+      GUID fails before the action: before ownership, before the authorisation check, before the
+      service.
 
       Two consequences a client has to live with. There is no `errorCode`, so `classifyMoneyProblem`
       falls through every branch and the user sees the flow's fallback sentence — acceptable, since

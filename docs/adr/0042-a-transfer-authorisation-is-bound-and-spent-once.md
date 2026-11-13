@@ -45,12 +45,14 @@ and no change invalidated it (d).
 8. **The header is required, and no transfer body carries a PIN** (the flip, this record's second
    half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
    are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN
-   check occupied, after the source account's ownership 404 and before the payee is resolved, the
-   order ADR-0050's rung table records. One presenting a well-formed reference that names nothing
-   is answered about the payee first: `404 RECIPIENT_NOT_FOUND` for a handle nobody holds,
-   `422 RECIPIENT_NO_ACCOUNT` for one with no open account, and `401 AUTHORIZATION_INVALID` only
-   for one that can be paid. So a caller with no second factor can still ask this endpoint which
-   handles exist, as it can ask the mint before the PIN, under the limit ADR-0014 states.
+   check occupied, after the source account's ownership 404 and before the payee is resolved: the
+   SPA, its contract tests and its mock rely on that order, ADR-0050's rung table publishes it,
+   and a request presenting nothing is a client bug that is better told so first. One presenting
+   a well-formed reference that names nothing is answered about the payee first:
+   `404 RECIPIENT_NOT_FOUND` for a handle nobody holds, `422 RECIPIENT_NO_ACCOUNT` for one with no
+   open account, and `401 AUTHORIZATION_INVALID` only for one that can be paid. So a caller with
+   no second factor can still ask this endpoint which handles exist, as it can ask the mint before
+   the PIN, under the limit ADR-0014 states.
    `StepUpAuthorizationOperationTransformer` publishes the header as required.
 
 ### Error codes

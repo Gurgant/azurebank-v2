@@ -110,9 +110,11 @@ public class TransferService : ITransferService
     /// stops that request and no other: a well-formed reference that names nothing passes it and
     /// reaches the payee resolution, which answers 404 or 422 for a handle that cannot be paid
     /// before <see cref="IStepUpAuthorizationService.ValidateAsync"/> answers 401 for one that can.
-    /// The mint answers the same before the PIN, and ADR-0014 says what limits both. What the
-    /// placement still keeps is the order ADR-0050's rung table records: a request presenting
-    /// nothing is told so before any answer about the payee.
+    /// The mint answers the same before the PIN, and ADR-0014 says what limits both. Why the rung
+    /// stays where it is: a request presenting nothing, which is a client bug, is told so before
+    /// any answer about a payee; the SPA, its contract tests and its mock rely on that order,
+    /// which ADR-0050's rung table publishes; and moving the rung would change what the API
+    /// answers, a decision not taken here.
     /// </para>
     /// <para>
     /// Split from <see cref="IStepUpAuthorizationService.ValidateAsync"/> deliberately, because the
@@ -908,11 +910,12 @@ public class TransferService : ITransferService
           AFTER BOTH OWNERSHIP CHECKS here, where the external path refuses before resolving its
           payee — and the asymmetry is deliberate rather than an oversight.
 
-          It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the reason the two
-          differ is what the check upstream of it reveals. On the external path that is SOMEONE
-          ELSE's handle, so the presence check refuses a request that presents no authorisation
-          before the payee is looked up (a made-up reference still reaches the payee, as
-          RequireAuthorization's remarks say). Here both accounts are the caller's OWN:
+          It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the two differ in
+          what the check upstream of it reveals. On the external path that is SOMEONE ELSE's
+          handle, so a request that presents no authorisation is told so before the payee is looked
+          up. That withholds nothing from a made-up reference, which still reaches the payee, and
+          RequireAuthorization's remarks say why the rung stays. Here both accounts are the
+          caller's OWN:
           `GetAccountWithOwnershipCheckAsync` tells them only what `GET /api/accounts` already does,
           so there is nothing to withhold and the more specific refusal is the more useful one.
         */

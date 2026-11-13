@@ -3396,10 +3396,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
     /*
-      OWNERSHIP FIRST, and this order is measured rather than assumed. `TransferAsync` opens with
-      `GetAccountWithOwnershipCheckAsync`, before anything about the authorisation. Observed
-      against the real API while the PIN still rode in the transfer body (ADR-0042 removed it) —
-      same unknown account id, two different pins:
+      OWNERSHIP FIRST, and this order is measured rather than assumed: the contract test
+      "answers the caller's missing source account with ACCOUNT_NOT_FOUND on the send too" pins it
+      on the real stack. `TransferAsync` opens with `GetAccountWithOwnershipCheckAsync`, before
+      anything about the authorisation. Observed against the real API while the PIN still rode in
+      the transfer body (ADR-0042 removed it) — same unknown account id, two different pins:
 
         correct pin -> 404 ACCOUNT_NOT_FOUND
         WRONG   pin -> 404 ACCOUNT_NOT_FOUND    (not 401, and no attempt counted)
@@ -3418,7 +3419,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     authorisation learns nothing about the payee. Answering here rather than at
     `validateAuthorization` below is what reproduces that. It stops no other request: a made-up
     reference reaches the payee checks below, which answer before the reference is examined, as
-    the API's do.
+    the API's do, except that the mock has no RECIPIENT_NO_ACCOUNT branch to answer with.
   */
   if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
@@ -3691,9 +3692,10 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
   /*
-    Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the PIN
-    and after the same-account rule, so every cheaper refusal above still answers as itself. There
-    is no payee to resolve on this endpoint, which is the one difference from the external path.
+    Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the
+    presence check and after the same-account rule, so every cheaper refusal above still answers as
+    itself. There is no payee to resolve on this endpoint, which is the one difference from the
+    external path.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'InternalTransfer',
