@@ -4,7 +4,8 @@ using Serilog.Context;
 namespace AzureBank.Bff.Middleware;
 
 /// <summary>
-/// Gives every request a correlation id and makes sure the SAME one reaches the API.
+/// Gives every request a correlation id and makes sure the SAME one reaches the API, on both of
+/// the BFF's roads to it.
 ///
 /// <para>
 /// The API has had this since the start; the BFF had nothing, so the two services could only be
@@ -16,14 +17,21 @@ namespace AzureBank.Bff.Middleware;
 /// </para>
 ///
 /// <para>
-/// Writing it back onto <c>Request.Headers</c> is the part that does the work: YARP forwards request
-/// headers as it proxies, so the API's own <c>CorrelationIdMiddleware</c> finds one already there
-/// and adopts it instead of minting a second.
+/// On the proxy's road, writing it back onto <c>Request.Headers</c> is the part that does the work:
+/// YARP forwards request headers as it proxies, so the API's own <c>CorrelationIdMiddleware</c>
+/// finds one already there and adopts it instead of minting a second.
+/// </para>
+///
+/// <para>
+/// The calls the BFF makes itself (a sign-in, a PIN check, the read of <c>/me</c>, a renewal) are
+/// new requests on the <c>BackendApi</c> client and carry none of this request's headers. For them
+/// the id is kept in <see cref="CurrentId"/>, and <see cref="Http.CorrelationIdHandler"/> puts it
+/// on each.
 /// </para>
 /// </summary>
 public partial class CorrelationIdMiddleware
 {
-    private const string CorrelationIdHeader = "X-Correlation-ID";
+    internal const string CorrelationIdHeader = "X-Correlation-ID";
 
     /// <summary>Bounded so a hostile value cannot bloat every log line for the request.</summary>
     private const int MaxLength = 64;
@@ -38,6 +46,20 @@ public partial class CorrelationIdMiddleware
     /// </summary>
     [GeneratedRegex(@"^[A-Za-z0-9._-]{1,64}$")]
     private static partial Regex AcceptableId();
+
+    private static readonly AsyncLocal<string?> SettledId = new();
+
+    /// <summary>
+    /// The id of the request this code runs for, or null outside any request, as in the grant
+    /// revoker's workers and the session-stamp watcher, which start with the host.
+    /// </summary>
+    /// <remarks>
+    /// An <c>AsyncLocal</c>, and not the request itself: work a request starts with <c>Task.Run</c>,
+    /// as <c>TokenRefresher</c> starts a renewal, takes this value with it and can outlive the
+    /// request, whose headers are not to be read once it has ended. A string cannot change under
+    /// that work, so a renewal goes out under the id of the request that started it.
+    /// </remarks>
+    internal static string? CurrentId => SettledId.Value;
 
     private readonly RequestDelegate _next;
 
@@ -61,6 +83,10 @@ public partial class CorrelationIdMiddleware
             context.Response.Headers[CorrelationIdHeader] = correlationId;
             return Task.CompletedTask;
         });
+
+        // Set inside this async method, so its caller never sees it: the next request handled on
+        // this thread starts without it. Work started from here keeps its own copy.
+        SettledId.Value = correlationId;
 
         using (LogContext.PushProperty("CorrelationId", correlationId))
         {

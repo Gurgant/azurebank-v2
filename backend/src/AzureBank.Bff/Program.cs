@@ -233,6 +233,7 @@ try
 
     // HTTP client for backend API
     builder.Services.AddTransient<ServiceCredentialHandler>();
+    builder.Services.AddTransient<CorrelationIdHandler>();
     builder.Services.AddHttpClient("BackendApi", (services, client) =>
     {
         client.BaseAddress = new Uri(builder.Configuration["BackendApi:BaseUrl"]!);
@@ -245,6 +246,9 @@ try
         // client (ADR-0055 D5).
     })
     .AddHttpMessageHandler<ServiceCredentialHandler>()
+    // The proxy forwards the correlation id among the request's own headers; the calls made on this
+    // client are new requests, so they are given it here.
+    .AddHttpMessageHandler<CorrelationIdHandler>()
     .ConfigurePrimaryHttpMessageHandler(() =>
     {
         // No redirects, and the dev certificate trusted on loopback only — decided per request:

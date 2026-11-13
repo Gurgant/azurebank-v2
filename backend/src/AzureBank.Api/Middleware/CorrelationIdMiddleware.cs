@@ -9,9 +9,13 @@ namespace AzureBank.Api.Middleware;
 /// Adds the correlation ID to the response headers and Serilog context.
 ///
 /// <para>
-/// Normally the BFF has already put one here and YARP forwarded it, so this adopts it and the two
-/// services label the request identically (SCA-RTS Art. 29(2)(a)). The API is directly reachable
-/// though, so it validates for itself rather than trusting the edge.
+/// Normally the BFF has already put one here, so this adopts it and the two services label the
+/// request identically (SCA-RTS Art. 29(2)(a)). Both of the BFF's roads carry it: YARP forwards
+/// the id the BFF's middleware wrote on a proxied request, and the BFF's own calls, such as a
+/// sign-in or a PIN check, carry the id of the request that made them. What the BFF sends outside
+/// any request (revoking the grants of ended sessions, reading the session stamps) carries none,
+/// and is given one here. The API is directly reachable though, so it validates for itself rather
+/// than trusting the edge.
 /// </para>
 /// </summary>
 public partial class CorrelationIdMiddleware
