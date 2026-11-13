@@ -7,6 +7,7 @@ import {
   type MessageScope,
   type MoneyPhase,
 } from '../api/moneyProblem';
+import { useMountedRef } from './useMountedRef';
 import {
   useIdempotentMutation,
   type IdempotentTrigger,
@@ -225,6 +226,7 @@ export function useMoneyWizard<TBody, TResult>(
   // needs to know about it, so not one line of page markup moves.
   const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
   const lastProblem = useRef<ApiProblem | null>(null);
+  const mounted = useMountedRef();
 
   const keyLive = isSubmitting || keyRetained;
   // What the browser's Back is held for: a live key, and the request for an authorisation that
@@ -471,7 +473,10 @@ export function useMoneyWizard<TBody, TResult>(
     requireVerify,
 
     requestLeave(to) {
-      if (keyLive) return;
+      // A page the router has already removed, a sign-out drawing /login being one, has nothing
+      // to leave. A refusal of the authorisation that comes in late must not take the visitor
+      // from the page they are on now.
+      if (keyLive || !mounted.current) return;
       // The router asks the blocker inside this call, so the flag is read there and no later.
       leavingByItself.current = true;
       try {

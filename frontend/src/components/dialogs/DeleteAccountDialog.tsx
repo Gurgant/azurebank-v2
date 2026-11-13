@@ -169,8 +169,10 @@ export function DeleteAccountDialog({
       setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
     } else if (code === 'PIN_REQUIRED') {
       // Measured: 422 PIN_REQUIRED before anything is spent. Nothing here can fix it, so send
-      // them where it can be; the query string carries a PATH, never the PIN.
-      navigate('/pin-setup?returnTo=/accounts');
+      // them where it can be; the query string carries a PATH, never the PIN. Only this move is
+      // held back once the dialog is gone: it would take the visitor from the page they are on
+      // now. The other answers below still reach the root toaster.
+      if (mounted.current) navigate('/pin-setup?returnTo=/accounts');
     } else if (code === 'NON_ZERO_BALANCE' || code === 'PRIMARY_ACCOUNT_DELETE') {
       // The business rules render INLINE and the dialog stays open. The mint refuses these
       // BEFORE the PIN is consulted (counter unchanged); the DELETE refuses them before the

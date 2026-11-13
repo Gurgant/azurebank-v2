@@ -1331,6 +1331,29 @@ describe('external transfer: the shortcuts of the form and the ways off the page
 
     expect(sends).toEqual([]);
   });
+
+  it('does not move the visitor off the sign-in page when the PIN check then answers PIN_REQUIRED', async () => {
+    // The page is gone without "Leave anyway", so the attempt is not abandoned: the refusal that
+    // comes in late has to find that out from the page, or it takes the visitor to PIN setup.
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const { router, store } = await toReview();
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate('/login', { replace: true }));
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+    const where = router.state.location.pathname + router.state.location.search;
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sends).toEqual([]);
+    expect(router.state.location.pathname + router.state.location.search).toBe(where);
+    expect(where).toBe('/login');
+  });
 });
 
 /*

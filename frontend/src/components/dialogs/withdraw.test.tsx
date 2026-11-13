@@ -1825,4 +1825,30 @@ describe('withdraw — the page is left while the authorisation is being asked f
 
     expect(sent.withdrawals).toBe(0);
   });
+  it('does not move the visitor to PIN setup when the PIN check then answers PIN_REQUIRED', async () => {
+    const mint = holdTheMint('*/api/transactions/withdraw/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const sent = { withdrawals: 0 };
+    server.use(
+      http.post('*/api/transactions/withdraw', () => {
+        sent.withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
+    const { router, store } = renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await mint.arrived;
+
+    await act(() => router.navigate('/history'));
+    expect(await screen.findByText('HISTORY PAGE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sent.withdrawals).toBe(0);
+    expect(router.state.location.pathname).toBe('/history');
+  });
 });
