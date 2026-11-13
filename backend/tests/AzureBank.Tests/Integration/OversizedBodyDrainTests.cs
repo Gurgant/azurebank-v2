@@ -135,11 +135,21 @@ public class OversizedBodyDrainTests : IntegrationTestBase, IDisposable
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
         var leftovers = new Leftovers();
-        _probed = Factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        // The drain's five seconds run on the host's clock. On the real one, a host that stalls for
+        // five seconds (a loaded CI runner took eight for this test) has the drain give up with the
+        // body half read, and the probe finds it. A clock that never moves leaves only the end of
+        // the body to end the read; the five seconds have their own test below.
+        var frozenClock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        _probed = Factory.WithWebHostBuilder(builder =>
         {
-            services.AddSingleton(leftovers);
-            services.AddTransient<IStartupFilter, ReadWhatIsLeft>();
-        }));
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton(leftovers);
+                services.AddTransient<IStartupFilter, ReadWhatIsLeft>();
+            });
+            builder.ConfigureTestServices(services =>
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(frozenClock)));
+        });
         var client = _probed.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
