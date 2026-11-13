@@ -260,6 +260,33 @@ class EntryPageTests(unittest.TestCase):
         self.assertEqual(figures[0::2], ['5,408', '509', '11', '4'])
         self.assertEqual(figures[1::2], ['5.408', '509', '11', '4'])
 
+    def test_the_count_of_sql_server_proofs_is_the_same_in_the_tile_and_beside_the_payment_claim(self):
+        tile = re.findall(r'<b>(\d+)</b><span>(?:backend proofs on a real SQL Server'
+                          r'|prove del backend su un vero SQL Server)', PAGE)
+        flat = ' '.join(PAGE.split())
+        claim = re.findall(r'in two of the (\d+) proofs that a CI job runs there on every pull request to main'
+                           r'|in due delle (\d+) prove che un job di CI esegue lì a ogni pull request verso main',
+                           flat)
+        self.assertEqual(len(claim), 2)
+        counts = {claim[0][0], claim[1][1]}
+        # The tile belongs to the commit that moves the figures onto the first screen; the claim
+        # is checked alone where the tile is not there yet.
+        if tile:
+            self.assertEqual(len(tile), 2)
+            counts |= set(tile)
+            self.assertIn('job/123997976795">', PAGE)
+        self.assertEqual(len(counts), 1)
+
+    def test_the_evidence_is_linked_beside_the_claim_it_supports(self):
+        page = 'https://github.com/Gurgant/azurebank-v2/blob/main/docs/audit-trail-against-real-practice.md'
+        self.assertEqual(PAGE.count(f'href="{page}"'), 1)
+        self.assertEqual(PAGE.count('href="docs/harness-engineering#what-this-does-not-show"'), 2)
+        self.assertEqual(PAGE.count('href="docs/engineering-traps"'), 1)
+        for name in ('audit-trail-against-real-practice.md', 'engineering-traps.md'):
+            self.assertTrue((SITE.parent / 'docs' / name).is_file(), name)
+        harness = (SITE.parent / 'docs' / 'harness-engineering.md').read_text(encoding='utf-8')
+        self.assertRegex(harness, r'(?m)^## What this does not show\s*$')
+
     def test_the_script_and_the_style_sheet_are_asked_for_under_one_version(self):
         versions = re.findall(r'(?:href|src)="entry\.(?:css|js)\?v=(\d+)"', PAGE)
         self.assertEqual(len(versions), 2)

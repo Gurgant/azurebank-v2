@@ -356,7 +356,8 @@
                   Every money operation carries a key the server recognises, and is applied at most
                   once per key: when the same request arrives again with the same key, after a
                   retry or a network error, the money does not move a second time. That held under
-                  24&nbsp;identical parallel requests on a real SQL Server. A key is kept for
+                  24&nbsp;identical parallel requests on a real SQL Server, in two of the 509
+                  proofs that a CI job runs there on every pull request to main. A key is kept for
                   24&nbsp;hours: the same request sent after that is a new payment. The screen has
                   its own guard as well: it sends no second request while the first is in flight,
                   so a double click sends one.
@@ -366,7 +367,8 @@
                   ed è eseguita al massimo una volta per chiave: se la stessa richiesta arriva di
                   nuovo con la stessa chiave, per un nuovo tentativo o un errore di rete, il denaro
                   non si muove una seconda volta. Ha retto a 24&nbsp;richieste identiche in
-                  parallelo su un vero SQL Server. Una chiave è conservata per 24&nbsp;ore: la
+                  parallelo su un vero SQL Server, in due delle 509 prove che un job di CI esegue
+                  lì a ogni pull request verso main. Una chiave è conservata per 24&nbsp;ore: la
                   stessa richiesta inviata dopo è un nuovo pagamento. Anche la schermata ha la sua
                   protezione: non invia una seconda richiesta mentre la prima è in corso, quindi un
                   doppio clic ne invia una sola.
@@ -473,6 +475,12 @@
                   >
                     <span lang="en" data-lang="en">Test: the chain</span>
                     <span lang="it" data-lang="it">Test: la catena</span>
+                  </a>
+                  <a
+                    href="https://github.com/Gurgant/azurebank-v2/blob/main/docs/audit-trail-against-real-practice.md"
+                  >
+                    <span lang="en" data-lang="en">Against real practice</span>
+                    <span lang="it" data-lang="it">Confronto con la pratica reale</span>
                   </a>
                 </p>
               </li>
@@ -1037,6 +1045,10 @@
                   I merge every pull request, and no second person reviews one: the
                   11 required checks, the code scan and an AI review are automated.
                 </li>
+                <li>
+                  What I have not measured, such as how accurate the AI review is, is listed in
+                  <a href="docs/harness-engineering#what-this-does-not-show">What this does not show</a>.
+                </li>
               </ul>
               <ul class="limits" role="list" lang="it" data-lang="it">
                 <li>
@@ -1062,6 +1074,11 @@
                 <li>
                   Il merge di ogni pull request lo faccio io, e nessun'altra persona la rivede: gli
                   11 controlli obbligatori, la scansione del codice e una revisione AI sono automatici.
+                </li>
+                <li>
+                  Ciò che non ho misurato, come l'accuratezza della revisione AI, è elencato in
+                  <a href="docs/harness-engineering#what-this-does-not-show">What this does not show</a>
+                  (in inglese).
                 </li>
               </ul>
             </div>
@@ -1104,6 +1121,15 @@
                     <span>
                       <span lang="en" data-lang="en">Decisions</span>
                       <span lang="it" data-lang="it">Decisioni</span>
+                    </span>
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
+                  </a>
+                </li>
+                <li>
+                  <a href="docs/engineering-traps">
+                    <span>
+                      <span lang="en" data-lang="en">Engineering traps: what fails silently here, and why nothing reports it</span>
+                      <span lang="it" data-lang="it">Trappole di ingegneria: ciò che qui fallisce in silenzio, e perché nulla lo segnala</span>
                     </span>
                     <svg class="i" aria-hidden="true" focusable="false"><use href="#i-out" /></svg>
                   </a>
