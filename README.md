@@ -44,7 +44,8 @@ once.
   that is a new payment. Held under 24 concurrent duplicates on a real SQL Server.
   [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
-  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
+  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs), run on
+  [SQL Server](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
 - **The JWT never reaches the browser.** The BFF keeps it in a server-side session, gives the
   browser an HttpOnly cookie and adds the bearer itself; the API accepts no caller but the BFF.
   [ADR-0001](docs/adr/0001-bff-pattern.md) ·
@@ -72,6 +73,17 @@ once.
   which can hold a handle, and the stack trace of an unhandled fault can echo an e-mail address.
   [ADR-0016](docs/adr/0016-observability-three-pillars.md) ·
   [ADR-0017](docs/adr/0017-pii-redaction-codeql-barrier.md)
+
+## Read the code
+
+The payment guarantee above, in four files:
+
+| File | What to read in it |
+|---|---|
+| [IdempotencyMiddleware.cs](backend/src/AzureBank.Api/Middleware/IdempotencyMiddleware.cs) | The summary at its top: the five steps a money request goes through, from the check of its key to the release of a claim when nothing was committed |
+| [IdempotencyService.cs](backend/src/AzureBank.Api/Services/Implementations/IdempotencyService.cs) | `TryAcquireAsync`: the claim, where the table's primary key on user, endpoint and key is the lock |
+| [useIdempotentMutation.ts](frontend/src/hooks/useIdempotentMutation.ts) | `shouldKeepKey`: which failures keep the key for a retry, because a fresh key could pay twice |
+| [IdempotencyConcurrencyProof.cs](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs) | `RunTransferProofAsync`: identical transfers sent in parallel under one key, and the balances checked to move once |
 
 ## Architecture
 
