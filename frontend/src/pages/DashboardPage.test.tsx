@@ -136,6 +136,57 @@ describe('the scope decides what the page is about', () => {
     expect(await screen.findByText('Rainy Day only')).toBeInTheDocument();
     await waitFor(async () => expect(await moneyIn()).toBe('+€175.00'));
   });
+
+  it("waits for a chosen account's month rather than showing the all-accounts figures under it", async () => {
+    // RTK keeps the previous argument's `data` while the new one is on its way, so a page that
+    // reads `data` draws +€1,525.50 beside 'Rainy Day only' until the scoped read answers, and the
+    // all-accounts rows under the Balance column. Only the scoped reads (the summary and the recent
+    // rows) are held: the unscoped ones, which have no AccountId, go through at once.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get('*/api/transactions/summary', async ({ request }) => {
+        if (new URL(request.url).searchParams.has('AccountId')) {
+          await held;
+        }
+        return undefined;
+      }),
+      http.get('*/api/transactions', async ({ request }) => {
+        if (new URL(request.url).searchParams.has('AccountId')) {
+          await held;
+        }
+        return undefined;
+      }),
+    );
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+    expect(await screen.findByText('Money in')).toBeInTheDocument();
+    expect(await screen.findByText('Salary')).toBeInTheDocument();
+    const month = screen.getByText(`${format(new Date(), 'MMMM')} so far`).closest('section')!;
+    expect(month).toHaveTextContent('+€1,525.50');
+
+    await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
+
+    try {
+      expect(screen.getByRole('button', { name: /Rainy Day/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(within(month).queryByText('Money in')).toBeNull();
+      expect(month).not.toHaveTextContent('1,525.50');
+      expect(screen.queryByText('Rainy Day only')).toBeNull();
+      // The ledger is the other half: the all-accounts rows go, and skeletons stand in for them.
+      expect(screen.queryByText('Salary')).toBeNull();
+    } finally {
+      // The handler is parked on this promise: a failed assertion must not leave it hanging.
+      release();
+    }
+
+    expect(await screen.findByText('Rainy Day only')).toBeInTheDocument();
+    await waitFor(() => expect(month).toHaveTextContent('+€175.00'));
+  });
 });
 
 describe('the scope as a query argument', () => {
