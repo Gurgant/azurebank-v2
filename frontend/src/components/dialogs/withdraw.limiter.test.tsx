@@ -144,6 +144,97 @@ it.each(['HTTP_429', 'RATE_LIMIT_EXCEEDED', 'DEMO_COPY_LIMIT'])(
 );
 
 /*
+  "Try again" after that latch: the form is back and the next withdrawal goes under a new key. And
+  where the limit refuses the read the check view makes straight after, the view says it could not
+  check, with "try again" still offered, since every authorisation under the key was refused.
+*/
+async function toAMintRefusedUnderTheKey(account: (typeof mockState.accounts)[number]) {
+  renderWithProviders(
+    <WithdrawDialog
+      isOpen
+      onClose={() => {}}
+      accounts={[{ ...account, name: 'Main Account', accountNumber: 'AB-****-****-90' }]}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '€100' }));
+  await userEvent.click(screen.getByRole('button', { name: /^Continue/ }));
+  expect(await screen.findByText('Verify Withdrawal')).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+  await userEvent.paste('123456');
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+  expect(await screen.findByText(/expired/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+}
+
+it('returns to the form on "try again" after a limiter refuses the new authorisation, and the next withdrawal has a new key', async () => {
+  const account = mockState.accounts[0];
+  let mints = 0;
+  const keys: (string | null)[] = [];
+  server.use(
+    http.post('*/api/transactions/withdraw/authorizations', () => {
+      mints += 1;
+      return mints === 2 ? limiterRefusal('RATE_LIMIT_EXCEEDED') : undefined;
+    }),
+    http.post('*/api/transactions/withdraw', ({ request }) => {
+      keys.push(request.headers.get('Idempotency-Key'));
+      if (keys.length > 1) return undefined;
+      return problem({
+        status: 401,
+        errorCode: 'AUTHORIZATION_EXPIRED',
+        detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+      });
+    }),
+  );
+  await toAMintRefusedUnderTheKey(account);
+  expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+  await settle();
+
+  await userEvent.click(screen.getByRole('button', { name: "It didn't go through — try again" }));
+
+  // The form again, and no check view.
+  expect(await screen.findByRole('button', { name: '€100' })).toBeInTheDocument();
+  expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+  await settle();
+  await userEvent.click(screen.getByRole('button', { name: '€100' }));
+  await userEvent.click(screen.getByRole('button', { name: /^Continue/ }));
+  expect(await screen.findByText('Verify Withdrawal')).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+  await userEvent.paste('123456');
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+  expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  expect(mints).toBe(3);
+});
+
+it('says it could not check, and still offers "try again", when the limit refuses the read too', async () => {
+  const account = mockState.accounts[0];
+  let mints = 0;
+  server.use(
+    http.post('*/api/transactions/withdraw/authorizations', () => {
+      mints += 1;
+      return mints === 2 ? limiterRefusal('RATE_LIMIT_EXCEEDED') : undefined;
+    }),
+    http.post('*/api/transactions/withdraw', () =>
+      problem({
+        status: 401,
+        errorCode: 'AUTHORIZATION_EXPIRED',
+        detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+      }),
+    ),
+  );
+  whenListedByKey(() => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' }));
+  await toAMintRefusedUnderTheKey(account);
+
+  expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+  expect(screen.getByText("We couldn't confirm your withdrawal")).toBeInTheDocument();
+  expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: "It didn't go through — try again" })).toBeEnabled();
+  expect(mints).toBe(2);
+});
+
+/*
   With no key held, the same refusal of the first mint is said on the PIN step, as before: nothing
   was sent, so there is nothing to check and the X stays open.
 */
@@ -183,6 +274,7 @@ it.each([
 
     expect(await screen.findByText(said)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
     expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeInTheDocument();
     expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
     expect(screen.queryByText("Your withdrawal didn't go through")).not.toBeInTheDocument();

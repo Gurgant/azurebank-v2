@@ -70,19 +70,25 @@ export const committedAnswerLost = (instance: string) =>
 /**
  * A limiter's 429, by its code. `HTTP_429` is a 429 whose body names no code, which the client
  * reads as `HTTP_429`; the other two are the codes the API sends (`DEMO_COPY_LIMIT` is a demo copy
- * past its limit of changes).
+ * past its limit of changes). The demo's sentence is written beside its code, as a mock of the
+ * API's is, so that the walk in demoContract.test.ts reads it against the server's.
  */
 export function limiterRefusal(code: string) {
-  return code === 'HTTP_429'
-    ? HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 })
-    : problem({
-        status: 429,
-        errorCode: code,
-        detail:
-          code === 'DEMO_COPY_LIMIT'
-            ? 'This demo copy has reached its limit of changes. Start over to get a fresh copy.'
-            : 'Too many requests. Please retry later.',
-      });
+  if (code === 'HTTP_429') {
+    return HttpResponse.json({ title: 'Too Many Requests', status: 429 }, { status: 429 });
+  }
+  if (code === 'DEMO_COPY_LIMIT') {
+    return problem({
+      status: 429,
+      errorCode: 'DEMO_COPY_LIMIT',
+      detail: 'This demo copy has reached its limit of changes. Start over to get a fresh copy.',
+    });
+  }
+  return problem({
+    status: 429,
+    errorCode: code,
+    detail: 'Too many requests. Please retry later.',
+  });
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   fakeClockUser,
   installFakeClock,
   limiterRefusal,
+  whenListedByKey,
 } from '../test/outage';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
@@ -798,6 +799,101 @@ describe('money flows — the behaviour the unification must preserve', () => {
         ).not.toBeInTheDocument();
         expect(mints).toBe(2);
         expect(sends).toBe(1);
+      },
+    );
+
+    /*
+      "Start over" after that latch, which the case above only sees offered: it returns to the form
+      with what the visitor entered, and what is sent next goes under a new key, with no check view
+      between the two sends.
+    */
+    it.each(['external', 'internal'] as const)(
+      '%s: "start over" after a limiter refuses the new confirmation returns to the form, and the next send has a new key',
+      async (page) => {
+        const path = page === 'external' ? '/api/transfers' : '/api/transfers/internal';
+        let mints = 0;
+        const keys: (string | null)[] = [];
+        server.use(
+          http.post(`*${path}/authorizations`, () => {
+            mints += 1;
+            return mints === 2 ? limiterRefusal('RATE_LIMIT_EXCEEDED') : undefined;
+          }),
+          http.post(`*${path}`, ({ request }) => {
+            keys.push(request.headers.get('Idempotency-Key'));
+            if (keys.length > 1) return undefined;
+            return problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+            });
+          }),
+        );
+        await toReviewOn(page);
+        await confirmWithPin();
+        expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
+        await enterPin();
+        expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+        await settle();
+
+        await userEvent.click(
+          screen.getByRole('button', { name: "It didn't go through — start over" }),
+        );
+
+        // Back on the form, with the amount kept and no check view.
+        expect(await screen.findByLabelText('Transfer amount')).toHaveValue('50');
+        expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+        await settle();
+        await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+        await confirmWithPin();
+        await waitFor(() => expect(keys).toHaveLength(2));
+        expect(keys[0]).toBeTruthy();
+        expect(keys[1]).toBeTruthy();
+        expect(keys[1]).not.toBe(keys[0]);
+        expect(mints).toBe(3);
+      },
+    );
+
+    /*
+      Behind a BFF whose own rate limit refused the mint (`RATE_LIMIT_EXCEEDED`, which counts every
+      route of a client's address), the read the check view makes straight after can be refused
+      too. The view then cannot say that it did not go through: it says that it could not check,
+      beside "start over", which is still offered because every authorisation under the key was
+      refused. The visitor is not locked in, but the view is the doubtful one, not the settled one.
+    */
+    it.each(['external', 'internal'] as const)(
+      '%s: says it could not check, and still offers "start over", when the limit refuses the read too',
+      async (page) => {
+        const path = page === 'external' ? '/api/transfers' : '/api/transfers/internal';
+        let mints = 0;
+        server.use(
+          http.post(`*${path}/authorizations`, () => {
+            mints += 1;
+            return mints === 2 ? limiterRefusal('RATE_LIMIT_EXCEEDED') : undefined;
+          }),
+          http.post(`*${path}`, () =>
+            problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+            }),
+          ),
+        );
+        whenListedByKey(() => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' }));
+        await toReviewOn(page);
+        await confirmWithPin();
+        expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
+        await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
+        await enterPin();
+
+        expect(await screen.findByText(COPY.movementUnchecked)).toBeInTheDocument();
+        expect(screen.getByText("We couldn't confirm your transfer")).toBeInTheDocument();
+        expect(screen.queryByText(COPY.movementNone)).not.toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: "It didn't go through — start over" }),
+        ).toBeEnabled();
+        expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+        expect(mints).toBe(2);
       },
     );
 

@@ -59,11 +59,11 @@ This record is the client half of ADR-0009; `frontend/src/hooks/useIdempotentMut
    go, when the mint of a new authorisation under a held key answers `ACCOUNT_NOT_FOUND`, because
    the account is closed and no authorisation can be had for that key again, and when a limiter
    refuses that mint (`RATE_LIMIT_EXCEEDED`, `DEMO_COPY_LIMIT`, or a 429 whose code cannot be
-   read), because the PIN step could then only mint again, with Back and Close shut by the key. It
-   is safe: a mint is made under a held key only after every authorisation presented under it was
-   refused, and the check view stands between the old key and a new one. The withdrawal dialog
-   latches so too when the list it reads on Continue lacks its account while a key is held, as for
-   an edit.
+   read), because the PIN step could then only mint again, with Close (and, on a transfer page,
+   Back) shut by the key. It is safe: a mint is made under a held key only after every
+   authorisation presented under it was refused, and the check view stands between the old key
+   and a new one. The withdrawal dialog latches so too when the list it reads on Continue lacks
+   its account while a key is held, as for an edit.
 7. **`keyRetained` blocks dismissal while any key is live**, not only while a request is in flight,
    because abandoning a kept key and reopening the dialog mints a fresh key over the same money.
 8. **Step-up replay is byte-identical and happens at `baseQuery` level.** After a PIN elevation the
