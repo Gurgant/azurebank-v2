@@ -26,6 +26,9 @@ import { getStepUpSnapshot, settleStepUp, subscribeStepUp } from './stepUpContro
 
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
+// The sentence for a refusal that the app has no words for and the server gave none.
+const COULDNT_VERIFY = "Couldn't verify right now — please try again.";
+
 const useStyles = makeStyles({
   surface: { maxWidth: '400px' },
   intro: {
@@ -124,9 +127,14 @@ function StepUpForm() {
     instead of reviving an already-elapsed number.
   */
   const [lockDeadline, setLockDeadline] = useState<number | null>(null);
-  // On a lock the boxes and Verify are disabled and Cancel is the one control left, so focus lost
-  // during the check lands there, where Escape is heard. Focus the visitor put somewhere stays.
-  const cancelRef = useFocusWhenLost<HTMLButtonElement>(lockDeadline !== null);
+  // The refusal of a demo copy at its limit of changes, which no PIN can pass: it stands until a
+  // box is touched. The boxes are not remounted for it, so nothing else brings back the focus that
+  // the check took.
+  const [copySpent, setCopySpent] = useState(false);
+  // On a lock, or a spent copy, Verify is disabled and Cancel is the control that is left, so
+  // focus lost during the check lands there, where Escape is heard. Focus the visitor put somewhere
+  // stays.
+  const cancelRef = useFocusWhenLost<HTMLButtonElement>(lockDeadline !== null || copySpent);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // A refusal that another PIN can answer: its sentence, and the boxes emptied and remounted.
@@ -140,6 +148,7 @@ function StepUpForm() {
     if (candidate.length !== 6 || isLoading || lockDeadline !== null) return;
     setError(null);
     setPinError(false);
+    setCopySpent(false);
     try {
       const result = await verifyPin({ pin: candidate }).unwrap();
       if (result.verified) {
@@ -170,10 +179,21 @@ function StepUpForm() {
       } else if (problem.status === 401) {
         // A real 401 = dead session (sessionMiddleware already logs out); abandon step-up.
         settleStepUp('cancelled');
+      } else if (problem.status === 429) {
+        // A 429 that is not the PIN's lock, above: the server's own sentence, which says what it
+        // is. The copy at its limit of changes cannot pass any PIN, so its boxes keep what was
+        // typed and are not emptied for another try; a limiter's refusal is one another try may
+        // get past.
+        if (problem.errorCode === 'DEMO_COPY_LIMIT') {
+          setError(problem.detail || COULDNT_VERIFY);
+          setCopySpent(true);
+        } else {
+          askAgain(problem.detail || COULDNT_VERIFY);
+        }
       } else {
         // Any OTHER unexpected status (e.g. a 500) must be SURFACED, never masked as a
         // cancellation — keep the modal open with a visible error so the failure isn't silent.
-        askAgain("Couldn't verify right now — please try again.");
+        askAgain(COULDNT_VERIFY);
       }
     }
   };
@@ -203,6 +223,7 @@ function StepUpForm() {
                 setPin(next);
                 setError(null);
                 setPinError(false);
+                setCopySpent(false);
               }}
               onComplete={verify}
               disabled={isLoading || lockDeadline !== null}
@@ -258,7 +279,7 @@ function StepUpForm() {
         <Button
           appearance="primary"
           onClick={() => void verify(pin)}
-          disabled={pin.length !== 6 || isLoading || lockDeadline !== null}
+          disabled={pin.length !== 6 || isLoading || lockDeadline !== null || copySpent}
         >
           {isLoading ? <Spinner size="tiny" /> : 'Verify'}
         </Button>

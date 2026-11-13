@@ -258,6 +258,35 @@ describe('PinInput (PR-10)', () => {
     },
   );
 
+  /*
+    In the error state every box has the same red border, so the border cannot tell the focused box
+    from the five others, and the box's own `outline: none` takes the browser's ring away: the caret
+    was the only sign of where focus was. The focused box draws the ring and no other box does.
+
+    jsdom reads the `outline` shorthand whole, so the start of the value is what is compared: a
+    ring of 2 px, solid, in whatever colour. As above, the typing is what makes the read follow the
+    focus.
+  */
+  it('draws a ring on the focused box only, in the error state', async () => {
+    renderWithProviders(<Harness error />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.keyboard('12');
+    expect(screen.getByLabelText('Digit 3 of 6')).toHaveFocus();
+
+    const outlines = screen
+      .getAllByLabelText(/Digit \d of 6/)
+      .map((el) => getComputedStyle(el).outline)
+      .map((outline) => (outline.startsWith('2px solid ') ? 'ring' : outline));
+
+    expect(outlines).toEqual(['none', 'none', 'ring', 'none', 'none', 'none']);
+    // And it stays inside the 2 px of padding that the step-up dialog's scrolling content leaves
+    // around the row: a ring set off from the box would be clipped on the first and last box
+    // where the row fills the width.
+    expect(getComputedStyle(screen.getByLabelText('Digit 3 of 6')).outlineOffset).toMatch(
+      /^0(px)?$/,
+    );
+  });
+
   it('the arrow keys move between the boxes and stop at both ends', async () => {
     renderWithProviders(<Harness />);
     await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
