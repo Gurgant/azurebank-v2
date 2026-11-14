@@ -64,6 +64,12 @@ goal is harvest-resistance: guessing exact handles one at a time, at a metered, 
   (ADR-0001, ADR-0038, ADR-0041), and the API refuses a request without the BFF's service credential
   (ADR-0055). Closing it means a limiter in the API, partitioned on the token's subject.
   `SECURITY.md` lists it beside the other controls that stop at the BFF.
+- Not covered: the external transfer and its mint also answer whether a handle exists, and
+  whether it can be paid, under the BFF's global limit per client address only (300 a minute by
+  default), not the `lookup` policy. The mint resolves the payee before it checks the PIN, and the
+  transfer before it examines the authorisation reference, so a made-up PIN or reference is
+  enough (ADR-0042, decision 8). On the public demo both look inside the caller's copy only, as
+  the lookup does.
 
 ## Verified by
 
@@ -73,4 +79,4 @@ goal is harvest-resistance: guessing exact handles one at a time, at a metered, 
 
 ## Related
 
-ADR-0012, ADR-0013, ADR-0015, ADR-0055, ADR-0062, ADR-0063.
+ADR-0012, ADR-0013, ADR-0015, ADR-0042, ADR-0055, ADR-0062, ADR-0063.

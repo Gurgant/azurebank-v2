@@ -254,9 +254,9 @@ describe('contract: step-up authorisations', () => {
       same 401 AUTHORIZATION_INVALID, because a distinct code for each would make this endpoint an
       oracle about authorisations the caller does not hold.
 
-      Sent with a well-formed GUID that names nothing, a CORRECT PIN and a valid payee, so the only
-      thing wrong with the request is the authorisation — and no money moves, because the refusal
-      precedes the ledger.
+      Sent with a well-formed GUID that names nothing and a valid payee, so the only thing wrong
+      with the request is the authorisation — and no money moves, because the refusal precedes the
+      ledger.
     */
     const id = await firstAccountId();
 
@@ -281,10 +281,11 @@ describe('contract: step-up authorisations', () => {
     /*
       An ordering, and the one the mock had backwards.
 
-      `TransferAsync` runs ownership → PIN → ResolveExternalPayeeAsync → ValidateAsync. So a request
-      that is wrong in two ways at once — an unknown handle AND an authorisation that names nothing
-      — answers 404, not 401. The mock validated first and turned that into "your confirmation can
-      no longer be used", which is both untrue and unactionable for someone who simply mistyped.
+      `TransferAsync` runs ownership → presence check → ResolveExternalPayeeAsync → ValidateAsync.
+      So a request that is wrong in two ways at once — an unknown handle AND an authorisation that
+      names nothing — answers 404, not 401. The mock validated first and turned that into "your
+      confirmation can no longer be used", which is both untrue and unactionable for someone who
+      simply mistyped.
 
       Observed through the API's test host for this handle, with an authorisation that names
       nothing, and the same on the real stack, where this test runs in its real mode:
@@ -391,7 +392,8 @@ describe('contract: step-up authorisations', () => {
   it('rejects a malformed header in MODEL BINDING — a fourth 400 shape, with no errorCode', async () => {
     /*
       `[FromHeader(Name = "Step-Up-Authorization")] Guid?` is bound by MVC, so a value that is not a
-      GUID fails before the action: before ownership, before the PIN, before the service.
+      GUID fails before the action: before ownership, before the authorisation check, before the
+      service.
 
       Two consequences a client has to live with. There is no `errorCode`, so `classifyMoneyProblem`
       falls through every branch and the user sees the flow's fallback sentence — acceptable, since

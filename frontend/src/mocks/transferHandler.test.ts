@@ -1011,10 +1011,11 @@ describe('step-up authorisations (ADR-0042)', () => {
     /*
       The same ordering on the spending side, and it is the one the mock got wrong.
 
-      `TransferAsync` runs ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync`, so a
-      handle that does not exist is a 404 even when the presented authorisation is ALSO wrong for
-      it. The mock consumed first, which answered 401 AUTHORIZATION_INVALID and would have told a
-      user who mistyped a handle that their confirmation was no longer usable.
+      `TransferAsync` runs ownership → presence check → `ResolveExternalPayeeAsync` →
+      `ValidateAsync`, so a handle that does not exist is a 404 even when the presented
+      authorisation is ALSO wrong for it. The mock consumed first, which answered 401
+      AUTHORIZATION_INVALID and would have told a user who mistyped a handle that their
+      confirmation was no longer usable.
     */
     seedMockSession();
     const { data } = await (
