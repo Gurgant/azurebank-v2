@@ -24,6 +24,7 @@ import {
 } from '../test/outage';
 import { CONNECTION_FAILED } from '../api/problemMessages';
 import { selectCurrentUser } from '../features/auth/authSlice';
+import { apiSlice } from '../features/api/apiSlice';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -591,6 +592,41 @@ describe('PIN setup during an outage', () => {
     expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
   });
 
+  /**
+   * Holds the reads of the session that reach the server between `hold` and `stop`, and answers
+   * them at `letGo`: as the session is then, or with `answer`. A read is held for when it arrives,
+   * never for its number: a read that an earlier test left waiting for its retry reaches this
+   * test's handlers too, from that test's store (measured on 14/11, in two runs of four), and a
+   * count takes it for the page's. Held with the others, it is answered to that store.
+   */
+  function sessionReadsHeld(answer?: () => Response) {
+    let holding = false;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.get('*/bff/auth/me', async () => {
+        if (!holding) return undefined;
+        await released;
+        return answer?.();
+      }),
+    );
+    return {
+      hold: () => {
+        holding = true;
+      },
+      stop: () => {
+        holding = false;
+      },
+      letGo: () => {
+        holding = false;
+        release();
+      },
+    };
+  }
+
+  /** Where the page's read of the session stands in `store`. */
+  const sessionRead = (store: TestStore) => apiSlice.endpoints.getMe.select()(store.getState());
+
   it.each([
     ['saved, and its answer arrives', 'PIN Setup Complete!'],
     [
@@ -603,28 +639,22 @@ describe('PIN setup during an outage', () => {
       // The first save, 123456, is answered 503 before it reaches the API: nothing is saved. The
       // read of the session it starts is held. The second save, 654321, is saved, and its answer
       // is held. The held read is let go first, and says there is a PIN: the one 654321 put there.
+      const reads = sessionReadsHeld();
       let saves = 0;
       let answerTheSave!: () => void;
       const saveAnswered = new Promise<void>((resolve) => (answerTheSave = resolve));
       server.use(
         http.post('*/bff/auth/set-pin', async ({ request }) => {
           saves += 1;
-          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          if (saves === 1) {
+            reads.hold();
+            return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          }
           const real = await getResponse(handlers, request.clone());
           await saveAnswered;
           return outcome === 'saved, and its answer arrives'
             ? real
             : serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
-        }),
-      );
-      let reads = 0;
-      let answerTheRead!: () => void;
-      const readAnswered = new Promise<void>((resolve) => (answerTheRead = resolve));
-      server.use(
-        http.get('*/bff/auth/me', async () => {
-          reads += 1;
-          if (reads === 1) await readAnswered;
-          return undefined;
         }),
       );
       // Every text the page shows, kept: each node it adds, and each value a text node held, as
@@ -652,13 +682,13 @@ describe('PIN setup during an outage', () => {
         await toTheConfirmation(store);
         await pasteDigits('123456');
         await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
-        await waitFor(() => expect(reads).toBe(1));
+        expect(sessionRead(store).status).toBe('pending');
 
         await chooseAgain('654321');
         await waitFor(() => expect(saves).toBe(2));
         await waitFor(() => expect(mockState.session?.hasPin).toBe(true));
 
-        answerTheRead();
+        reads.letGo();
         await waitFor(() => expect(selectCurrentUser(store.getState())?.hasPin).toBe(true));
         // The store tells React on the next frame: past it, the page has drawn the read.
         await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
@@ -783,25 +813,20 @@ describe('PIN setup during an outage', () => {
     'after a lost answer, other digits saved behind %s name no PIN',
     async (_, answer) => {
       // 123456 is answered 503 before it reaches the API. 654321 is saved and answered with no
-      // verdict. The read the first save started is held: let go after the second save, it says
-      // there is a PIN, and a page that had not kept the second save's digits named 123456.
+      // verdict. The reads of the session from the first answer on are held: let go after the
+      // second save, they say there is a PIN, and a page that had not kept the second save's
+      // digits named 123456.
+      const reads = sessionReadsHeld();
       let saves = 0;
       server.use(
         http.post('*/bff/auth/set-pin', async ({ request }) => {
           saves += 1;
-          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          if (saves === 1) {
+            reads.hold();
+            return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          }
           await getResponse(handlers, request.clone());
           return answer();
-        }),
-      );
-      let reads = 0;
-      let answerTheRead!: () => void;
-      const readAnswered = new Promise<void>((resolve) => (answerTheRead = resolve));
-      server.use(
-        http.get('*/bff/auth/me', async () => {
-          reads += 1;
-          if (reads === 1) await readAnswered;
-          return undefined;
         }),
       );
       await toTheConfirmation();
@@ -811,7 +836,7 @@ describe('PIN setup during an outage', () => {
       await chooseAgain('654321');
       await waitFor(() => expect(saves).toBe(2));
       await waitFor(() => expect(mockState.session?.hasPin).toBe(true));
-      answerTheRead();
+      reads.letGo();
 
       const sentence = await screen.findByText(
         'Your account already has a PIN. To change it, go to Settings.',
@@ -893,6 +918,47 @@ describe('PIN setup during an outage', () => {
     await waitFor(() => expect(sentence).toHaveFocus());
     expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
     expect(saves).toBe(3);
+  });
+
+  it('a save that succeeds stops an earlier read of the session, and the session learns of the PIN without waiting for it', async () => {
+    // The first save is answered 503 before it reaches the API: nothing is saved, and the page
+    // starts a read of the session. The reads from that answer to the next save are held, to be
+    // answered as the session was at the answer, with no PIN. The same digits sent again are saved.
+    let asItWas: Response | undefined;
+    const reads = sessionReadsHeld(() => asItWas!.clone());
+    let saves = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        saves += 1;
+        if (saves > 1) {
+          reads.stop();
+          return undefined;
+        }
+        asItWas = await getResponse(handlers, new Request(new URL('/bff/auth/me', request.url)));
+        reads.hold();
+        return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+      }),
+    );
+    const store = makeTestStore();
+    // The app keeps a read of the session open while it runs (AuthBootstrap), so a save that
+    // sets the PIN refreshes it.
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(selectCurrentUser(store.getState())?.hasPin).toBe(false);
+    await toTheConfirmation(store);
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(sessionRead(store).status).toBe('pending');
+
+    await pasteDigits('123456');
+    expect(await screen.findByRole('heading', { name: 'PIN Setup Complete!' })).toBeInTheDocument();
+    expect(mockState.session?.hasPin).toBe(true);
+    // The read sent before the save is still held, and the session already says there is a PIN.
+    await waitFor(() => expect(selectCurrentUser(store.getState())?.hasPin).toBe(true));
+
+    // Let go, the held reads say there is no PIN, and the session keeps it.
+    reads.letGo();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(selectCurrentUser(store.getState())?.hasPin).toBe(true);
   });
 
   it('after a 503 focus goes back to the first box', async () => {

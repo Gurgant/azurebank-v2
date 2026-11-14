@@ -310,6 +310,12 @@ export function PinSetupPage() {
     setFirstSent((first) => first ?? confirmed);
     try {
       await setPinTrigger({ pin: confirmed, password }).unwrap();
+      // A read of the session sent before this save may still be out. RTK Query holds the save's
+      // refresh of the session until every request has ended, that read included, and the read
+      // would then write the session as it was before the save, with no PIN. Stopped here, it
+      // writes nothing and holds nothing back.
+      sessionRead.current?.abort();
+      sessionRead.current = null;
       setStep('success');
     } catch (caught) {
       settled.current = false;
