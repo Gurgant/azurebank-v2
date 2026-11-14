@@ -1157,10 +1157,12 @@ class SecretsScriptTests(ScriptCase):
 
 class SecretsScriptQuotesTests(unittest.TestCase):
     """What the runbook quotes of infra/secrets.ps1 about the demo's switch, about the account of
-    the phone that takes the alerts and about the networks of proxies, held to the script. Both
-    files are read as text and nothing is run: the tests above hold what the script prints, and
-    these hold that the page quotes the words the script holds. The runbook gives such a line as
-    what is good to read, and a read that differs is a stop there."""
+    the phone that takes the alerts, about the networks of proxies and about a secret taken from
+    the file a stopped run left, held to the script. Both files are read as text and nothing is
+    run: the tests above hold what the script prints, and these hold that the page quotes the
+    words the script holds. The runbook gives most such lines as what is good to read, and a read
+    that differs is a stop there; the last is the one sign that the road after a theft would give
+    the new app an old value."""
 
     # The three lines of the report that say what was done with the switch.
     REPORT = ('demo: true, asked for with -DemoOn', "demo: not written, the template's default applies",
@@ -1230,6 +1232,17 @@ class SecretsScriptQuotesTests(unittest.TestCase):
         for words in (*self.NETWORKS_QUOTED, self.SET_BY_HAND):
             with self.subTest(words=words, held_by='the runbook'):
                 self.assertIn(words, self.page)
+
+    # What the report says of a secret it took from a parameter file that a run which stopped left
+    # behind. The script writes the words once, for all eight secrets; "If something was stolen"
+    # quotes them as the one sign that the new app would get the old values.
+    EARLIER_FILE = 'kept from the earlier file'
+
+    def test_the_words_about_a_file_a_stopped_run_left_that_the_runbook_quotes_are_the_ones_the_script_writes(self):
+        with self.subTest(words=self.EARLIER_FILE, held_by='the script'):
+            self.assertEqual(self.script.count(self.EARLIER_FILE), 1)
+        with self.subTest(words=self.EARLIER_FILE, held_by='the runbook'):
+            self.assertIn(self.EARLIER_FILE, self.page)
 
 
 class UsersCase(ScriptCase):

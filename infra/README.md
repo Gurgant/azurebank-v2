@@ -203,7 +203,7 @@ python infra/deploy.py --pool-run                 # start the pool job once, by 
 | "the settings about forwarded headers in the container 'bff' are not what the template writes"; from `secrets.ps1`, "The bff container of the deployed app carries a forwarded-headers setting this template never writes." | Set by hand. One run of the template writes the `bff`'s settings whole: with `-ProxyNetworks` and the networks that are meant, or with `none` |
 | "The app says the demo is on, and the job azurebank-pool could not be read"; "The executions of the job azurebank-pool could not be read, so whether a pool run is in progress is not known"; `--pool-run`: "infra/main.bicep writes that job only with the demo on" | A deployment and `--check` need that job and its executions. Run it again; if the job is gone, a run of the template creates it, and until then only `--app-only` moves the app. Refused again: read the role assignment on the pool job. Where the demo was never turned on there is no such job: [Turn the demo on](#turn-the-demo-on) first |
 | `--check`: "not in a state to be checked"; "did not show ... answering alone (...)"; "came with a link to a next page"; "The app is in shape and reports no address" | An answer could still come from another revision, or there is no address to ask: nothing was proved, nothing was moved. Look at the app's revisions and its ingress, then check again |
-| `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown." | No copy that job built takes a PIN, and every status stays good. Stop the app; run the template, which writes the job's secrets from the app's; start the app; check again. A free copy built with the other pepper is handed out until it is too old to count, 44 hours by default |
+| `--check`: "The pool job's PIN pepper (its secret pin-pepper) differs from the app's. Nothing was moved, and no value was shown." | No copy that job built takes a PIN, and every status stays good. Stop the app; run the template, which writes the job's secrets from the app's; start the app; check again. A free copy built with the other pepper is handed out like any other while it is younger than 44 hours, by default, and after that only when no younger copy is free |
 | `--check`: "The pool job's secrets could not be compared with the app's"; "The secrets of ... could not be listed" | Listing secrets needs an account with the Owner role on the subscription. With one: read the secret names of both, run the template, check again |
 | `--pool-run`: "was asked to start once"; "failed while its end was waited for"; "Timed out waiting ... (the job's timeout and two minutes)" | Whether a run began, or ended, is not known, and the start is not sent again. `python infra/deploy.py --pool-log` before any second start |
 | `--pool-run`: "The pool run did not end well"; "Azure reported no exit code for it"; "and the read of its exit code failed" | By its code: the table under [Reading the logs](#reading-the-logs) and [`docs/runbooks/demo-pool.md`](../docs/runbooks/demo-pool.md); after exit code 1, no second start before the run's last line has been read. With no code, the run may have ended well: its `pool:` summary line, read with `--pool-log <the execution>`, is the verdict |
@@ -251,10 +251,30 @@ Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=60`.
   it has run, two roads: stop the app; or a new, empty database, in this order: delete the pool
   job; remove the lock `keep-the-database` and delete the database; the same run with
   `@('demo=false')`; `./infra/sql-principals.ps1`; the workflow's `deploy`; `--check`.
-- **If something was stolen**: no password exists to change. Delete the app and both jobs;
-  delete the identities `azurebank-app` and `azurebank-migrate` and create them again; run
+- **If something was stolen**: no password exists to change. First, run
+  `./infra/secrets.ps1 -Action Remove`, with the `-Directory` of the run that stopped if it named
+  one: a parameter file left on this machine by a run that
+  stopped would give the new app the old values, which may be the stolen ones, and the only sign
+  would be the report's `kept from the earlier file`. Next, keep what checks the audit trail
+  later, where you keep secrets and never in a file of the repository: before the app is deleted,
+  its keys `audit-chain-key` and `audit-anchor-key`, one at a time, each saved before the next is
+  read, because `Set-Clipboard` replaces what it held:
+  `az containerapp secret show --name azurebank --resource-group azurebank-demo --secret-name audit-chain-key --query value --output tsv | Set-Clipboard`, then
+  `az containerapp secret show --name azurebank --resource-group azurebank-demo --secret-name audit-anchor-key --query value --output tsv | Set-Clipboard`;
+  once it is deleted and before the new one starts, the highest `AuditEvents.Sequence`, the last
+  row the old chain key wrote (`SELECT MAX(Sequence) FROM AuditEvents`).
+  [Retiring a key takes three values](../docs/runbooks/audit-chain-unavailable.md#retiring-a-key-takes-three-values)
+  says how they are used. Then delete the app and both jobs; delete
+  the identities `azurebank-app` and `azurebank-migrate` and create them again; run
   `./infra/sql-principals.ps1`, which replaces both users; make a run of the template with
   `-DeployApp -ImageTag <a known commit>`, and `-DemoOn` if the pool job ever ran; then deploy.
+  With no file and no app, all eight application secrets are generated anew, the PIN pepper and
+  the audit chain's key among them. No PIN set under the old pepper is accepted any more: on the
+  demo that is the PIN of every copy built before, and a free one is still handed out: like any
+  other while it is younger than 44 hours, by default, and after that only when no younger copy is
+  free. The audit verifier's `verify`, run with the new key,
+  reports `CHAIN BROKEN at sequence 1` on the rows written before, unless it is given the old
+  chain key and that number as that section says.
 - **Before renaming or transferring the repository**, delete the federated credential
   `github-demo` of `azurebank-deploy`: it trusts the repository by name.
 
