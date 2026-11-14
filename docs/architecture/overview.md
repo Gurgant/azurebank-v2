@@ -41,7 +41,7 @@ sequenceDiagram
     A->>D: store the answer under the key
     A-->>F: 201 and the transfer's result
     F-->>B: the same answer
-    Note over A: sent again, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_RESULT_UNKNOWN if the answer was not stored
+    Note over A: sent again, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_IN_FLIGHT while the first is still running, or 409 IDEMPOTENCY_RESULT_UNKNOWN if its answer was not stored
 ```
 
 The messages are the whole security story: **the browser holds a cookie, never the JWT.** "The
