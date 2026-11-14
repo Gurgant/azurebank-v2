@@ -41,7 +41,7 @@ sequenceDiagram
     A->>D: store the answer under the key
     A-->>F: 201 and the transfer's result
     F-->>B: the same answer
-    Note over A: sent again within 24 hours, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_IN_FLIGHT while the first is still running, or 409 IDEMPOTENCY_RESULT_UNKNOWN if its answer was not stored
+    Note over A: sent again within 24 hours, the same request gets the stored answer, marked Idempotency-Replayed. With no answer stored it gets 409 IDEMPOTENCY_IN_FLIGHT until the key's record is two minutes old, then 409 IDEMPOTENCY_RESULT_UNKNOWN if the transfer committed, or it runs again if it never did
 ```
 
 The messages are the whole security story: **the browser holds a cookie, never the JWT.** "The
@@ -90,14 +90,15 @@ Every mutating money endpoint requires a client-generated `Idempotency-Key` and 
 once** per user, endpoint and key. The server fingerprints the **raw request body bytes** with a
 keyed HMAC — not the parsed JSON, so a re-serialisation with different key order is correctly seen
 as a different payload. A key's record is kept for 24 hours: the same request sent again later
-than that is handled as a new one and moves money again (ADR-0009).
+than that is handled as a new one, and can move money again if it passes every check a new
+request must pass (ADR-0009).
 
 Five outcomes, and each one tells the client something different:
 
 | The server says | It means | The client |
 |---|---|---|
 | `2xx` with `Idempotency-Replayed: true` | This exact request already succeeded | Shows the stored result, byte-identical |
-| `409 IDEMPOTENCY_IN_FLIGHT` | A duplicate is still running | Keeps the key, retries later |
+| `409 IDEMPOTENCY_IN_FLIGHT` | No answer is stored under the key yet, and its record is under two minutes old | Keeps the key, retries later |
 | `409 IDEMPOTENCY_RESULT_UNKNOWN` | With `applied: true`: it was committed, and this answer cannot return its result. Without it: the outcome is not known | **Stops.** With `applied: true`, says the payment went through and offers the history, with no way to send again. Without it, asks the user to verify against their transactions |
 | `422 IDEMPOTENCY_KEY_REUSE` | Same key, different payload | Rotates the key |
 | Business `4xx` | Insufficient funds, wrong PIN | Releases the key; fix and retry |
