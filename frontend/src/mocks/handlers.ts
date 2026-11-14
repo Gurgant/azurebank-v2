@@ -3979,17 +3979,13 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     return pinLockedProblem(mockState.pinLockedUntil, now, 'verify-pin');
   }
   /*
-    A REFUSED PIN IS A 200, and the body is not the caller's current state — `authLevel` is
-    HARD-CODED 1 by the BFF, not echoed back. The mock returned `mockState.authLevel`, so an
-    already-elevated user who fumbled a re-entry saw `2` where production says `1`.
-
-    Measured 2026-08-04 (this cost one of three attempts, hence the exact quote):
-      POST /bff/auth/verify-pin {"pin":"000000"}
-        -> 200 {"data":{"verified":false,"authLevel":1,"pinExpiresAt":null},
-                "message":"Invalid PIN"}
+    A refused PIN is a 200 that carries the session's held level, so an elevated session stays
+    at 2: `BffAuthController.VerifyPin` answers `GetAuthLevel` of the session, which drops to 1
+    only when the elevation has lapsed. The mock never lets one lapse, and its /me answers the
+    same `mockState.authLevel`. The BFF's `AWrongPinOnAnElevatedSession_KeepsItsLevel` holds it.
   */
   return HttpResponse.json({
-    data: { verified: false, authLevel: 1, pinExpiresAt: null },
+    data: { verified: false, authLevel: mockState.authLevel, pinExpiresAt: null },
     message: 'Invalid PIN',
   });
 });
