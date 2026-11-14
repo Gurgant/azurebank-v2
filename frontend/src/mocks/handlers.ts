@@ -941,6 +941,20 @@ function quoteRefusedText(text: string): string {
     : `'${shown}' (shown in part: ${shown.length} of ${text.length} characters)`;
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
+const AZURE_TAG_SENTENCE =
+  'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.';
+
+/**
+ * The API lower-cases a payee handle before it validates it, on the lookup, on the transfer's
+ * authorisation and on the transfer: a capital letter is read as its lower-case letter, so
+ * `Jane_02ga` is answered as `jane_02ga`. A to Z only, as the server does it, so a letter outside
+ * ASCII is left as it is and then fails the pattern.
+ */
+function lowerCasePayeeHandle(handle: string): string;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined {
+  return typeof handle === 'string' ? handle.replace(/[A-Z]/g, (c) => c.toLowerCase()) : handle;
+}
 
 /*
   THE SERVER NO LONGER PUTS A FIGURE IN EITHER SENTENCE. Measured 2026-08-04 the API rendered `:C`
@@ -2224,7 +2238,32 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
  * and self is masked identically to unknown (UserService semantics).
  */
 const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) => {
-  const tag = params.azureTag;
+  /*
+    The API lower-cases a payee handle before it validates it, so a capital letter resolves: the
+    answer for `Jane_02ga` is the answer for `jane_02ga`, with the handle in lower case.
+
+    A handle of the wrong form is then a framework 400 and never an `exists:false`. The key is the
+    parameter's name and there is no `detail`; the three sentences are one per rule, in the order the
+    API checks them: too short, too long, then the pattern. Measured on the API's own pipeline.
+  */
+  const tag = lowerCasePayeeHandle(params.azureTag);
+  if (tag.length < 3) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag must be at least 3 characters.'] }),
+    );
+  }
+  if (tag.length > 20) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag cannot exceed 20 characters.'] }),
+    );
+  }
+  if (!AZURE_TAG_RE.test(tag)) {
+    return response.untyped(
+      modelStateProblem({
+        azureTag: [AZURE_TAG_SENTENCE],
+      }),
+    );
+  }
   const isSelf = mockState.session?.azureTag === tag;
   const found = isSelf ? undefined : mockState.recipients.find((r) => r.azureTag === tag);
   if (found) {
@@ -2921,7 +2960,18 @@ const authoriseTransfer = api.post(
     );
     if (pinBind) return response.untyped(pinBind);
 
+    /*
+      The API lower-cases the payee handle before it validates it, so a capital is read as its
+      lower-case letter. A handle that still breaks the rule (two characters, a hyphen, a first
+      character that is not a letter, 21 characters) is refused with the pattern sentence under the
+      key `RecipientAzureTag`, whatever its length: unlike the lookup, the mint has no sentence
+      for a length. Measured on the API's own pipeline.
+    */
+    const handle = lowerCasePayeeHandle(body.recipientAzureTag);
     const bindingErrors = mintBindingErrors(body);
+    if (typeof handle === 'string' && !AZURE_TAG_RE.test(handle)) {
+      bindingErrors.RecipientAzureTag = [AZURE_TAG_SENTENCE];
+    }
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
@@ -2935,7 +2985,7 @@ const authoriseTransfer = api.post(
 
     // Self-transfer precedes the recipient lookup inside `ResolveExternalPayeeAsync`, so it cannot
     // be reported as "not found" for a handle that plainly exists — it is the caller's own.
-    if (mockState.session?.azureTag?.toLowerCase() === body.recipientAzureTag?.toLowerCase()) {
+    if (mockState.session?.azureTag?.toLowerCase() === handle?.toLowerCase()) {
       return response.untyped(
         problem({
           instance: pathOf(request),
@@ -2947,11 +2997,11 @@ const authoriseTransfer = api.post(
     }
 
     const recipient = mockState.recipients.find(
-      (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
+      (r) => r.azureTag.toLowerCase() === handle?.toLowerCase(),
     );
     if (!recipient) {
       // Observed through the API's test host: 404 / RECIPIENT_NOT_FOUND.
-      return response.untyped(recipientNotFound(body.recipientAzureTag, request));
+      return response.untyped(recipientNotFound(handle, request));
     }
 
     /*
@@ -3024,7 +3074,7 @@ const authoriseTransfer = api.post(
     const minted = mintAuthorization({
       operation: 'Transfer',
       fromAccountId: body.fromAccountId,
-      recipientAzureTag: body.recipientAzureTag,
+      recipientAzureTag: handle,
       amount: body.amount,
     });
 
@@ -3355,7 +3405,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     pin?: string;
   };
   const amount = body.amount as number;
-  const tag = body.recipientAzureTag ?? '';
+  // Lower-cased first, as on the lookup and the mint: what the authorisation holds and what the
+  // payee is matched on is the handle in lower case.
+  const tag = lowerCasePayeeHandle(body.recipientAzureTag ?? '');
 
   /*
     Source account FIRST. `TransferService.TransferAsync` opens with
@@ -3456,7 +3508,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',
     fromAccountId: body.fromAccountId,
-    recipientAzureTag: body.recipientAzureTag,
+    recipientAzureTag: tag,
     amount: body.amount,
   });
   if (authorization.refusal) return response.untyped(authorization.refusal);

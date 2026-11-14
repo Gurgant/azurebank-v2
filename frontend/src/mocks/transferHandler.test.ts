@@ -117,8 +117,63 @@ describe('recipient lookup (exact-match, ADR-0014)', () => {
     const self = await (await lookup('demo_user')).json();
     expect(self.data.exists).toBe(false); // self is masked identically to unknown
   });
-});
 
+  /*
+    The API lower-cases a payee handle (A to Z only) before it validates it. Every row below is an
+    answer measured on the API's own pipeline, with the same handle sent to the lookup and to the
+    transfer's authorisation, except the last test of this block, which says it is not measured.
+  */
+  it.each(['Friend', 'FRIEND', 'friend'])(
+    'resolves %s, and answers with the handle in lower case',
+    async (tag) => {
+      const res = await lookup(tag);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data).toMatchObject({
+        azureTag: 'friend',
+        displayName: 'A. Friend',
+        exists: true,
+      });
+    },
+  );
+
+  const PATTERN_SENTENCE =
+    'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.';
+
+  it.each([
+    ['ab', 'at least 3 characters', 'AzureTag must be at least 3 characters.'],
+    ['my-handle', 'a hyphen', PATTERN_SENTENCE],
+    ['9friend', 'a first character that is not a letter', PATTERN_SENTENCE],
+    ['Abcdefghij01234567890', '21 characters', 'AzureTag cannot exceed 20 characters.'],
+  ])(
+    'refuses %s (%s) with the 400 the API gives, never exists:false',
+    async (tag, _why, sentence) => {
+      const res = await lookup(tag);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.errors).toEqual({ azureTag: [sentence] });
+      expect(body.status).toBe(400);
+      expect(body.title).toBe('One or more validation errors occurred.');
+      expect(body.detail).toBeUndefined();
+      expect(body.data).toBeUndefined();
+    },
+  );
+
+  it('reads a letter outside A to Z as it is, so it fails the pattern (not a measured row)', async () => {
+    /*
+      NOT a measured row: the API changes A to Z only, by its own design, and this follows that.
+      U+212A (the Kelvin sign) is the one character of U+0080 to U+FFFF whose full lower case is a
+      letter the pattern accepts (`k`), so `toLowerCase()` would turn `Kate` into `kate`, a
+      handle that resolves to the 200 of the mock's own `exists:false`. Read as it is, it fails.
+    */
+    const res = await lookup(encodeURIComponent('Kate'));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.azureTag).toEqual([PATTERN_SENTENCE]);
+  });
+});
 describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   it('does NOT step up at level 1 — the PIN travels in the body instead (ADR-0041)', async () => {
     /*
@@ -481,6 +536,72 @@ function authorise(body: unknown) {
   });
 }
 
+describe('the mint reads a payee handle in any letter case, as the API does', () => {
+  const PATTERN_SENTENCE =
+    'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.';
+
+  it.each(['Friend', 'FRIEND', 'friend'])('mints for %s', async (tag) => {
+    seedMockSession();
+    const res = await authorise({
+      fromAccountId: acct(),
+      recipientAzureTag: tag,
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(201);
+    expect((await res.json()).message).toBe('Transfer authorised');
+  });
+
+  it.each([
+    ['FRIEND', 'friend'],
+    ['friend', 'Friend'],
+  ])(
+    'an authorisation minted for %s is accepted for %s, and the payee gets the transfer in lower case',
+    async (mintedFor, sentTo) => {
+      seedMockSession();
+      const minted = await authorise({
+        fromAccountId: acct(),
+        recipientAzureTag: mintedFor,
+        amount: 10,
+        pin: MOCK_PIN,
+      });
+      expect(minted.status).toBe(201);
+      const authorisationId = (await minted.json()).data.authorizationId as string;
+
+      // This authorisation, not one the helper mints, in another letter case than it was made for.
+      const sent = await transfer(
+        FIXED,
+        { fromAccountId: acct(), recipientAzureTag: sentTo, amount: 10 },
+        authorisationId,
+      );
+      const body = await sent.json();
+
+      expect(sent.status).toBe(201);
+      expect(body.data.recipientAzureTag).toBe('friend');
+    },
+  );
+
+  it.each([
+    ['ab', 'two characters'],
+    ['my-handle', 'a hyphen'],
+    ['9friend', 'a first character that is not a letter'],
+    ['Abcdefghij01234567890', '21 characters'],
+  ])('refuses %s (%s) with the pattern sentence under RecipientAzureTag', async (tag) => {
+    seedMockSession();
+    const res = await authorise({
+      fromAccountId: acct(),
+      recipientAzureTag: tag,
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.errors).toEqual({ RecipientAzureTag: [PATTERN_SENTENCE] });
+    expect(body.title).toBe('One or more validation errors occurred.');
+    expect(body.detail).toBeUndefined();
+  });
+});
 describe('the PIN gates at the MINT, in the order the API applies them (ADR-0042)', () => {
   /*
     Every expectation below was MEASURED on the real API and pasted beside its assertion.
