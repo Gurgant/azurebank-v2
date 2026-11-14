@@ -75,7 +75,7 @@ await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () => { /* 
 
 ## Frontend test infrastructure
 
-**The frontend type gate is `npm run build` (the native compiler's `tsc -b`), not `tsc --noEmit`.** The root tsconfig
+**The frontend type gate is `pnpm run build` (the native compiler's `tsc -b`), not `tsc --noEmit`.** The root tsconfig
 is solution-style, so `--noEmit` skips the project references and misses errors the build
 catches.
 
@@ -121,7 +121,7 @@ and when anything looks hung, check the network tab and the DOM before calling i
   sentinel handler registered last answers `501 MOCK_HANDLER_MISSING` and names the route.
 - **A measurement quoted in a mock's comment is dated evidence, not a contract.** A mock that a
   test holds to a table measured on one day stays green after the real gate moves. Only a case
-  that runs against the real target (`npm run test:contract:real`) proves that the mock still
+  that runs against the real target (`pnpm run test:contract:real`) proves that the mock still
   matches. When a decision moves a gate, grep the mock for the old table.
 
 ## jsdom

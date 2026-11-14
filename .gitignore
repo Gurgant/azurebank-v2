@@ -79,3 +79,6 @@ tests/api-collection/results.xml
 # The documentation site: the copy of the pages it is built from, and its build cache.
 docs-site/src/
 docs-site/.vitepress/cache/
+
+# The icon rasteriser, installed on demand (docs/brand-assets.md, Regenerating the icons).
+/.icon-tools/

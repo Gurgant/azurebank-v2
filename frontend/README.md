@@ -17,19 +17,23 @@ the cookie stays first-party and the JWT never reaches the browser (ADR-0038).
 
 ## Run it
 
+With Node 24.12 or later, run `corepack enable pnpm` once, and the `packageManager` field of
+`frontend/package.json` picks the version. Node 25 and later carry no Corepack: install pnpm 12
+another way, with pnpm's own installer or `npm install -g pnpm@12.15.0`.
+
 ```bash
-npm ci
-npm run dev        # http://localhost:5173 — /api and /bff are proxied to the BFF on :5000
-npm run dev:mock   # the same app against MSW in the browser — no BFF, API or database
+pnpm install --frozen-lockfile
+pnpm run dev        # http://localhost:5173 — /api and /bff are proxied to the BFF on :5000
+pnpm run dev:mock   # the same app against MSW in the browser — no BFF, API or database
 ```
 
-`npm run dev` needs the BFF and the API running: the
+`pnpm run dev` needs the BFF and the API running: the
 [local setup](../docs/engineering-practices.md#local-setup) has the commands. Under `dev:mock`, sign
 in as `demo@azurebank.dev` / `Password1!`, PIN `123456`. The mock's state resets on every page
 reload.
 
 Either loop shows the public demo's screens when it is started with `AZUREBANK_DEMO=true` in its
-environment: `AZUREBANK_DEMO=true npm run dev:mock` in bash, `$env:AZUREBANK_DEMO = 'true'` and
+environment: `AZUREBANK_DEMO=true pnpm run dev:mock` in bash, `$env:AZUREBANK_DEMO = 'true'` and
 then the command in PowerShell. The value is exactly `true`, and an env file does not set it.
 Under `dev:mock` the mock then hands out demo copies, three to a page load, and no longer signs
 its own user in; after a reload it no longer knows the copy the browser kept, and the page offers
@@ -38,24 +42,24 @@ its own user in; after a reload it no longer knows the copy the browser kept, an
 ## Check it
 
 ```bash
-npm run format:check
-npm run lint
-npm run build               # the type gate: the native compiler's tsc -b, then the bundle
-npm test                    # unit and component tests, against MSW
-npm run test:coverage       # the same run, and how much of the hand-written source it ran
-npm run test:contract:mock  # the contract suite against the mock ...
-npm run test:contract:real  # ... and against the running BFF and API (ADR-0029)
-npm run test:integration    # the data layer against the running stack
-npm run test:e2e            # Playwright; starts vite itself, needs the BFF and the API
-npm run test:e2e:demo       # the public demo in a browser, on the compose demo stack
+pnpm run format:check
+pnpm run lint
+pnpm run build               # the type gate: the native compiler's tsc -b, then the bundle
+pnpm test                    # unit and component tests, against MSW
+pnpm run test:coverage       # the same run, and how much of the hand-written source it ran
+pnpm run test:contract:mock  # the contract suite against the mock ...
+pnpm run test:contract:real  # ... and against the running BFF and API (ADR-0029)
+pnpm run test:integration    # the data layer against the running stack
+pnpm run test:e2e            # Playwright; starts vite itself, needs the BFF and the API
+pnpm run test:e2e:demo       # the public demo in a browser, on the compose demo stack
 ```
 
-- **`npm test` is not the whole suite.** It runs neither the contract suite nor the integration
+- **`pnpm test` is not the whole suite.** It runs neither the contract suite nor the integration
   suite. The three commands that need the running stack want the API on `https://localhost:7215`:
   [`CONVENTIONS.md`](CONVENTIONS.md) has what that stack must be.
-- **`npm run build` is the type check that counts.** `tsc --noEmit` skips the project references
+- **`pnpm run build` is the type check that counts.** `tsc --noEmit` skips the project references
   this tsconfig is built from.
-- **`npm run test:e2e:demo` is part of no other run.** It wants the stack of `compose.yaml`
+- **`pnpm run test:e2e:demo` is part of no other run.** It wants the stack of `compose.yaml`
   with `compose.demo.yaml` and nobody else using it: it claims two demo copies and restarts the
   BFF's and the API's containers. CI runs it on every pull request, in the job `demo-stack`, on
   a stack that job builds and takes down.
@@ -77,7 +81,7 @@ The same run holds more by measuring it, each with its note in
 be read in both themes, a visible focus on each amount field, focus given back by seven dialogs,
 and the layout of the money tiles and of a transaction's row at 375 px.
 
-The public demo's screens are scanned by the same gate only in `npm run test:e2e:demo`, which
+The public demo's screens are scanned by the same gate only in `pnpm run test:e2e:demo`, which
 CI's `demo-stack` job runs on every pull request: a finding on a demo screen fails that job, and
 the report of each scan is its artefact. The sign-in page of a browser that keeps a copy is
 under no scan.
@@ -90,15 +94,15 @@ run. [`playwright.screenshots.config.ts`](playwright.screenshots.config.ts) has 
 order and why the reseed comes first.
 
 ```bash
-npm run capture:screenshots   # after a reseed, with the API and the BFF running
-npm run capture:publish       # the pictures the README uses, into ../docs/images/ (ffmpeg, pngquant)
+pnpm run capture:screenshots   # after a reseed, with the API and the BFF running
+pnpm run capture:publish       # the pictures the README uses, into ../docs/images/ (ffmpeg, pngquant)
 ```
 
 ## Generated code
 
 `src/api/schema.d.ts` and `src/api/generated/apiSchemas.ts` are generated from the committed
 contract, [`docs/api/openapiv1.json`](../docs/api/openapiv1.json), and never edited by hand.
-`npm run generate:api` and `npm run generate:zod` regenerate them; CI fails a pull request whose
+`pnpm run generate:api` and `pnpm run generate:zod` regenerate them; CI fails a pull request whose
 committed copies differ from what the contract generates.
 
 ## Conventions

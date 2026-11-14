@@ -31,7 +31,7 @@ node scripts/openapi-spec.mjs check    # is the committed document what the API 
 node scripts/openapi-spec.mjs regen    # make it so
 
 # 3. If the document changed, the frontend artifacts must follow or CI fails on the drift gate:
-cd frontend && npm run generate:api && npm run generate:zod
+cd frontend && pnpm run generate:api && pnpm run generate:zod
 ```
 
 `OPENAPI_BASE_URL` overrides the address. Port 5068 is the plain-HTTP port CI's real-stack job uses.

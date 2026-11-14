@@ -11,14 +11,16 @@
  * geometry in hand to decide where the antialiasing goes. At 512 it makes no visible difference,
  * which is exactly why the shortcut survives unnoticed.
  *
- *   npm install --no-save @resvg/resvg-js@<RASTERISER below>   (pinned, not a dependency — see
+ *   mkdir .icon-tools                                            (once, at the repository root)
+ *   pnpm add --dir .icon-tools @resvg/resvg-js@<RASTERISER below>  (pinned, not a dependency — see
  *   docs/brand-assets.md)
- *   npm run generate:icons
+ *   cd frontend && pnpm run generate:icons
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -33,17 +35,32 @@ const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
  */
 const RASTERISER = '@resvg/resvg-js@2.6.2';
 
+/**
+ * Where the rasteriser is installed: a folder of its own at the repository root, outside frontend/.
+ * pnpm treats a folder under frontend/ as part of that workspace, and ICON_TOOLS_DIR points it
+ * elsewhere. It is read through the folder's own package.json, so nothing in frontend/node_modules
+ * is involved.
+ */
+const ICON_TOOLS = resolve(
+  process.env.ICON_TOOLS_DIR ??
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.icon-tools'),
+);
+
 let Resvg;
 try {
-  ({ Resvg } = await import('@resvg/resvg-js'));
+  ({ Resvg } = createRequire(join(ICON_TOOLS, 'package.json'))('@resvg/resvg-js'));
 } catch {
   console.error(
     'This script needs @resvg/resvg-js, which is not a permanent devDependency because it is a\n' +
       'native module and the icons change roughly never — carrying it would tax every CI install\n' +
-      'for a script nobody runs. Install it when you need it — and keep the pin: the committed\n' +
-      'icons are artifacts of one rasteriser, so a newer release would rewrite every one of them\n' +
-      'with no change to logo.svg to explain the diff.\n\n' +
-      `  npm install --no-save ${RASTERISER}\n`,
+      'for a script nobody runs. Install it when you need it — into a folder of its own, because in\n' +
+      "a pnpm folder npm install --no-save would rebuild node_modules without pnpm's checks — and\n" +
+      'keep the pin: the committed icons are artifacts of one rasteriser, so a newer release would\n' +
+      'rewrite every one of them with no change to logo.svg to explain the diff. From the repository\n' +
+      'root, once:\n\n' +
+      `  mkdir .icon-tools\n` +
+      `  pnpm add --dir .icon-tools ${RASTERISER}\n\n` +
+      `Looked for it in ${ICON_TOOLS} (ICON_TOOLS_DIR points elsewhere).\n`,
   );
   process.exit(1);
 }
