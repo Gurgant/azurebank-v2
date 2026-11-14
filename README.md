@@ -7,6 +7,14 @@ I am Vladislav Aleshaev, the project's architect and sole engineer. I designed t
 part of the code myself and direct the AI coding agents that write the rest. I read the code I
 merge and I merge every pull request myself.
 
+In ten minutes, by what you want to judge:
+
+- **How I work:** [My role](docs/engineering-playbook.md#my-role) and
+  [What stands between an agent and `main`](docs/engineering-playbook.md#what-stands-between-an-agent-and-main),
+  in the Engineering Playbook.
+- **The code:** [Moving money once](docs/architecture/overview.md#moving-money-once), then
+  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs) that holds it.
+
 [How it works](docs/architecture/overview.md) · [Decisions](docs/adr/README.md) ·
 [Security](SECURITY.md) · [Engineering practices](docs/engineering-practices.md)
 
@@ -40,11 +48,15 @@ once.
 - **A payment is applied at most once per key.** Every money move carries an idempotency key. The
   server fingerprints the raw request with a keyed HMAC and claims the key before it acts; the
   client keeps the key after any failure the server might have seen and spends it only on a
-  definitive answer. A key's record is kept for 24 hours: the same request sent again later than
-  that is a new payment. Held under 24 concurrent duplicates on a real SQL Server.
+  definitive answer. I rejected a simpler record with two states and a delete on error: an error
+  after the commit would free the key of a payment that went through, and a retry would pay it
+  again. Here the record changes state in the same commit as the money, so it shows whether the
+  payment happened. A key's record is kept for 24 hours: the same request sent again later than
+  that is handled as a new request. Held under 24 concurrent duplicates on a real SQL Server.
   [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
-  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
+  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs), run on
+  [SQL Server](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
 - **The JWT never reaches the browser.** The BFF keeps it in a server-side session, gives the
   browser an HttpOnly cookie and adds the bearer itself; the API accepts no caller but the BFF.
   [ADR-0001](docs/adr/0001-bff-pattern.md) ·
@@ -72,6 +84,17 @@ once.
   which can hold a handle, and the stack trace of an unhandled fault can echo an e-mail address.
   [ADR-0016](docs/adr/0016-observability-three-pillars.md) ·
   [ADR-0017](docs/adr/0017-pii-redaction-codeql-barrier.md)
+
+## Read the code
+
+The payment guarantee above, in four files:
+
+| File | What to read in it |
+|---|---|
+| [IdempotencyMiddleware.cs](backend/src/AzureBank.Api/Middleware/IdempotencyMiddleware.cs) | The summary at its top: the five steps a money request goes through, from the check of its key to the release of a claim when nothing was committed |
+| [IdempotencyService.cs](backend/src/AzureBank.Api/Services/Implementations/IdempotencyService.cs) | `TryAcquireAsync`: the claim, where the table's primary key on user, endpoint and key is the lock |
+| [useIdempotentMutation.ts](frontend/src/hooks/useIdempotentMutation.ts) | `shouldKeepKey`: which failures keep the key for a retry, because a fresh key could pay twice |
+| [IdempotencyConcurrencyProof.cs](backend/tests/AzureBank.Tests/Integration/IdempotencyConcurrencyProof.cs) | `RunTransferProofAsync`: identical transfers sent in parallel under one key, and the balances checked to move once |
 
 ## Architecture
 
@@ -104,18 +127,13 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 ## Try it
 
 - **The live demo**, on Azure — a browser only:
-  <https://gurgant.github.io/azurebank-v2/>. One press of **Try the demo** gives you a private copy
-  of a bank account with invented money: two accounts (Main Savings €12,450.00 and Checking
-  €2,300.00), two months of history and two contacts you can pay. The PIN is `123456`, and the page
-  shows it. The copy takes sign-ins for 24 hours; a session open at that moment goes on until it
-  ends. It is deleted later, by a job that runs every four hours: a run leaves a copy alone until
-  five minutes after its end, and longer while somebody is still signed in to it; from 48 hours
-  after its end a run deletes it whoever is signed in. So the deletion comes at a run of the job,
-  not at a set time. **Start over** gives you a fresh one. Don't enter real personal data. The
-  entry page starts the server and shows the wait: about 25 seconds when it was asleep. It also
-  asks GitHub's API for today's count of merged pull requests: GitHub serves the page, so the
-  request tells it nothing that the visit has not. The journeys to try and the limits you can
-  meet are in [Try the demo](docs/testing/try-the-demo.md).
+  <https://gurgant.github.io/azurebank-v2/>, an entry page that starts the server and shows the
+  wait, about 25 seconds when it was asleep. In the app, press **Try the demo**: you get a private
+  copy of a bank account with invented money, two contacts to pay and the PIN `123456`, which the
+  page shows. Pay one of the contacts, as in the animation above: the form, the review, the PIN, the
+  receipt. Last, type a wrong PIN three times: the PIN locks for 15 minutes, and **Start over**
+  gives you a fresh copy. Don't enter real personal data. How long a copy lasts, the other
+  journeys and the limits are in [Try the demo](docs/testing/try-the-demo.md).
 - **The UI alone**, against a mock that runs in the browser — Node only. With Node 24.12 or
   later, run `corepack enable pnpm` once, and the `packageManager` field of
   `frontend/package.json` picks the version. Node 25 and later carry no Corepack: install
@@ -142,7 +160,7 @@ checks have passed and CodeQL reports no error and no security alert rated high 
 | Contract tests (the check is named Bruno collection) | The Bruno collection, request by request, against the running API |
 | Infrastructure | The deployment templates compile and lint clean, the tests of the deployment script and of the PowerShell scripts, a lint of the workflows |
 | Demo suite | The demo's browser suite on the stack a deployment runs, with the two restarts of containers it makes |
-| Commit messages | The pull request's commit messages, read for a credit line or a mention |
+| Commit messages | The pull request's commit messages, checked against the project's rules |
 
 CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
@@ -175,8 +193,7 @@ tests run, which fails under a floor, and a reading of the prose for American sp
 - The demo counts each visitor by their own network address, so
   [the limits](docs/testing/try-the-demo.md#the-limits) that are for one network are that network's
   own: measured on the deployed demo on 2026-10-07
-  ([Measured on Azure](infra/README.md#measured-on-azure)). An eleventh copy within 24 hours has
-  not been seen refused there.
+  ([Measured on Azure](infra/README.md#measured-on-azure)).
 - axe runs in CI over eleven pages and three dialogs and fails on any serious or critical finding
   except colour contrast, which it reports without failing, and Fluent's own focus sentinels,
   which it leaves out; the details are in

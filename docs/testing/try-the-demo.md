@@ -25,6 +25,12 @@ The sign-in page also says what is kept, before you press anything: "This browse
 copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your
 network address is kept with the copy and removed when the copy is deleted."
 
+The entry page that wakes the demo also asks GitHub's API for the count of merged pull requests it
+shows. That request gives GitHub your network address and the time. It is made on every load of
+the page, a load from the browser's cache included, and not when Back or Forward brings back a page
+the browser kept whole: that page resumes without loading again. (**Not seen**: the entry page is
+not part of the compose stack.)
+
 ## Where it runs
 
 Open **the demo's address** in your browser. For the public demo it is in
@@ -540,6 +546,11 @@ The other lines marked not seen are read from
 [`PinService.cs`](../../backend/src/AzureBank.Api/Services/Implementations/PinService.cs) (a
 right PIN starting the count again) and
 [`deleteAccount.spec.ts`](../../frontend/e2e/deleteAccount.spec.ts) (deleting an account).
+
+**The entry page** is published from `site/` by GitHub Pages and is not on the compose stack,
+so neither walk saw it. Its request to GitHub's API is in
+[`entry.js`](../../site/entry.js), and the page's own note on that request is in
+[`index.html`](../../site/index.html).
 
 **The numbers.**
 
