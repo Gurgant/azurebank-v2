@@ -41,7 +41,7 @@ sequenceDiagram
     A->>D: store the answer under the key
     A-->>F: 201 and the transfer's result
     F-->>B: the same answer
-    Note over A: sent again, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_IN_FLIGHT while the first is still running, or 409 IDEMPOTENCY_RESULT_UNKNOWN if its answer was not stored
+    Note over A: sent again within 24 hours, the same request gets the stored answer, marked Idempotency-Replayed, or 409 IDEMPOTENCY_IN_FLIGHT while the first is still running, or 409 IDEMPOTENCY_RESULT_UNKNOWN if its answer was not stored
 ```
 
 The messages are the whole security story: **the browser holds a cookie, never the JWT.** "The
@@ -89,7 +89,8 @@ network, the browser and the process are all free to fail halfway.
 Every mutating money endpoint requires a client-generated `Idempotency-Key` and executes **at most
 once** per user, endpoint and key. The server fingerprints the **raw request body bytes** with a
 keyed HMAC — not the parsed JSON, so a re-serialisation with different key order is correctly seen
-as a different payload.
+as a different payload. A key's record is kept for 24 hours: the same request sent again later
+than that is handled as a new one and moves money again (ADR-0009).
 
 Five outcomes, and each one tells the client something different:
 
