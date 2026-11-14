@@ -920,6 +920,43 @@ describe('PIN setup during an outage', () => {
     expect(saves).toBe(3);
   });
 
+  it('a PIN that refused a save before any answer was lost is not called the lost digits', async () => {
+    // The account has a PIN from before, which the session does not know: the first save is
+    // refused for it, and the session cannot be read. The same digits sent again lose their
+    // answer. They cannot have replaced that PIN, which would refuse them the same way.
+    let readable = false;
+    server.use(
+      http.get('*/bff/auth/me', () =>
+        readable ? undefined : serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' }),
+      ),
+    );
+    let saves = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', () => {
+        saves += 1;
+        return saves === 1 ? undefined : HttpResponse.error();
+      }),
+    );
+    await toTheConfirmation();
+    mockState.session!.hasPin = true;
+    await pasteDigits('123456');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
+
+    readable = true;
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(saves).toBe(2));
+    const sentence = await screen.findByText(
+      'Your account already has a PIN. To change it, go to Settings.',
+      { selector: 'p' },
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+  });
+
   it('a save that succeeds stops an earlier read of the session, and the session learns of the PIN without waiting for it', async () => {
     // The first save is answered 503 before it reaches the API: nothing is saved, and the page
     // starts a read of the session. The reads from that answer to the next save are held, to be

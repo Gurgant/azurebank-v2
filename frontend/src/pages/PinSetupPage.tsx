@@ -233,8 +233,13 @@ export function PinSetupPage() {
   const [lostSaves, setLostSaves] = useState<readonly string[]>([]);
   const saveUnknown = lostSaves.length > 0;
   const lostPin = lostSaves.length === 1 ? lostSaves[0] : null;
-  // After a lost save, a save was refused because the account has a PIN.
+  // A save was refused because the account has a PIN.
   const [pinRefused, setPinRefused] = useState(false);
+  /*
+    That refusal came before any save's answer was lost: the PIN on file is older than every lost
+    save, which it would have refused the same way, so it is never taken to be one of them.
+  */
+  const [pinBeforeLoss, setPinBeforeLoss] = useState(false);
   /*
     A save on its way. It ends in the same batch as the state its answer sets, which the
     mutation's `isLoading` does not promise: that one follows the store, whose updates reach React
@@ -279,7 +284,7 @@ export function PinSetupPage() {
     has just put on file, so the page waits for the save's own answer before it names one.
   */
   const pinFound = saveUnknown && !saving && (pinRefused || user?.hasPin === true);
-  const finished = step === 'success' || (pinFound && firstPin === lostPin);
+  const finished = step === 'success' || (pinFound && !pinBeforeLoss && firstPin === lostPin);
   // Found, and not known to be the digits on screen: the account keeps the PIN it has.
   const pinKept = !finished && pinFound;
   const successTitle = useFocusWhenLost<HTMLHeadingElement>(finished);
@@ -349,7 +354,8 @@ export function PinSetupPage() {
         // The page sends no current PIN, so this refusal is the session's to settle. The server's
         // sentence names a box this page does not have, and is not shown.
         void readSession();
-        if (saveUnknown) setPinRefused(true);
+        setPinRefused(true);
+        if (!saveUnknown) setPinBeforeLoss(true);
         refusal = pinError(ALREADY_HAS_PIN);
       } else if (
         problem.status === 'NETWORK' ||
@@ -432,7 +438,9 @@ export function PinSetupPage() {
             ref={keptSentence}
             tabIndex={-1}
           >
-            {lostPin !== null && lostPin === firstSent ? FIRST_PIN_KEPT : ALREADY_HAS_PIN}
+            {!pinBeforeLoss && lostPin !== null && lostPin === firstSent
+              ? FIRST_PIN_KEPT
+              : ALREADY_HAS_PIN}
           </Text>
           {continueOn}
         </div>
