@@ -54,10 +54,13 @@ export function formatLockHorizon(seconds: number): string {
 
 /**
  * Display masking for account numbers (AB-XXXX-XXXX-XX): keep the scheme prefix and the
- * last group, mask the middle. The API already masks SERVER-SIDE (AccountMapper emits
- * `AB-****-****-90`; the full number never leaves the backend) — here that normalizes to
- * display bullets, and doubles as defense-in-depth: if a full number ever reached the
- * client, it still would not reach the screen.
+ * last group, mask the middle. The account DTOs carry the number masked SERVER-SIDE
+ * (AccountMapper emits `AB-****-****-90`); the full number reaches the browser only through
+ * the PIN-gated reveal, which AccountNumberField shows as it is. This function masks every
+ * other display of a number, the lists, the masked state of the field and the account
+ * pickers: it turns the middle groups into bullets whatever they hold, so the server's mask
+ * is normalised and a full number in a DTO would still not reach the screen, and it fails
+ * closed on an unexpected shape.
  */
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');

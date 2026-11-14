@@ -193,7 +193,8 @@ try
     app.UseStatusCodePages();
 
     // Invalid request handling (catches BadHttpRequestException from invalid UTF-8, etc.)
-    // Must be early in pipeline, before routing processes the request
+    // Routing runs first, because the host inserts it ahead of every middleware; this one is
+    // registered early to catch what is thrown after it, in body reading and model binding.
     app.UseInvalidRequestHandling();
 
     // The request deadline (ADR-0058): a request still running after RequestDeadline:Seconds is
