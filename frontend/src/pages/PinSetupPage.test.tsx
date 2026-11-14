@@ -857,6 +857,44 @@ describe('PIN setup during an outage', () => {
     },
   );
 
+  it('after a refusal, digits saved behind a lost answer are not called the ones chosen first', async () => {
+    // 123456 is refused by the BFF's limiter: nothing is saved. 222222 is saved by the API, and
+    // the BFF's answer is lost without the session learning of it. 333333 is then refused because
+    // the account has a PIN: that PIN is 222222, which the visitor did not choose first.
+    let saves = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        saves += 1;
+        if (saves === 1) {
+          return problem({
+            status: 429,
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            detail: 'Too many requests. Please retry later.',
+          });
+        }
+        if (saves > 2) return undefined;
+        await getResponse(handlers, request.clone());
+        mockState.session!.hasPin = false;
+        mockState.pinUnknownToSession = true;
+        return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+      }),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+    await screen.findByText('Too many requests. Please retry later.');
+
+    await chooseAgain('222222');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    await chooseAgain('333333');
+
+    const sentence = await screen.findByText(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+    expect(saves).toBe(3);
+  });
+
   it('after a 503 focus goes back to the first box', async () => {
     const stop = emulateFocusFixup();
     try {

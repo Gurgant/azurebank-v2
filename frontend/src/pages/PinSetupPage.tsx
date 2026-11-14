@@ -130,9 +130,9 @@ const LOCKED: SetupError = { message: 'Your account is locked.', field: 'passwor
 const ALREADY_HAS_PIN = 'Your account already has a PIN. To change it, go to Settings.';
 
 /**
- * What the page says when a PIN is found after a save whose answer was lost, and the visitor has
- * chosen other digits since: the PIN on file is taken to be the one that save sent, not the one
- * on screen.
+ * What the page says when a PIN is found after a save whose answer was lost, that save was the
+ * first the page sent, and the visitor has chosen other digits since: the PIN on file is taken to
+ * be the one that save sent, not the one on screen.
  */
 const FIRST_PIN_KEPT =
   'Your account already has a PIN: the one you chose first. To change it, go to Settings.';
@@ -226,8 +226,9 @@ export function PinSetupPage() {
     The digits of each save whose answer was lost, each once. While there is one, a PIN found
     after it is taken to be that save's: the page cannot tell it from a PIN set in another tab or
     browser meanwhile. The page then says the PIN is set only while the visitor holds those
-    digits, and otherwise that the account keeps the one chosen first. Once two saves of different
-    digits are lost, either may be the PIN on file, and the page says only that there is one.
+    digits, and otherwise that the account keeps the one chosen first, when that save was the
+    first sent, or only that there is one. Once two saves of different digits are lost, either may
+    be the PIN on file, and the page says only that there is one.
   */
   const [lostSaves, setLostSaves] = useState<readonly string[]>([]);
   const saveUnknown = lostSaves.length > 0;
@@ -240,6 +241,12 @@ export function PinSetupPage() {
     on the store's own schedule.
   */
   const [saving, setSaving] = useState(false);
+  /*
+    The digits of the first save this page sent. The page says the account keeps "the one you
+    chose first" only when those are the digits of the one lost save: after a save that was
+    refused outright, the lost one is not the first the visitor chose.
+  */
+  const [firstSent, setFirstSent] = useState<string | null>(null);
   const shownError = lock ? LOCKED : error;
   const passwordRef = useRef<HTMLInputElement>(null);
   const formCard = useRef<HTMLDivElement>(null);
@@ -300,6 +307,7 @@ export function PinSetupPage() {
     setError(null);
     settled.current = true;
     setSaving(true);
+    setFirstSent((first) => first ?? confirmed);
     try {
       await setPinTrigger({ pin: confirmed, password }).unwrap();
       setStep('success');
@@ -418,7 +426,7 @@ export function PinSetupPage() {
             ref={keptSentence}
             tabIndex={-1}
           >
-            {lostPin === null ? ALREADY_HAS_PIN : FIRST_PIN_KEPT}
+            {lostPin !== null && lostPin === firstSent ? FIRST_PIN_KEPT : ALREADY_HAS_PIN}
           </Text>
           {continueOn}
         </div>
