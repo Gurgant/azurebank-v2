@@ -17,6 +17,12 @@
  * before the teardown it was written to follow.
  */
 
+import { http } from 'msw';
+import { apiSlice } from '../features/api/apiSlice';
+import { serviceUnavailable } from '../mocks/problem';
+import { server } from '../mocks/server';
+import { makeTestStore } from './renderWithProviders';
+
 // Each pair below is in order on purpose, and `shuffle: false` keeps it so when the run shuffles.
 describe('the order of afterEach hooks', { shuffle: false }, () => {
   const order: string[] = [];
@@ -45,5 +51,40 @@ describe('the clock between tests', { shuffle: false }, () => {
 
   it('starts the next test on the real clock, which setup.ts put back', () => {
     expect(vi.isFakeTimers()).toBe(false);
+  });
+});
+
+/*
+  `setup.ts` stops the requests a test leaves running. The first test leaves a read of the session
+  waiting for its retry; the next one must hear nothing from it. Left running, the retry goes out
+  in whichever test runs a second later, which can be in another file (`isolate: false` gives the
+  files of a worker one page and one mock server), and that test's handlers answer it.
+*/
+describe('the requests between tests', { shuffle: false }, () => {
+  it('leaves a read of the session waiting for its retry', async () => {
+    let answered = 0;
+    server.use(
+      http.get('*/bff/auth/me', () => {
+        answered += 1;
+        return serviceUnavailable({ via: 'bff', instance: '/bff/auth/me', retryAfterSeconds: 1 });
+      }),
+    );
+    void makeTestStore().dispatch(
+      apiSlice.endpoints.getMe.initiate(undefined, { subscribe: false }),
+    );
+    await vi.waitFor(() => expect(answered).toBe(1));
+  });
+
+  it('hears nothing from it in the next test', async () => {
+    let arrived = 0;
+    server.use(
+      http.get('*/bff/auth/me', () => {
+        arrived += 1;
+        return undefined;
+      }),
+    );
+    // The retry would go out a second after the 503, and up to a fifth of a second later.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(arrived).toBe(0);
   });
 });
