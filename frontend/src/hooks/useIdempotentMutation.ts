@@ -67,7 +67,9 @@ export interface SentRequest<TBody> {
   /**
    * Every send carried an authorisation, and every one presented was refused
    * (`AUTHORIZATION_EXPIRED` or `AUTHORIZATION_INVALID`): nothing under the key can commit any
-   * more (ADR-0022, decision 6).
+   * more (ADR-0022, decision 6). One that a limiter refused on the first send to carry it is not
+   * counted as presented: a limiter answers before the API's idempotency check and the action,
+   * so nothing was claimed or spent under it.
    */
   readonly everyAuthorisationRefused: boolean;
 }
@@ -234,6 +236,8 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
       }
       const record = attempts.current;
       const carried = extras?.stepUpAuthorizationId;
+      // Read before `presented` takes it below: one that no earlier send under the key carried.
+      const newlyPresented = carried && !record.presented.has(carried) ? carried : undefined;
       record.body = body;
       if (carried) record.presented.add(carried);
       else record.everySendCarriedOne = false;
@@ -252,6 +256,18 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
       } catch (error) {
         const problem = error as ApiProblem;
         if (carried && isAuthorisationRefusal(problem)) record.refused.add(carried);
+        /*
+          A limiter answers before the send reaches the API's idempotency check and the action:
+          the BFF's limiter refuses it before proxying, and the demo's write budget before
+          either. An authorisation this send was the first to carry was never checked or spent,
+          then, and no other send under the key carries it: a later one cannot, because a
+          limiter's refusal never keeps the key, and an overlapping one cannot, because the flows
+          that reuse a key disable their controls while a send is in flight. It comes out of
+          `presented`, so that the latch below can say nothing under the key can commit when
+          every other one was refused. One that an earlier send carried stays: that send may
+          have reached the action.
+        */
+        if (newlyPresented && isLimiterRefusal(problem)) record.presented.delete(newlyPresented);
         /*
           A rejection with NO HTTP status is not a refusal: `problemBaseQuery` gives every answer
           and every transport failure a status, so what is left is a 2xx whose body failed its
