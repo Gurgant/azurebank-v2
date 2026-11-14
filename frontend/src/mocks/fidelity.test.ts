@@ -543,6 +543,49 @@ describe('model binding runs before the action, and the action before the servic
     }
   });
 
+  it('reads a + and a 0x at the start of a slice of the D spelling, as the server does', async () => {
+    // Each measured on the API's own test host on 2026-10-17, against a deposit under the key
+    // below: as the listing's `IdempotencyKey` each found that deposit's one row, and a new key
+    // spelt with a + in the same way was a 201 as a deposit's `Idempotency-Key`.
+    const deposited = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '00000001-0002-0003-0405-060708090a0b',
+      },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 5 }),
+    });
+    expect(deposited.status).toBe(201);
+    const depositId = (await deposited.json()).data.transaction.id;
+
+    const accepted = [
+      '+0000001-0002-0003-0405-060708090a0b',
+      '0x000001-0002-0003-0405-060708090a0b',
+      '00000001-0x02-0003-0405-060708090a0b',
+      '00000001-+002-0003-0405-060708090a0b',
+      '00000001-0002-0003-0405-+60708090a0b',
+      '{0x000001-0002-0003-0405-060708090a0b}',
+    ];
+    for (const form of accepted) {
+      // Encoded, because a bare + in a query string reads as a space.
+      const listed = await fetch(`/api/transactions?IdempotencyKey=${encodeURIComponent(form)}`);
+      expect(listed.status, form).toBe(200);
+      const page = await listed.json();
+      expect(page.pagination.totalItems, form).toBe(1);
+      expect(page.data[0].id, form).toBe(depositId);
+    }
+
+    const keyed = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '+0000001-0002-0003-0405-060708090a25',
+      },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 5 }),
+    });
+    expect(keyed.status).toBe(201);
+  });
+
   it.each([
     ['a value too big for its width', '{0x100000001,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
     ['two + after 0x', '{0x++1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
@@ -556,9 +599,10 @@ describe('model binding runs before the action, and the action before the servic
     ['a component with no 0x', '{1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb}}'],
     ['seven bytes', '{0x1,0x2,0x3,{0x4,0x5,0x6,0x7,0x8,0x9,0xa}}'],
     ['a space inside the D spelling', '00000001-0002-0003-0405-060708090a 0b'],
+    ['a + in the N spelling', '+0000001000200030405060708090a0b'],
   ])('refuses %s, as the server does', async (_name, form) => {
     // Each a 400 from the API on 2026-10-17, from the binder: through the BFF on the running
-    // stack, and the two after 0x on the API's own test host.
+    // stack, and the two after 0x and the + in N on the API's own test host.
     const listed = await fetch(`/api/transactions?IdempotencyKey=${encodeURIComponent(form)}`);
     expect(listed.status).toBe(400);
   });
