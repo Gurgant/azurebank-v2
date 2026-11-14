@@ -30,7 +30,7 @@ This page takes the public part of the harness piece by piece, each with the fil
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
 the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
 [the last table](#the-numbers) were counted on 12 October 2026, and the first four were
-recounted on 30 October 2026; it says where each can be counted again.
+recounted on 14 November 2026; it says where each can be counted again.
 
 ## One change, start to finish
 
@@ -274,8 +274,8 @@ elsewhere. I keep the merge decision because these changes can affect rules abou
 | Number | Where it can be counted again |
 |--:|---|
 | 11 | The required checks listed on the [rule set][rs] page |
-| 64 | The numbered files in [`docs/adr/`][adrdir]: 65, one of which is the template |
-| 25 | The files in the [architecture tests' folder][arch]: 26, one of which holds no test |
+| 65 | The numbered files in [`docs/adr/`][adrdir]: 66, one of which is the template |
+| 26 | The files in the [architecture tests' folder][arch]: 27, one of which holds no test |
 | 9 | Eight steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |
 | 17 | The results on the last commit of [#283][p283]: 16 check runs and one status |
 | 273, of which 202 before 25 September | GitHub's list of [merged pull requests][merged] up to #283; [the same list before that day][early] |

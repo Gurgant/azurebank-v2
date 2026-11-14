@@ -257,8 +257,8 @@ class EntryPageTests(unittest.TestCase):
         self.assertNotIn('data-merged-count', first)
         self.assertNotIn('data-count-note', first)
         figures = re.findall(r'<b>([^<]*)</b\s*>', first)
-        self.assertEqual(figures[0::2], ['5,408', '509', '11', '4'])
-        self.assertEqual(figures[1::2], ['5.408', '509', '11', '4'])
+        self.assertEqual(figures[0::2], ['5,604', '509', '11', '4'])
+        self.assertEqual(figures[1::2], ['5.604', '509', '11', '4'])
 
     def test_the_count_of_sql_server_proofs_is_the_same_in_the_tile_and_beside_the_payment_claim(self):
         tile = re.findall(r'<b>(\d+)</b><span>(?:backend proofs on a real SQL Server'
@@ -274,7 +274,7 @@ class EntryPageTests(unittest.TestCase):
         if tile:
             self.assertEqual(len(tile), 2)
             counts |= set(tile)
-            self.assertIn('job/123997976795">', PAGE)
+            self.assertIn('job/132477399292">', PAGE)
         self.assertEqual(len(counts), 1)
 
     def test_the_evidence_is_linked_beside_the_claim_it_supports(self):
