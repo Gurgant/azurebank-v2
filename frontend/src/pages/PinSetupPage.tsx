@@ -17,13 +17,14 @@ import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-ic
 import { colors, surfaces, transitions } from '../theme/tokens';
 import { landingRing } from '../theme/landingRing';
 import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
-import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
-import { useSetPinMutation } from '../features/api/apiSlice';
+import { type ApiProblem } from '../api/problemBaseQuery';
+import { useAppDispatch } from '../app/hooks';
+import { apiSlice, useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { PinInput } from '../components/PinInput';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
-import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN, WRONG_PASSWORD } from '../api/problemMessages';
+import { SAVE_OUTCOME_UNKNOWN, WRONG_PASSWORD } from '../api/problemMessages';
 
 // ============================================
 // STYLES
@@ -80,7 +81,8 @@ const useStyles = makeStyles({
     textAlign: 'center',
     margin: 0,
   },
-  // The finished view's title takes the focus the save lost, and draws the app's landing ring.
+  // The finished view's title, and the sentence of the view that says the account keeps a PIN,
+  // take the focus the save lost and draw the app's landing ring.
   landing: landingRing,
   subtitle: {
     fontSize: '15px',
@@ -119,6 +121,22 @@ interface SetupError {
 /** What the page says while the login's lock holds the save, on the password field. */
 const LOCKED: SetupError = { message: 'Your account is locked.', field: 'password' };
 
+/**
+ * What the page says when a PIN already exists and it cannot say which: under the boxes when the
+ * server refuses because of it and the session could not be read, and in the view that ends the
+ * page when two saves of different digits lost their answers, as either may be the PIN on file.
+ * One page says this, so the sentence stays here.
+ */
+const ALREADY_HAS_PIN = 'Your account already has a PIN. To change it, go to Settings.';
+
+/**
+ * What the page says when a PIN is found after a save whose answer was lost, that save was the
+ * first the page sent, and the visitor has chosen other digits since: the PIN on file is taken to
+ * be the one that save sent, not the one on screen.
+ */
+const FIRST_PIN_KEPT =
+  'Your account already has a PIN: the one you chose first. To change it, go to Settings.';
+
 /** A lock the answer said the length of: the instant, on this browser's clock, that it ends. */
 interface Lock {
   deadline: number;
@@ -152,7 +170,36 @@ export function PinSetupPage() {
   const target = safeReturnTo(params.get('returnTo'));
   const errorId = useId();
 
+  const dispatch = useAppDispatch();
   const [setPinTrigger, { isLoading }] = useSetPinMutation();
+  /*
+    A failed read of the session waits before its one retry, and a second initiate while that one
+    is still out is not sent. The refusal cannot wait: it is painted at once, and a read that is
+    still waiting is stopped so the next one is actually sent. A failed read leaves the session
+    as it was.
+  */
+  const sessionRead = useRef<({ abort: () => void } & PromiseLike<unknown>) | null>(null);
+  const readSession = async () => {
+    const previous = sessionRead.current;
+    if (previous) {
+      previous.abort();
+      sessionRead.current = null;
+      try {
+        await previous;
+      } catch {
+        // The stopped read leaves the session as it was.
+      }
+    }
+    const request = dispatch(
+      apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true, subscribe: false }),
+    );
+    sessionRead.current = request;
+    try {
+      await request;
+    } catch {
+      // A failed read leaves the session as it was.
+    }
+  };
 
   const [step, setStep] = useState<Step>('enter');
   const [firstPin, setFirstPin] = useState('');
@@ -175,35 +222,78 @@ export function PinSetupPage() {
     account is locked and sends nothing.
   */
   const [lock, setLock] = useState<Lock | null>(null);
+  /*
+    The digits of each save whose answer was lost, each once. While there is one, a PIN found
+    after it is taken to be that save's: the page cannot tell it from a PIN set in another tab or
+    browser meanwhile. The page then says the PIN is set only while the visitor holds those
+    digits, and otherwise that the account keeps the one chosen first, when that save was the
+    first sent, or only that there is one. Once two saves of different digits are lost, either may
+    be the PIN on file, and the page says only that there is one.
+  */
+  const [lostSaves, setLostSaves] = useState<readonly string[]>([]);
+  const saveUnknown = lostSaves.length > 0;
+  const lostPin = lostSaves.length === 1 ? lostSaves[0] : null;
+  // After a lost save, a save was refused because the account has a PIN.
+  const [pinRefused, setPinRefused] = useState(false);
+  /*
+    A save on its way. It ends in the same batch as the state its answer sets, which the
+    mutation's `isLoading` does not promise: that one follows the store, whose updates reach React
+    on the store's own schedule.
+  */
+  const [saving, setSaving] = useState(false);
+  /*
+    The digits of the first save this page sent. The page says the account keeps "the one you
+    chose first" only when those are the digits of the one lost save: after a save that was
+    refused outright, the lost one is not the first the visitor chose.
+  */
+  const [firstSent, setFirstSent] = useState<string | null>(null);
   const shownError = lock ? LOCKED : error;
   const passwordRef = useRef<HTMLInputElement>(null);
+  const formCard = useRef<HTMLDivElement>(null);
   const pinOwnsError = shownError?.field === 'pin';
   const passwordOwnsError = shownError?.field === 'password';
   /*
     The boxes and the password are disabled while the save is out, so a refusal mostly arrives with
-    focus on `body`; the PIN's Show button stays enabled and may still hold it. A refusal of the
-    password moves focus to that field from wherever it is, once the request has ended and the
-    field can take it.
+    focus on `body`; the PIN's Show button stays enabled and may still hold it. A refusal moves
+    focus to the field it is about, the password or the first PIN box, once that field can take
+    it. A box the save has disabled cannot, so the move waits until the save has ended. The first
+    box is the first input of the form's card: the views that end the page are other cards.
   */
   useEffect(() => {
     if (!isLoading && passwordOwnsError) passwordRef.current?.focus();
   }, [isLoading, passwordOwnsError]);
+  useEffect(() => {
+    if (!isLoading && pinOwnsError) {
+      formCard.current?.querySelector<HTMLInputElement>('input')?.focus();
+    }
+  }, [isLoading, pinOwnsError]);
   /*
     The finished view mounts with its words in it, which a screen reader does not read, and the
     control that sent is gone with the confirm step: its title takes that lost focus, as the
-    money receipts' titles do. Called here, above the early return of the finished view.
-  */
-  const successTitle = useFocusWhenLost<HTMLHeadingElement>(step === 'success');
+    money receipts' titles do. The view that says the account keeps a PIN lands focus on its
+    sentence the same way. Called here, above the early returns of the two views.
 
-  // A user who already has a PIN has nothing to do here — bounce them to where they were
-  // headed. `settled` suppresses this once WE flip hasPin via a successful set (so the
-  // success screen isn't skipped by the refreshed session).
+    After a lost save, a PIN is found by a refusal because the account has one, or by a session
+    read that says so. Either is enough, so a read that fails after the refusal changes nothing.
+    A read does not count while a save is out: it can land meanwhile and find the PIN that save
+    has just put on file, so the page waits for the save's own answer before it names one.
+  */
+  const pinFound = saveUnknown && !saving && (pinRefused || user?.hasPin === true);
+  const finished = step === 'success' || (pinFound && firstPin === lostPin);
+  // Found, and not known to be the digits on screen: the account keeps the PIN it has.
+  const pinKept = !finished && pinFound;
+  const successTitle = useFocusWhenLost<HTMLHeadingElement>(finished);
+  const keptSentence = useFocusWhenLost<HTMLParagraphElement>(pinKept);
+
+  // A visitor who arrived already holding a PIN is sent on. `settled` holds that off after a
+  // save this page completed, so the finished view survives the session refresh. `saveUnknown`
+  // holds it off after a save whose answer was lost: a PIN found then is said on this page.
   const settled = useRef(false);
   useEffect(() => {
-    if (!settled.current && user?.hasPin) {
+    if (!settled.current && !saveUnknown && user?.hasPin) {
       navigate(target, { replace: true });
     }
-  }, [user?.hasPin, navigate, target]);
+  }, [saveUnknown, user?.hasPin, navigate, target]);
 
   const handleConfirmComplete = async (confirmed: string) => {
     // The lock is held here as well as at the two controls that call this, so that a way of
@@ -216,6 +306,8 @@ export function PinSetupPage() {
     }
     setError(null);
     settled.current = true;
+    setSaving(true);
+    setFirstSent((first) => first ?? confirmed);
     try {
       await setPinTrigger({ pin: confirmed, password }).unwrap();
       setStep('success');
@@ -247,13 +339,25 @@ export function PinSetupPage() {
             'Too many incorrect passwords. Your account is locked; try again later.',
           );
         }
-      } else if (isServiceOutage(problem)) {
-        // Before the transport branch: a request with no answer in 65 s is `status: 'NETWORK'`
-        // too, and the connection was not the problem. The PIN may have been saved, and the
-        // request carries no key, so this cannot say it failed.
+      } else if (problem.errorCode === 'PIN_REQUIRED') {
+        // The page sends no current PIN, so this refusal is the session's to settle. The server's
+        // sentence names a box this page does not have, and is not shown.
+        void readSession();
+        if (saveUnknown) setPinRefused(true);
+        refusal = pinError(ALREADY_HAS_PIN);
+      } else if (
+        problem.status === 'NETWORK' ||
+        problem.status === 'PARSE' ||
+        (typeof problem.status === 'number' && problem.status >= 500)
+      ) {
+        // No verdict on the PIN: no answer in 65 s, a dropped connection, an answer that cannot be
+        // read, a 5xx (a 503 among them). Each can come after the API committed the PIN, and the
+        // request carries no key, so this cannot say the save failed. PARSE also takes a non-JSON
+        // 4xx, which cannot, because its status survives only in `detail`. The money forms keep
+        // their key on the same answers (shouldKeepKey in useIdempotentMutation.ts).
+        setLostSaves((lost) => (lost.includes(confirmed) ? lost : [...lost, confirmed]));
+        void readSession();
         refusal = pinError(SAVE_OUTCOME_UNKNOWN);
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        refusal = pinError(CONNECTION_FAILED);
       } else {
         refusal = pinError(problem.detail || 'Could not set your PIN. Please try again.');
       }
@@ -266,10 +370,26 @@ export function PinSetupPage() {
         that teaches people to choose shorter passwords.
       */
       if (refusal.field === 'pin') setConfirmPin('');
+    } finally {
+      setSaving(false);
     }
   };
 
-  if (step === 'success') {
+  // The two views that end the page lead on to `returnTo` the same way.
+  const continueOn = (
+    <div className={styles.actions}>
+      <Button
+        appearance="primary"
+        size="large"
+        style={{ width: '100%', height: '48px' }}
+        onClick={() => navigate(target, { replace: true })}
+      >
+        Continue
+      </Button>
+    </div>
+  );
+
+  if (finished) {
     return (
       <div className={styles.page}>
         <div className={styles.card}>
@@ -287,16 +407,28 @@ export function PinSetupPage() {
           <Text className={styles.subtitle}>
             {`Your 6-digit PIN is set. You'll use it to ${PIN_PURPOSE}.`}
           </Text>
-          <div className={styles.actions}>
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate(target, { replace: true })}
-            >
-              Continue
-            </Button>
+          {continueOn}
+        </div>
+      </div>
+    );
+  }
+
+  if (pinKept) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <div className={styles.icon}>
+            <LockClosed24Regular style={{ width: '36px', height: '36px' }} />
           </div>
+          <Text
+            as="p"
+            className={mergeClasses(styles.subtitle, styles.landing)}
+            ref={keptSentence}
+            tabIndex={-1}
+          >
+            {lostPin !== null && lostPin === firstSent ? FIRST_PIN_KEPT : ALREADY_HAS_PIN}
+          </Text>
+          {continueOn}
         </div>
       </div>
     );
@@ -306,7 +438,7 @@ export function PinSetupPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.card}>
+      <div className={styles.card} ref={formCard}>
         <div className={styles.icon}>
           <LockClosed24Regular style={{ width: '36px', height: '36px' }} />
         </div>

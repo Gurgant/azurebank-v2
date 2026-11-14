@@ -193,6 +193,13 @@ interface MockState {
    * (hasPin:true) can withdraw with '123456'.
    */
   pin: string;
+  /**
+   * The account has a PIN that this BFF session has not learnt of: one set from another browser,
+   * or one the API saved while its answer to the BFF was lost. Everywhere else `session.hasPin`
+   * stands for the account's PIN; set-pin alone reads this, and its PIN_REQUIRED teaches the
+   * session, as the BFF's does.
+   */
+  pinUnknownToSession: boolean;
   /** Consecutive wrong-PIN count; MaxPinAttempts (3) trips the lockout, a success resets it. */
   pinAttempts: number;
   /**
@@ -520,6 +527,7 @@ export const mockState: MockState = {
   sessionCreatedAt: 0,
   sessionLastActivity: 0,
   pin: MOCK_PIN,
+  pinUnknownToSession: false,
   pinAttempts: 0,
   stepUpAuthorizations: new Map(),
   nextAccountSeq: 0,
@@ -814,6 +822,7 @@ export function resetMockState(): void {
   mockState.sessionCreatedAt = 0;
   mockState.sessionLastActivity = 0;
   mockState.pin = MOCK_PIN;
+  mockState.pinUnknownToSession = false;
   mockState.pinAttempts = 0;
   mockState.nextAccountSeq = 0;
   mockState.pinLockedUntil = null;

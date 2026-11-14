@@ -1,25 +1,29 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
+import { getResponse, http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PinInput } from '../components/PinInput';
 import { enableDemoMode } from '../test/demoMode';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../mocks/state';
+import { handlers } from '../mocks/handlers';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import {
   COPY,
   advanceUntil,
+  emulateFocusFixup,
   fakeClockUser,
   hintRegion,
   hintShownAt,
   installFakeClock,
+  loseAnswerAfterCommit,
   never,
 } from '../test/outage';
 import { CONNECTION_FAILED } from '../api/problemMessages';
+import { selectCurrentUser } from '../features/auth/authSlice';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -286,8 +290,8 @@ describe('PIN setup during an outage', () => {
   });
 
   /** The confirm step with the password in hand: the next six digits send. */
-  async function toTheConfirmation() {
-    renderPinSetup();
+  async function toTheConfirmation(store?: TestStore) {
+    renderPinSetup(store);
     await pasteDigits('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByText('Confirm your PIN');
@@ -376,6 +380,537 @@ describe('PIN setup during an outage', () => {
     expect(screen.queryByRole('button', { name: COPY.stopWaiting })).not.toBeInTheDocument();
     const boxes = screen.getByRole('group', { name: 'Confirm your PIN' });
     expect(boxes.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('a PIN saved while the answer was lost is found, and the page says it is set', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () =>
+      serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('a connection that drops after the PIN is saved is found, and the page says it is set', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () => HttpResponse.error());
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('a connection that drops says the PIN may have been saved, not "check your connection"', async () => {
+    server.use(http.post('*/bff/auth/set-pin', () => HttpResponse.error()));
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByText(CONNECTION_FAILED)).not.toBeInTheDocument();
+  });
+
+  it('when the session cannot be read either, typing the PIN again finds it', async () => {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () =>
+      serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+    );
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
+
+    server.resetHandlers();
+    await pasteDigits('123456');
+
+    expect(await screen.findByRole('heading', { name: 'PIN Setup Complete!' })).toBeInTheDocument();
+    expect(screen.queryByText('The current PIN is required to change it.')).toBeNull();
+  });
+
+  /**
+   * The API saves the first PIN and its answer is lost before the BFF, whose session therefore
+   * still says there is none: the page reads a 503, and a session with no PIN.
+   */
+  function loseAnswerBeforeTheBff() {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () => {
+      mockState.session!.hasPin = false;
+      mockState.pinUnknownToSession = true;
+      return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+    });
+  }
+
+  /** "Back" to the first step, then `pin` chosen and confirmed: the kept password sends it. */
+  async function chooseAgain(pin: string) {
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByText('Create your PIN');
+    await pasteDigits(pin);
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await pasteDigits(pin);
+  }
+
+  it('other digits chosen after a lost answer are not said to be set: the first PIN is kept', async () => {
+    loseAnswerBeforeTheBff();
+    const store = makeTestStore();
+    await toTheConfirmation(store);
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+    await chooseAgain('654321');
+
+    const sentence = await screen.findByText(
+      'Your account already has a PIN: the one you chose first. To change it, go to Settings.',
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(sentence).toHaveAttribute('tabindex', '-1');
+    // The session read after the refusal has landed, and says there is a PIN: still not "set".
+    await waitFor(() => expect(selectCurrentUser(store.getState())?.hasPin).toBe(true));
+    expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
+    expect(sentence).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+
+  it('other digits refused after a lost answer keep the first PIN when the session cannot be read', async () => {
+    loseAnswerBeforeTheBff();
+    const store = makeTestStore();
+    await toTheConfirmation(store);
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+
+    await chooseAgain('654321');
+
+    const sentence = await screen.findByText(
+      'Your account already has a PIN: the one you chose first. To change it, go to Settings.',
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    // The refusal alone found the PIN: the session still says there is none.
+    expect(selectCurrentUser(store.getState())?.hasPin).not.toBe(true);
+  });
+
+  it('the same digits chosen again after a lost answer are said to be set', async () => {
+    loseAnswerBeforeTheBff();
+    await toTheConfirmation();
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+    await chooseAgain('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+  });
+
+  it('the same digits refused after a lost answer are said to be set when the session cannot be read', async () => {
+    loseAnswerBeforeTheBff();
+    const store = makeTestStore();
+    await toTheConfirmation(store);
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+
+    await chooseAgain('123456');
+
+    const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(selectCurrentUser(store.getState())?.hasPin).not.toBe(true);
+  });
+
+  /**
+   * The first save is answered 503 before it reaches the API, so nothing is saved; the saves after
+   * it go on to the handlers registered before this one.
+   */
+  function loseTheFirstSaveUnsaved() {
+    let saves = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', () => {
+        saves += 1;
+        return saves === 1
+          ? serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' })
+          : undefined;
+      }),
+    );
+  }
+
+  it.each(['654321', '123456'])(
+    'after two lost answers for different digits, %s refused names no PIN',
+    async (digits) => {
+      // 123456 is never saved; 654321 is, and the BFF does not learn of it. Either digits could be
+      // the PIN on file as far as the page can tell, and neither is named or said to be set.
+      loseAnswerBeforeTheBff();
+      loseTheFirstSaveUnsaved();
+      await toTheConfirmation();
+      await pasteDigits('123456');
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+      await chooseAgain('654321');
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+      await chooseAgain(digits);
+
+      const sentence = await screen.findByText(
+        'Your account already has a PIN. To change it, go to Settings.',
+      );
+      await waitFor(() => expect(sentence).toHaveFocus());
+      expect(sentence).toHaveAttribute('tabindex', '-1');
+      expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', { name: 'PIN Setup Complete!' }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    },
+  );
+
+  it('after two lost answers for different digits, a session read alone finds a PIN and names none', async () => {
+    // 654321 is saved and the BFF learns of it before the answer is lost: the read after it says
+    // there is a PIN, and no save is refused.
+    loseAnswerAfterCommit('/bff/auth/set-pin', () =>
+      serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+    );
+    loseTheFirstSaveUnsaved();
+    await toTheConfirmation();
+    await pasteDigits('123456');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+    await chooseAgain('654321');
+
+    const sentence = await screen.findByText(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['saved, and its answer arrives', 'PIN Setup Complete!'],
+    [
+      'saved, and its answer is lost',
+      'Your account already has a PIN. To change it, go to Settings.',
+    ],
+  ])(
+    'a session read that lands while other digits are being saved waits for that save: %s',
+    async (outcome, said) => {
+      // The first save, 123456, is answered 503 before it reaches the API: nothing is saved. The
+      // read of the session it starts is held. The second save, 654321, is saved, and its answer
+      // is held. The held read is let go first, and says there is a PIN: the one 654321 put there.
+      let saves = 0;
+      let answerTheSave!: () => void;
+      const saveAnswered = new Promise<void>((resolve) => (answerTheSave = resolve));
+      server.use(
+        http.post('*/bff/auth/set-pin', async ({ request }) => {
+          saves += 1;
+          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          const real = await getResponse(handlers, request.clone());
+          await saveAnswered;
+          return outcome === 'saved, and its answer arrives'
+            ? real
+            : serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+        }),
+      );
+      let reads = 0;
+      let answerTheRead!: () => void;
+      const readAnswered = new Promise<void>((resolve) => (answerTheRead = resolve));
+      server.use(
+        http.get('*/bff/auth/me', async () => {
+          reads += 1;
+          if (reads === 1) await readAnswered;
+          return undefined;
+        }),
+      );
+      // Every text the page shows, kept: each node it adds, and each value a text node held, as
+      // React reuses an element of the same type and changes only its text. A view that mounts
+      // and goes again within one task is still seen.
+      const shown: string[] = [];
+      const watch = new MutationObserver((records) => {
+        for (const record of records) {
+          if (record.type === 'characterData') {
+            shown.push(record.oldValue ?? '', record.target.textContent ?? '');
+          } else {
+            record.addedNodes.forEach((node) => shown.push(node.textContent ?? ''));
+          }
+        }
+      });
+      watch.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        characterDataOldValue: true,
+      });
+
+      try {
+        const store = makeTestStore();
+        await toTheConfirmation(store);
+        await pasteDigits('123456');
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+        await waitFor(() => expect(reads).toBe(1));
+
+        await chooseAgain('654321');
+        await waitFor(() => expect(saves).toBe(2));
+        await waitFor(() => expect(mockState.session?.hasPin).toBe(true));
+
+        answerTheRead();
+        await waitFor(() => expect(selectCurrentUser(store.getState())?.hasPin).toBe(true));
+        // The store tells React on the next frame: past it, the page has drawn the read.
+        await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        // The read says there is a PIN, and the save that put it there has not answered: the page
+        // names no PIN yet.
+        expect(screen.getByText('Confirm your PIN')).toBeInTheDocument();
+        expect(screen.queryByText(/already has a PIN/)).not.toBeInTheDocument();
+
+        answerTheSave();
+        const view =
+          outcome === 'saved, and its answer arrives'
+            ? await screen.findByRole('heading', { name: said })
+            : await screen.findByText(said);
+        await waitFor(() => expect(view).toHaveFocus());
+        // The watch saw the view that ends the page mount, and never the one that names the
+        // first PIN.
+        expect(shown.some((text) => text.includes(said))).toBe(true);
+        expect(shown.some((text) => text.includes('the one you chose first'))).toBe(false);
+      } finally {
+        watch.disconnect();
+      }
+    },
+  );
+
+  /**
+   * Answers with no verdict on the PIN that come after the BFF's own answer, so the BFF's session
+   * knows of the PIN the API saved: a page from something in front of the BFF, and a 200 whose
+   * body was cut off.
+   */
+  const afterTheBffKnows: [string, () => Response][] = [
+    ['a page from in front of the BFF', () => new HttpResponse('crash page', { status: 500 })],
+    [
+      'a 200 cut off mid-body',
+      () =>
+        new HttpResponse('{"message":"PIN se', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ],
+  ];
+
+  /**
+   * Answers with no verdict on the PIN from the BFF itself: a 500 it forwards from the API, and its
+   * own 502. The BFF learns of a PIN only from the API's 200 or from a refusal because the account
+   * has one, so after either of these its session still says there is none.
+   */
+  const fromTheBff: [string, () => Response][] = [
+    ['a 500', () => problem({ status: 500, detail: 'An unexpected error occurred.' })],
+    [
+      "the BFF's 502",
+      () => problem({ status: 502, detail: 'Upstream service returned an invalid response' }),
+    ],
+  ];
+
+  /** The API saves the PIN, and the BFF answers `answer` without learning of it. */
+  function saveUnknownToTheBff(answer: () => Response) {
+    loseAnswerAfterCommit('/bff/auth/set-pin', () => {
+      mockState.session!.hasPin = false;
+      mockState.pinUnknownToSession = true;
+      return answer();
+    });
+  }
+
+  it.each(afterTheBffKnows)(
+    'a PIN saved behind %s is found, and the page says it is set',
+    async (_, answer) => {
+      loseAnswerAfterCommit('/bff/auth/set-pin', answer);
+      await toTheConfirmation();
+      await pasteDigits('123456');
+
+      const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+      await waitFor(() => expect(heading).toHaveFocus());
+    },
+  );
+
+  it.each(afterTheBffKnows)(
+    'when the session cannot be read either, typing the PIN again after %s finds it',
+    async (_, answer) => {
+      loseAnswerAfterCommit('/bff/auth/set-pin', answer);
+      server.use(
+        http.get('*/bff/auth/me', () =>
+          serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' }),
+        ),
+      );
+      await toTheConfirmation();
+      await pasteDigits('123456');
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+      expect(
+        screen.queryByRole('heading', { name: 'PIN Setup Complete!' }),
+      ).not.toBeInTheDocument();
+
+      server.resetHandlers();
+      await pasteDigits('123456');
+
+      expect(
+        await screen.findByRole('heading', { name: 'PIN Setup Complete!' }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it.each(fromTheBff)(
+    'a PIN saved behind %s, which the session does not learn, is found when typed again',
+    async (_, answer) => {
+      saveUnknownToTheBff(answer);
+      await toTheConfirmation();
+      await pasteDigits('123456');
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+      expect(
+        screen.queryByRole('heading', { name: 'PIN Setup Complete!' }),
+      ).not.toBeInTheDocument();
+
+      await pasteDigits('123456');
+
+      const heading = await screen.findByRole('heading', { name: 'PIN Setup Complete!' });
+      await waitFor(() => expect(heading).toHaveFocus());
+    },
+  );
+
+  it.each(afterTheBffKnows)(
+    'after a lost answer, other digits saved behind %s name no PIN',
+    async (_, answer) => {
+      // 123456 is answered 503 before it reaches the API. 654321 is saved and answered with no
+      // verdict. The read the first save started is held: let go after the second save, it says
+      // there is a PIN, and a page that had not kept the second save's digits named 123456.
+      let saves = 0;
+      server.use(
+        http.post('*/bff/auth/set-pin', async ({ request }) => {
+          saves += 1;
+          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          await getResponse(handlers, request.clone());
+          return answer();
+        }),
+      );
+      let reads = 0;
+      let answerTheRead!: () => void;
+      const readAnswered = new Promise<void>((resolve) => (answerTheRead = resolve));
+      server.use(
+        http.get('*/bff/auth/me', async () => {
+          reads += 1;
+          if (reads === 1) await readAnswered;
+          return undefined;
+        }),
+      );
+      await toTheConfirmation();
+      await pasteDigits('123456');
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+      await chooseAgain('654321');
+      await waitFor(() => expect(saves).toBe(2));
+      await waitFor(() => expect(mockState.session?.hasPin).toBe(true));
+      answerTheRead();
+
+      const sentence = await screen.findByText(
+        'Your account already has a PIN. To change it, go to Settings.',
+      );
+      await waitFor(() => expect(sentence).toHaveFocus());
+      expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(fromTheBff)(
+    'after a lost answer, other digits saved behind %s name no PIN when typed again',
+    async (_, answer) => {
+      // 123456 is answered 503 before it reaches the API. 654321 is saved by the API, and the BFF
+      // answers with no verdict and does not learn of it. Typed again, 654321 is refused because
+      // the account has a PIN: a page that had not kept its digits named 123456.
+      let saves = 0;
+      server.use(
+        http.post('*/bff/auth/set-pin', async ({ request }) => {
+          saves += 1;
+          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          if (saves > 2) return undefined;
+          await getResponse(handlers, request.clone());
+          mockState.session!.hasPin = false;
+          mockState.pinUnknownToSession = true;
+          return answer();
+        }),
+      );
+      await toTheConfirmation();
+      await pasteDigits('123456');
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+
+      await chooseAgain('654321');
+      await waitFor(() => expect(saves).toBe(2));
+      await screen.findByRole('alert');
+      await pasteDigits('654321');
+
+      const sentence = await screen.findByText(
+        'Your account already has a PIN. To change it, go to Settings.',
+      );
+      await waitFor(() => expect(sentence).toHaveFocus());
+      expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+      expect(saves).toBe(3);
+    },
+  );
+
+  it('after a refusal, digits saved behind a lost answer are not called the ones chosen first', async () => {
+    // 123456 is refused by the BFF's limiter: nothing is saved. 222222 is saved by the API, and
+    // the BFF's answer is lost without the session learning of it. 333333 is then refused because
+    // the account has a PIN: that PIN is 222222, which the visitor did not choose first.
+    let saves = 0;
+    server.use(
+      http.post('*/bff/auth/set-pin', async ({ request }) => {
+        saves += 1;
+        if (saves === 1) {
+          return problem({
+            status: 429,
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            detail: 'Too many requests. Please retry later.',
+          });
+        }
+        if (saves > 2) return undefined;
+        await getResponse(handlers, request.clone());
+        mockState.session!.hasPin = false;
+        mockState.pinUnknownToSession = true;
+        return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+      }),
+    );
+    await toTheConfirmation();
+    await pasteDigits('123456');
+    await screen.findByText('Too many requests. Please retry later.');
+
+    await chooseAgain('222222');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+    await chooseAgain('333333');
+
+    const sentence = await screen.findByText(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
+    await waitFor(() => expect(sentence).toHaveFocus());
+    expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
+    expect(saves).toBe(3);
+  });
+
+  it('after a 503 focus goes back to the first box', async () => {
+    const stop = emulateFocusFixup();
+    try {
+      server.use(
+        http.post('*/bff/auth/set-pin', () =>
+          serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' }),
+        ),
+      );
+      await toTheConfirmation();
+      await pasteDigits('123456');
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus());
+    } finally {
+      stop();
+    }
   });
 });
 
@@ -805,11 +1340,11 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     ]);
   });
 
-  it('says to check the connection when the request never reaches the server', async () => {
-    const alert = await refusedWith(() => HttpResponse.error());
+  it('an answer that cannot be read says the PIN may have been saved, not "check your connection"', async () => {
+    const alert = await refusedWith(() => new HttpResponse('crash page', { status: 500 }));
 
-    expect(alert).toHaveTextContent(CONNECTION_FAILED);
-    expect(alert).not.toHaveTextContent(COPY.saveUnknown);
+    expect(alert).toHaveTextContent(COPY.saveUnknown);
+    expect(alert).not.toHaveTextContent(CONNECTION_FAILED);
   });
 
   it("shows the server's sentence for any other refusal, and one of its own when there is none", async () => {
@@ -828,14 +1363,21 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
     server.use(
       http.post('*/bff/auth/set-pin', async ({ request }) => {
         saves.push(await request.clone().json());
-        // The first save is refused; the second goes on to the mock's own answer.
-        if (saves.length === 1) return HttpResponse.error();
+        // The first save is refused by the BFF's limiter; the second goes on to the mock's own
+        // answer.
+        if (saves.length === 1) {
+          return problem({
+            status: 429,
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            detail: 'Too many requests. Please retry later.',
+          });
+        }
       }),
     );
     await toTheConfirmation();
     await typePassword();
     await pasteDigits('123456');
-    await screen.findByText(CONNECTION_FAILED);
+    await screen.findByText('Too many requests. Please retry later.');
 
     expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     // The PIN typed again is enough: the password did not have to be.
@@ -846,5 +1388,43 @@ describe('PIN setup: what each refusal says, and the buttons under the boxes', (
       { pin: '123456', password: MOCK_PASSWORD },
       { pin: '123456', password: MOCK_PASSWORD },
     ]);
+  });
+
+  it('a mismatch pressed from "Set PIN" puts focus on the first box', async () => {
+    const stop = emulateFocusFixup();
+    try {
+      await toTheConfirmation();
+      await pasteDigits('654321');
+      await typePassword();
+      await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
+
+      expect(await screen.findByText('PINs do not match. Please try again.')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus());
+    } finally {
+      stop();
+    }
+  });
+
+  it('a PIN the session did not know about leaves for returnTo', async () => {
+    await toTheConfirmation();
+    mockState.session!.hasPin = true;
+    await typePassword();
+    await pasteDigits('123456');
+
+    expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+
+  it('says the account already has a PIN when the session cannot be read', async () => {
+    await toTheConfirmation();
+    mockState.session!.hasPin = true;
+    server.use(
+      http.get('*/bff/auth/me', () => serviceUnavailable({ via: 'bff', instance: '/bff/auth/me' })),
+    );
+    await typePassword();
+    await pasteDigits('123456');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your account already has a PIN. To change it, go to Settings.',
+    );
   });
 });
