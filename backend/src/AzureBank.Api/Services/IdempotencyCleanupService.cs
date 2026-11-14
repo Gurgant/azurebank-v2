@@ -14,8 +14,12 @@ namespace AzureBank.Api.Services;
 ///   this sweep is hygiene, not correctness.
 /// - Expired Executed rows are logged at Warning: they mark operations that
 ///   committed but whose client never saw the response — reconciliation signal.
-/// - Deletes are fenced by the ClaimId concurrency token; racing a live
-///   takeover simply defers the row to the next sweep.
+/// - On a relational database the delete is one set-based statement that
+///   applies no ClaimId token; its expiry predicate is the fence instead,
+///   because a live takeover writes a fresh row whose window has not ended.
+///   On the in-memory provider the tracked delete carries the token: a row
+///   that a new claim took over between the read and the delete ends that
+///   save, and what it had not removed waits for the next sweep.
 /// - First sweep runs one full interval after startup (no interference with
 ///   fast test hosts).
 /// </summary>

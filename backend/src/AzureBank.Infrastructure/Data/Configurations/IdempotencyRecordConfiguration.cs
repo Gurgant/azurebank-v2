@@ -21,9 +21,11 @@ public class IdempotencyRecordConfiguration : IEntityTypeConfiguration<Idempoten
         // ═══════════════════════════════════════════════════════════════
         // CLAIM ID - fencing/owner token (Guid concurrency token; enforced
         // by SQL Server AND the InMemory provider, unlike rowversion).
-        // Any UPDATE/DELETE carries WHERE ClaimId = <original>, so a stale
-        // claimant loses with DbUpdateConcurrencyException instead of
-        // silently double-executing.
+        // Every tracked UPDATE/DELETE (one that goes through SaveChanges)
+        // carries WHERE ClaimId = <original>, so a stale claimant loses with
+        // DbUpdateConcurrencyException instead of silently double-executing.
+        // A set-based ExecuteDelete applies no token: the sweep's expiry
+        // predicate fences it (see IdempotencyCleanupService).
         // ═══════════════════════════════════════════════════════════════
         builder.Property(r => r.ClaimId)
             .IsConcurrencyToken();
