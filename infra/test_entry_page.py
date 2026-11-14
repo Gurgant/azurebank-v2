@@ -305,6 +305,22 @@ class EntryPageTests(unittest.TestCase):
             self.assertNotIn(')', more)
         self.assertIn('A payment the app sends again after a network error is applied once,', ' '.join(mores[0].split()))
 
+    def test_a_break_that_reaches_the_server_stands_before_the_pin_one_in_both_languages(self):
+        en = ("Open the browser's developer tools, make a deposit, then send its request again with the "
+              "same Idempotency-Key: the answer repeats the first one, marked Idempotency-Replayed: true, "
+              "and after a reload the balance is up by one deposit.")
+        it = ("Apri gli strumenti per sviluppatori del browser, fai un deposito, poi invia di nuovo la sua "
+              "richiesta con lo stesso Idempotency-Key: la risposta ripete la prima, con "
+              "Idempotency-Replayed: true, e dopo un ricaricamento il saldo è salito di un solo deposito.")
+        lists = re.findall(r'<ul class="breaks" role="list">(.*?)</ul>', PAGE, flags=re.S)
+        self.assertEqual(len(lists), 2)
+        for items, text, pin in ((lists[0], en, 'Type a wrong PIN'), (lists[1], it, 'Sbaglia il PIN')):
+            texts = [' '.join(re.sub(r'<[^>]+>', '', item).split())
+                     for item in re.findall(r'<li>(.*?)</li>', items, flags=re.S)]
+            self.assertEqual(len(texts), 4)
+            self.assertEqual(texts[2], text)
+            self.assertTrue(texts[3].startswith(pin))
+
     def test_the_script_and_the_style_sheet_are_asked_for_under_one_version(self):
         versions = re.findall(r'(?:href|src)="entry\.(?:css|js)\?v=(\d+)"', PAGE)
         self.assertEqual(len(versions), 2)

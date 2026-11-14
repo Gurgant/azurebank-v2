@@ -689,6 +689,11 @@
                     <li>Double-click the button that sends a deposit: one deposit, not two.</li>
                     <li>Send more than the account holds: the form stops you, and nothing is sent.</li>
                     <li>
+                      Open the browser's developer tools, make a deposit, then send its request again
+                      with the same Idempotency-Key: the answer repeats the first one, marked
+                      Idempotency-Replayed: true, and after a reload the balance is up by one deposit.
+                    </li>
+                    <li>
                       Type a wrong PIN three times: the PIN locks for 15&nbsp;minutes. Leave this
                       one for last.
                     </li>
@@ -701,6 +706,12 @@
                       Fai doppio clic sul pulsante che invia un deposito: un solo deposito, non due.
                     </li>
                     <li>Invia più di quanto c'è sul conto: il modulo ti ferma, e non parte nulla.</li>
+                    <li>
+                      Apri gli strumenti per sviluppatori del browser, fai un deposito, poi invia di
+                      nuovo la sua richiesta con lo stesso Idempotency-Key: la risposta ripete la prima,
+                      con Idempotency-Replayed: true, e dopo un ricaricamento il saldo è salito di un
+                      solo deposito.
+                    </li>
                     <li>
                       Sbaglia il PIN tre volte: il PIN si blocca per 15&nbsp;minuti. Lascia questa
                       prova per ultima.
