@@ -26,9 +26,10 @@ copy's sign-in details so you can come back to it. To limit abuse, a one-way cod
 network address is kept with the copy and removed when the copy is deleted."
 
 The entry page that wakes the demo also asks GitHub's API for the count of merged pull requests it
-shows. That request gives GitHub your network address and the time, and it is made even when the
-browser shows the page from its cache. (**Not seen**: the entry page is not part of the compose
-stack.)
+shows. That request gives GitHub your network address and the time. It is made on every load of
+the page, a load from the browser's cache included, and not when Back or Forward brings back a page
+the browser kept whole: that page resumes without loading again. (**Not seen**: the entry page is
+not part of the compose stack.)
 
 ## Where it runs
 
