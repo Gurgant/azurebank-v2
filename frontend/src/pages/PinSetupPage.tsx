@@ -17,14 +17,14 @@ import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-ic
 import { colors, surfaces, transitions } from '../theme/tokens';
 import { landingRing } from '../theme/landingRing';
 import { useFocusWhenLost } from '../hooks/useFocusWhenLost';
-import { isServiceOutage, type ApiProblem } from '../api/problemBaseQuery';
+import { type ApiProblem } from '../api/problemBaseQuery';
 import { useAppDispatch } from '../app/hooks';
 import { apiSlice, useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PIN_PURPOSE } from '../features/auth/pinWords';
 import { PinInput } from '../components/PinInput';
 import { RetryCountdown, WaitHint, retryDeadline } from '../components/feedback';
-import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN, WRONG_PASSWORD } from '../api/problemMessages';
+import { SAVE_OUTCOME_UNKNOWN, WRONG_PASSWORD } from '../api/problemMessages';
 
 // ============================================
 // STYLES
@@ -337,16 +337,19 @@ export function PinSetupPage() {
         void readSession();
         if (saveUnknown) setPinRefused(true);
         refusal = pinError(ALREADY_HAS_PIN);
-      } else if (isServiceOutage(problem) || problem.status === 'NETWORK') {
-        // A connection that drops can drop after the server committed the PIN and before the
-        // answer arrived, as a 503 or no answer in 65 s can: the browser cannot tell the two
-        // apart. The PIN may have been saved, and the request carries no key, so this cannot say
-        // it failed.
+      } else if (
+        problem.status === 'NETWORK' ||
+        problem.status === 'PARSE' ||
+        (typeof problem.status === 'number' && problem.status >= 500)
+      ) {
+        // No verdict on the PIN: no answer in 65 s, a dropped connection, an answer that cannot be
+        // read, a 5xx (a 503 among them). Each can come after the API committed the PIN, and the
+        // request carries no key, so this cannot say the save failed. PARSE also takes a non-JSON
+        // 4xx, which cannot, because its status survives only in `detail`. The money forms keep
+        // their key on the same answers (shouldKeepKey in useIdempotentMutation.ts).
         setLostSaves((lost) => (lost.includes(confirmed) ? lost : [...lost, confirmed]));
         void readSession();
         refusal = pinError(SAVE_OUTCOME_UNKNOWN);
-      } else if (problem.status === 'PARSE') {
-        refusal = pinError(CONNECTION_FAILED);
       } else {
         refusal = pinError(problem.detail || 'Could not set your PIN. Please try again.');
       }
