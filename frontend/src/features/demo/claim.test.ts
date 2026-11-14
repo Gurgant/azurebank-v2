@@ -16,10 +16,10 @@ import { getDemoCopySnapshot } from './demoCopyStorage';
   The claim at the store: what goes out, what comes back, and what a claim that succeeded makes of
   the visitor, of the browser's storage and of the cache.
 
-  Three groups. In the first each test arms its own answer, so what it asserts is what this file
+  Four groups. In the first each test arms its own answer, so what it asserts is what this file
   was sent and what this file answered. In the second the page is the demo and the answer is the
   mock's own (src/mocks/handlers.ts), which hands out a copy and signs its owner in. The third is
-  the same question about the cache, put to a sign-in.
+  the same question about the cache, put to a sign-in. The fourth puts it to a sign-out.
 
   The first group's password and PIN are its own, on purpose. '987654' is not the demo's PIN
   (`DemoCopyDefaults.Pin`, backend/src/AzureBank.Shared/Constants/DemoCopyDefaults.cs), so a
@@ -378,7 +378,7 @@ describe('a sign-in and the cache it finds', () => {
     }).toStrictEqual({ signedInAs: MOCK_USER.email, accountsAnswers: 1 });
   });
 
-  it('in the demo a sign-in leaves nothing of the cache it found', async () => {
+  it('in the demo a sign-out and the next sign-in leave nothing of the cache', async () => {
     enableDemoMode();
     // Two copies claimed. The demo's own page offers two sign-ins, and they may be for two copies.
     const first = seedMockDemoCopy();
@@ -391,7 +391,8 @@ describe('a sign-in and the cache it finds', () => {
     await readAccounts(store);
     const onTheFirstCopy = accountsAnswersIn(store);
     await store.dispatch(apiSlice.endpoints.logout.initiate()).unwrap();
-    // A sign-out leaves the cache as it is: that is what the next sign-in finds.
+    // The sign-out drops the cache. This test cannot tell the sign-in's own reset from it: the
+    // next test, with no sign-out first, is the one that holds the sign-in's.
     const afterTheSignOut = accountsAnswersIn(store);
     await signIn(second);
     await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
@@ -403,7 +404,35 @@ describe('a sign-in and the cache it finds', () => {
       onTheSecondCopy: accountsAnswersIn(store),
     }).toStrictEqual({
       onTheFirstCopy: 1,
-      afterTheSignOut: 1,
+      afterTheSignOut: 0,
+      signedInAs: 'demo-4h9d2s7f1g6j3k8a@azurebank.example',
+      onTheSecondCopy: 0,
+    });
+  });
+
+  it('in the demo a sign-in over another copy leaves nothing of its cache', async () => {
+    enableDemoMode();
+    const first = seedMockDemoCopy();
+    const second = seedMockDemoCopy();
+    const store = makeTestStore();
+    const signIn = ({ copy: { email, password } }: typeof first) =>
+      store.dispatch(apiSlice.endpoints.login.initiate({ email, password })).unwrap();
+
+    // No sign-out between the two: the mock lets a new session replace the old one, and this is
+    // the only test in which the sign-in's own reset, not the sign-out's, drops the cache. Without
+    // that reset the second copy's owner would be handed the first copy's accounts.
+    await signIn(first);
+    await readAccounts(store);
+    const onTheFirstCopy = accountsAnswersIn(store);
+    await signIn(second);
+    await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    expect({
+      onTheFirstCopy,
+      signedInAs: store.getState().auth.user?.email,
+      onTheSecondCopy: accountsAnswersIn(store),
+    }).toStrictEqual({
+      onTheFirstCopy: 1,
       signedInAs: 'demo-4h9d2s7f1g6j3k8a@azurebank.example',
       onTheSecondCopy: 0,
     });
@@ -429,5 +458,50 @@ describe('a sign-in and the cache it finds', () => {
     await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
 
     expect({ before, after: accountsAnswersIn(store) }).toStrictEqual({ before: 1, after: 1 });
+  });
+});
+
+describe('a sign-out and the cache it leaves', () => {
+  it('an ordinary sign-out leaves nothing of the cache for the next sign-in', async () => {
+    // No tag: the page is not the demo, which is where the cache used to survive a sign-out.
+    const store = makeTestStore();
+    await store
+      .dispatch(
+        apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: MOCK_PASSWORD }),
+      )
+      .unwrap();
+    await readAccounts(store);
+    const before = accountsAnswersIn(store);
+
+    await store.dispatch(apiSlice.endpoints.logout.initiate()).unwrap();
+    const afterTheSignOut = accountsAnswersIn(store);
+    await store
+      .dispatch(
+        apiSlice.endpoints.login.initiate({ email: MOCK_USER.email, password: MOCK_PASSWORD }),
+      )
+      .unwrap();
+    await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    expect({ before, afterTheSignOut, afterTheNextSignIn: accountsAnswersIn(store) }).toStrictEqual(
+      { before: 1, afterTheSignOut: 0, afterTheNextSignIn: 0 },
+    );
+  });
+
+  it('a sign-out that was refused leaves the cache, as the session is still alive', async () => {
+    // CONTROL: green before this change
+    server.use(
+      http.post('*/bff/auth/logout', () =>
+        problem({ status: 500, errorCode: 'HTTP_500', detail: 'boom' }),
+      ),
+    );
+    const store = makeTestStore();
+    await readAccounts(store);
+
+    await expect(
+      store.dispatch(apiSlice.endpoints.logout.initiate()).unwrap(),
+    ).rejects.toMatchObject({ status: 500 });
+    await Promise.all(store.dispatch(apiSlice.util.getRunningQueriesThunk()));
+
+    expect(accountsAnswersIn(store)).toBe(1);
   });
 });

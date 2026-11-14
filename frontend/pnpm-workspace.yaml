@@ -1,0 +1,42 @@
+# Settings for pnpm in frontend/ only: no packages list, so Vite still takes frontend/ as the
+# workspace root. The reasons are in docs/adr/0065-install-the-frontend-with-pnpm.md.
+
+# No dependency runs an install script. esbuild's downloads a binary only when its platform
+# package is missing; otherwise it checks the binary and swaps the JavaScript stub for it, which
+# the platform package already allows; msw's copies the worker into public/, which CI checks instead;
+# fsevents is for macOS alone and nothing here needs it built.
+allowBuilds:
+  esbuild: false
+  fsevents: false
+  msw: false
+
+# A dependency with an install script that is not listed above fails the install, not a warning.
+strictDepBuilds: true
+
+# A version younger than 7 days (in minutes) is not installed: most malicious releases are pulled
+# within hours, and nothing here needs a package on its first day.
+minimumReleaseAge: 10080
+
+# A version published with weaker provenance than an earlier one of the same package is refused.
+trustPolicy: no-downgrade
+
+# A transitive dependency may not come from a git URL or a tarball, only from the registry.
+blockExoticSubdeps: true
+
+# oxfmt, which typed-openapi brings in, pins tinypool 2.1.0 exactly, a version with an advisory;
+# this keeps 2.1.2, which npm's overrides block in package.json held before the move.
+overrides:
+  'oxfmt>tinypool': 2.1.2
+
+# semver 6.3.1 is the maintenance backport on the 6.x line, published by hand by an npm CLI
+# maintainer on 2023-07-10, after 7.5.4 had been published with provenance; it reaches us only as a
+# development dependency, through @babel/core under eslint-plugin-react-hooks and under pastable,
+# which typed-openapi brings for the code generation. The rest of trustPolicy stays on.
+trustPolicyExclude:
+  - semver@6.3.1
+
+# GitHub's dependency graph, and so Dependabot, reads a pnpm lock only when it is one YAML document;
+# with packageManager set, pnpm would write a second document at the top that lists pnpm itself.
+# This turns that record off. The packageManager field in package.json still picks 12.15.0 for
+# Corepack and for pnpm/action-setup; pnpm itself no longer stops a different pnpm run by hand.
+pmOnFail: ignore

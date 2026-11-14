@@ -23,6 +23,7 @@ import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { isProvenCommit, isUnconfirmedSend, type MoneyPhase } from '../../api/moneyProblem';
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { useFocusWhenLost } from '../../hooks/useFocusWhenLost';
 import { useMovementCheck } from '../../hooks/useMovementCheck';
 import { useSettledPress } from '../../hooks/useSettledPress';
@@ -152,6 +153,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const styles = useMoneyDialogStyles();
   const pinStyles = usePinStyles();
   const navigate = useNavigate();
+  const mounted = useMountedRef();
   const sayAccountClosed = useAccountClosedToast();
   const errorId = useId();
   const user = useSelector(selectCurrentUser);
@@ -614,8 +616,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       // send's was dropped on this very answer, whatever this render still believes.
       accountIsClosed(phase === 'mint' && keyRetained);
     } else if (problem.errorCode === 'PIN_REQUIRED') {
-      // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
-      navigate('/pin-setup?returnTo=/accounts');
+      // Defensive: the hasPin gate should have caught this. Send them to set a PIN, unless the
+      // dialog is gone: the visitor is then on another page, and is not moved from it.
+      if (mounted.current) navigate('/pin-setup?returnTo=/accounts');
     } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
       // Balance shifted under us — back to the amount step to adjust (message survives:
       // setStep directly, NOT goToStep, so the error set right after is kept).

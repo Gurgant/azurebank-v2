@@ -402,7 +402,7 @@ export const SetPinRequest = z.object({
 export type TransferAuthorizationRequest = z.infer<typeof TransferAuthorizationRequest>;
 export const TransferAuthorizationRequest = z.object({
   fromAccountId: z.uuid(),
-  recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-z][a-z0-9_]{2,19}$')),
+  recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-zA-Z][a-zA-Z0-9_]{2,19}$')),
   amount: z.number().min(0.01).max(100000).multipleOf(0.01),
   pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
 });
@@ -410,7 +410,7 @@ export const TransferAuthorizationRequest = z.object({
 export type TransferRequest = z.infer<typeof TransferRequest>;
 export const TransferRequest = z.object({
   fromAccountId: z.uuid(),
-  recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-z][a-z0-9_]{2,19}$')),
+  recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-zA-Z][a-zA-Z0-9_]{2,19}$')),
   amount: z.number().min(0.01).max(100000).multipleOf(0.01),
   description: z.string().max(500).nullable().optional(),
 });

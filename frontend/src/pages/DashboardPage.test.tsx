@@ -785,7 +785,9 @@ describe("on the demo: the panel about the visitor's copy", () => {
       store.dispatch(apiSlice.endpoints.login.initiate({ email, password })).unwrap();
 
     // Before the page is drawn: on the first copy, its accounts read with ten more in them than a
-    // copy starts with; signed out, which drops nothing; the starting sums back; on the second.
+    // copy starts with; signed out, which drops the cache; the starting sums back; on the second,
+    // whose sign-in drops it again. The sign-out alone is enough to make this pass, so it is no
+    // cover for the sign-in's reset: claim.test.ts holds that one, with no sign-out first.
     await signIn(first);
     mockState.accounts[0].balance += 10;
     const readOnTheFirstCopy = await store

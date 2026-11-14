@@ -117,7 +117,9 @@ export function autoElevate(store: IntegrationStore) {
 
               Ok(new ApiResponse<BffPinVerificationResponse> {
                   Data = new BffPinVerificationResponse {
-                      Verified = false, AuthLevel = 1, PinExpiresAt = null },
+                      Verified = false,
+                      AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
+                      PinExpiresAt = null },
                   Message = "Invalid PIN" });
 
           so an error check alone takes the success branch and settles 'elevated' for a PIN the

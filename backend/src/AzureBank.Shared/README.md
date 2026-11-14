@@ -77,7 +77,7 @@ values in the OpenAPI document.
 | Password | 8 to 128 printable ASCII characters, with a lowercase letter, an uppercase letter, a digit and a special character |
 | PIN | Exactly six digits, `0` to `9`. Three wrong attempts in a row lock it for 15 minutes |
 | Sign-in | Five failed attempts in a row lock the account for 15 minutes |
-| AzureTag | 3 to 20 characters: a lowercase letter, then lowercase letters, digits and underscores |
+| AzureTag | 3 to 20 characters: a lowercase letter, then lowercase letters, digits and underscores. A payee's handle may be sent in any letter case and is read in lower case |
 | Names and text | First and last name 2 to 50 characters, account name 2 to 100, e-mail at most 255, description at most 500 |
 | Account number | `AB-XXXX-XXXX-XX`, all digits after the prefix |
 | Transaction number | `TXN-YYYYMMDD-XXXXXXXXXXC`: 24 characters, the last a check symbol |

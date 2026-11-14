@@ -62,6 +62,37 @@ describe('contract: endpoints that require a session', () => {
     expect(Object.keys(problem.errors ?? {})).toContain('Pin');
   });
 
+  it('binds the PIN member whatever its letter case', async () => {
+    /*
+      The BFF binds `VerifyPinRequest` through MVC's default JSON options, which match a member to
+      its property in any letter case, as measured on this BFF for the sign-in's members (above
+      `memberFor` in src/mocks/dataAnnotations.ts) and for set-pin's `Password`. So `Pin` and
+      `PIN` are the PIN as `pin` is, and the answers follow the two cases above:
+
+        {"Pin":"abc"}    -> 400 errors {"Pin":["PIN must be exactly 6 digits."]}, and no `$`
+        {"PIN":"123456"} -> 401, the session gate: the member bound and passed validation
+
+      A mock that reads `pin` alone answers both with the `$` 400 of an absent member.
+    */
+    const malformed = await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({ Pin: 'abc' }),
+    });
+    const keys = Object.keys(asProblem(malformed.body).errors ?? {});
+    expect(malformed.status).toBe(400);
+    expect(keys).toContain('Pin');
+    expect(keys).not.toContain('$');
+
+    const wellFormed = await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({ PIN: '123456' }),
+    });
+    expect(wellFormed.status).toBe(401);
+    expect(asProblem(wellFormed.body).errorCode).toBeUndefined();
+  });
+
   it('distinguishes an ABSENT pin from a malformed one', async () => {
     /*
       Three different 400s, not one, and the difference is behavioural rather than cosmetic: `$`

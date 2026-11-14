@@ -78,6 +78,10 @@ const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 const PIN_LENGTH = 6;
 const NO_ACCOUNT_SENTENCE =
   "That recipient can't receive money right now. Choose another recipient.";
+// The API answers a handle of the wrong form with a 400 that has no sentence for a visitor, and its
+// message per rule names either the length or the letters, never both: the page says the rule whole.
+const HANDLE_FORMAT_SENTENCE =
+  'A handle is 3 to 20 letters, numbers or underscores, and starts with a letter.';
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 interface Recipient {
@@ -251,6 +255,8 @@ export function TransferPage() {
     if (running && abortRunning(dispatch, [running])) lookupLanding.arm();
   };
   const [transferTrigger] = useTransferMutation();
+  // Before the wizard, which holds the browser's Back for the request for an authorisation.
+  const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes. Everything protocol-shaped — step-up, in-flight, key reuse, network —
     // is the wizard's, and the type of this table makes naming one of those here a compile error.
@@ -265,6 +271,7 @@ export function TransferPage() {
       RECIPIENT_NO_ACCOUNT: NO_ACCOUNT_SENTENCE,
     },
     fallback: 'Transfer failed. Please try again.',
+    minting: isMinting,
   });
   // Destructured under the names the markup already used, so this change is confined to the
   // machine: not one element below moves.
@@ -282,19 +289,18 @@ export function TransferPage() {
   } = wizard;
 
   // ===== PIN step (ADR-0041) =====
-  const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
-
   /*
     Every exit, held for BOTH phases of the submit.
 
-    `keyLive` is `isSubmitting || keyRetained` (useMoneyWizard.ts:142), and neither is set until
+    `keyLive` is `isSubmitting || keyRetained` (`useMoneyWizard`), and neither is set until
     `wizard.run` starts — so for the whole MINT round trip `keyLive` is false and every control it
     guards is live. The PIN input was taught the two-phase guard when the mint landed; the exits
     were not, so a user could press Back mid-mint, watch the wizard step backwards, and have the
     transfer complete underneath them.
 
     One name for the rule, used by the header and by the PIN step's own Back, so the two cannot
-    answer differently.
+    answer differently. The browser's Back is not a control of the page: the wizard holds it for
+    the mint (`minting`).
   */
   const exitLocked = keyLive || isMinting;
 
@@ -558,7 +564,7 @@ export function TransferPage() {
     setRecipientError(null);
     setOwnHandle(false);
     onBodyEdit();
-    if (user && tag.toLowerCase() === normalizeAzureTag(user.azureTag).toLowerCase()) {
+    if (user && tag === normalizeAzureTag(user.azureTag)) {
       // A lookup's wait commits the empty alert before its answer. Nothing waits here, and React
       // would fold the two into one render: the same sentence again would change nothing to say.
       flushSync(() => setRecipientError(null));
@@ -602,6 +608,9 @@ export function TransferPage() {
         setRecipientError(SERVICE_UNAVAILABLE);
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         setRecipientError(CONNECTION_FAILED);
+      } else if (problem.errorCode === 'VALIDATION_ERROR') {
+        // The only thing this route validates is the handle, and the answer carries no `detail`.
+        setRecipientError(HANDLE_FORMAT_SENTENCE);
       } else {
         setRecipientError(problem.detail || "We couldn't check that handle. Please try again.");
       }
@@ -650,6 +659,12 @@ export function TransferPage() {
   ).success;
   const nobodyHasTheHandle =
     recipientError !== null && !lookupState.isError && lookupState.currentData?.exists === false;
+  // The API refused the handle's form, which no other word of the check says: the same press gets
+  // the same refusal, so this too asks for another handle and not for "Verify".
+  const handleRefused =
+    recipientError !== null &&
+    lookupState.isError &&
+    (lookupState.error as ApiProblem | undefined)?.errorCode === 'VALIDATION_ERROR';
   const reviewWaitsFor = canReview
     ? null
     : !selectedAccount
@@ -661,7 +676,7 @@ export function TransferPage() {
         : !recipient
           ? lookupState.isFetching
             ? 'Checking the handle…'
-            : ownHandle || nobodyHasTheHandle
+            : ownHandle || nobodyHasTheHandle || handleRefused
               ? 'Change the handle to continue.'
               : 'Press Verify to check the handle.'
           : watch('amount').trim() === ''
@@ -749,6 +764,23 @@ export function TransferPage() {
       unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
       re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
     */
+    const attempt = wizard.beginAttempt();
+    /*
+      What the page lets go of when the attempt is abandoned: the PIN, and the authorisation this
+      attempt minted, which goes with it. The key stays. An attempt that re-presents a held
+      authorisation sends at once, with no wait in which the visitor could leave, so it never ends
+      here.
+    */
+    const letGoOfTheAttempt = (mintedHere: boolean) => {
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      if (mintedHere) {
+        lastAuthorization.current = null;
+        setAuthorizationHeld(false);
+      }
+    };
+    let mintedHere = false;
     setConfirming(true);
     try {
       let authorizationId: string;
@@ -765,12 +797,32 @@ export function TransferPage() {
           authorizationId = minted.authorizationId;
           lastAuthorization.current = authorizationId;
           setAuthorizationHeld(true);
+          mintedHere = true;
         } catch (caught) {
+          // The visitor has left, and this answer is for a page they are no longer on: a refusal
+          // here must not navigate to PIN setup nor show a wrong PIN on the page they came back to.
+          if (attempt.abandoned) {
+            letGoOfTheAttempt(false);
+            return;
+          }
           // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
           wizard.failFrom(caught as ApiProblem, { phase: 'mint' });
           handleRefusal(caught as ApiProblem, 'mint');
           return;
         }
+      }
+
+      /*
+        The visitor chose "Leave anyway" while the PIN was being checked. The Back may have landed
+        on another entry of this page, which stays, or on another route, whose page is going.
+        Nothing is sent for the PIN they typed before they left; the boxes are emptied, as for an
+        outage of the check, and a PIN typed now is a new attempt. An authorisation this attempt
+        minted goes with it; the answer of a refused mint is dropped the same way, in the catch
+        above.
+      */
+      if (attempt.abandoned) {
+        letGoOfTheAttempt(mintedHere);
+        return;
       }
 
       const result = await wizard.run(
@@ -781,6 +833,7 @@ export function TransferPage() {
         },
         // A HEADER at the wire, never a body field: the server fingerprints the body alone.
         { stepUpAuthorizationId: authorizationId },
+        attempt,
       );
       // `run` resolves to undefined when it failed — and it has already set the banner, the
       // in-flight note or the verify view. Under `strict` this early return is not optional:
@@ -1277,6 +1330,10 @@ export function TransferPage() {
                       className={styles.input}
                       placeholder="@handle"
                       aria-label="Recipient handle"
+                      // The field keeps what was typed and the page sends it lower-cased, so a phone must not capitalise or correct it.
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       ref={field.ref}
                       name={field.name}
                       value={field.value}
@@ -1564,8 +1621,11 @@ export function TransferPage() {
         )}
       </div>
 
-      {/* The browser's Back, held. Every other exit refuses while a key is live; this one ASKS,
-          because after a KEEP-class failure it is the only exit left (ADR-0028). */}
+      {/* The browser's Back, held. Every other exit refuses while a key is live or the PIN is
+          being checked; this one ASKS, because after a KEEP-class failure it is the only exit
+          left (ADR-0028). It is held for the PIN check too, where leaving anyway sends
+          nothing: the words, which say "if it did reach the bank", are cautious there and not
+          untrue. */}
       <ConfirmDialog
         isOpen={wizard.exitPrompt !== null}
         onClose={() => wizard.exitPrompt?.stay()}

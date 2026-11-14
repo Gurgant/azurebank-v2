@@ -39,10 +39,10 @@ jobs:
           # `actions/checkout` keeps the GITHUB_TOKEN on the runner by default (from v6 in a file
           # under $RUNNER_TEMP that the git config points at; before, in .git/config), and every job
           # here then runs third-party code that could read it — NuGet restore, `dotnet run` on the
-          # app itself, `npm ci` with its postinstall scripts. No job performs an authenticated git
-          # operation (every git use is local: a `git diff --exit-code` drift check and the
-          # reading of commit messages), so the credential is pure blast radius. zizmor flags this
-          # as `artipacked`.
+          # app itself, `pnpm install`, which runs no dependency script. No job performs an
+          # authenticated git operation (every git use is local: a `git diff --exit-code` drift
+          # check and the reading of commit messages), so the credential is pure blast radius.
+          # zizmor flags this as `artipacked`.
           persist-credentials: false
 
       - name: Setup .NET
@@ -235,6 +235,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # actionlint does not know this action's inputs: a misspelt one passes it (tried 2026-11-13).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -243,20 +249,32 @@ jobs:
           # at every setup-node of ci.yml, contract-tests.yml and pages.yml.
           node-version: '24'
           check-latest: true
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      # msw's install script no longer runs, and it was what refreshed this file: the worker must
+      # still be the one the installed msw ships.
+      - name: The mock's worker matches the installed msw
+        working-directory: frontend
+        run: |
+          worker=$(sed -n "s/^const PACKAGE_VERSION = '\(.*\)'.*$/\1/p" public/mockServiceWorker.js)
+          installed=$(node -p "require('./node_modules/msw/package.json').version")
+          if [ -z "$worker" ] || [ "$worker" != "$installed" ]; then
+            echo "::error::public/mockServiceWorker.js says '$worker', the installed msw is '$installed': run pnpm exec msw init public"
+            exit 1
+          fi
 
       - name: Lint
         working-directory: frontend
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Format check
         working-directory: frontend
-        run: npm run format:check
+        run: pnpm run format:check
 
       - name: API schema up to date
         working-directory: frontend
@@ -267,7 +285,7 @@ jobs:
         # 0, because both regenerate from the same stale file. The document-versus-code half is
         # CommittedOpenApiDocumentTests, in the backend suite (ADR-0053).
         run: |
-          npm run generate:api
+          pnpm run generate:api
           git diff --exit-code src/api/schema.d.ts
 
       - name: Zod schemas up to date
@@ -276,7 +294,7 @@ jobs:
         # committed document. Same limit as the step above — it cannot see a stale document,
         # only a stale regeneration of it (ADR-0053).
         run: |
-          npm run generate:zod
+          pnpm run generate:zod
           git diff --exit-code src/api/generated/apiSchemas.ts
 
       # The JSON report is for the step below. Naming reporters replaces the defaults, so the two
@@ -284,7 +302,7 @@ jobs:
       - name: Test
         working-directory: frontend
         run: >
-          npm test --
+          pnpm test
           --reporter=default --reporter=github-actions
           --reporter=json --outputFile.json="$RUNNER_TEMP/frontend-test-totals.json"
 
@@ -306,7 +324,7 @@ jobs:
           '
 
       # The MOCK half of the two-target contract suite (ADR-0029). It ran in no job at all until
-      # now: `npm test` above excludes `src/contract/**` so a unit run never needs a stack, and the
+      # now: `pnpm test` above excludes `src/contract/**` so a unit run never needs a stack, and the
       # only contract step in this workflow is `test:contract:real`, down in the real-stack job.
       #
       # That left the ADR titled "making mock drift fail the build" delivering half of it. The real
@@ -322,13 +340,13 @@ jobs:
       # when its include glob matches nothing, so an empty run already fails.
       - name: Contract conformance (mock target)
         working-directory: frontend
-        run: npm run test:contract:mock
+        run: pnpm run test:contract:mock
 
       - name: Build (tsc + vite)
         working-directory: frontend
-        run: npm run build
+        run: pnpm run build
 
-      # public/mockServiceWorker.js is the mock's script for `npm run dev:mock` alone, and a plugin
+      # public/mockServiceWorker.js is the mock's script for `pnpm run dev:mock` alone, and a plugin
       # in vite.config.ts takes its copy out of a build. Without it the BFF would serve a service
       # worker script that nothing in the built app registers.
       - name: No mock service worker in the build
@@ -372,11 +390,11 @@ jobs:
   # western case -- its DST change is at 02:00 local on a Sunday in March/November, which the
   # month-boundary tests never sit on.
   #
-  # Only `npm test` runs here. Lint, format, schema drift and the build are zone-independent and
+  # Only `pnpm test` runs here. Lint, format, schema drift and the build are zone-independent and
   # already ran above; repeating them would triple that job's cost for nothing.
   #
   # Linux honours TZ= for Node. Windows does not -- measured, both bare `node` and vitest ignore
-  # it there -- which is why this exists as a CI job rather than an npm script.
+  # it there -- which is why this exists as a CI job rather than a package script.
   # ---------------------------------------------------------------------------------------
   frontend-tz:
     name: Frontend tests (TZ=${{ matrix.tz }})
@@ -394,17 +412,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # actionlint does not know this action's inputs: a misspelt one passes it (tried 2026-11-13).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           check-latest: true
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # The zone must reach the WORKER, not just this shell: vitest forks its workers and they
       # inherit the environment, but that is the claim under test, so it is asserted rather than
@@ -429,7 +453,7 @@ jobs:
 
       - name: Test
         working-directory: frontend
-        run: npm test
+        run: pnpm test
 
   # ---------------------------------------------------------------------------------------
   # How much of the hand-written code the tests run, backend and frontend, on the job's summary
@@ -491,13 +515,19 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # actionlint does not know this action's inputs: a misspelt one passes it (tried 2026-11-13).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           check-latest: true
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Restore
         working-directory: backend
@@ -555,13 +585,13 @@ jobs:
       - name: Install frontend dependencies
         if: ${{ !cancelled() }}
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      # `npm test` with --coverage: the unit and component tests, and no other suite.
+      # `pnpm test` with --coverage: the unit and component tests, and no other suite.
       - name: Frontend tests with coverage
         if: ${{ !cancelled() }}
         working-directory: frontend
-        run: npm run test:coverage
+        run: pnpm run test:coverage
 
       - name: Frontend coverage
         if: ${{ !cancelled() }}
@@ -639,13 +669,19 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # actionlint does not know this action's inputs: a misspelt one passes it (tried 2026-11-13).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           check-latest: true
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Create and seed database
         working-directory: backend
@@ -676,11 +712,11 @@ jobs:
       # to start (SpaOptionsValidator), so the build comes first.
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build the SPA the BFF serves
         working-directory: frontend
-        run: npm run build
+        run: pnpm run build
 
       - name: Start BFF
         working-directory: backend/src/AzureBank.Bff
@@ -744,11 +780,11 @@ jobs:
 
       - name: Contract suite against the REAL backend
         working-directory: frontend
-        run: npm run test:contract:real
+        run: pnpm run test:contract:real
 
       - name: Integration suite (the app's own data layer)
         working-directory: frontend
-        run: npm run test:integration
+        run: pnpm run test:integration
 
       # NO --with-deps, and that is the point rather than a saving. That flag runs apt-get, which
       # on this image pulls Google's chrome-stable repository — and when THAT index is inconsistent
@@ -762,7 +798,7 @@ jobs:
       # run is what says the dependencies were already present.
       - name: Install Playwright browser
         working-directory: frontend
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: E2E (real browser)
         working-directory: frontend
@@ -776,7 +812,7 @@ jobs:
         env:
           E2E_PROBE_EMAIL: jane@example.com
           E2E_LOCK_PROBE_EMAIL: mike@example.com
-        run: npm run test:e2e
+        run: pnpm run test:e2e
 
       # A skipped spec proves nothing and still reads green. These two had skipped on every run since
       # they were written, so the job was green over two money-safety proofs that never ran. The
@@ -862,13 +898,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # actionlint does not know this action's inputs: a misspelt one passes it (tried 2026-11-13).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           check-latest: true
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # The three images are built here, from this commit; the BFF's holds the built page.
       # `up -d` comes back once the API's container has been started, which compose.yaml allows
@@ -899,13 +941,13 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # No --with-deps: the job above has the reason, and this suite launching a browser is the
       # same proof that the image carries what Chromium needs.
       - name: Install Playwright browser
         working-directory: frontend
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       # The suite restarts the two containers itself, with `docker restart`, and waits for
       # /health/ready to say Healthy again before its last project starts. No step of this job
@@ -919,7 +961,7 @@ jobs:
         working-directory: frontend
         run: |
           export PLAYWRIGHT_JSON_OUTPUT_FILE="$RUNNER_TEMP/demo-results.json"
-          npm run test:e2e:demo -- --reporter=list,json
+          pnpm run test:e2e:demo --reporter=list,json
 
       # A skipped test proves nothing and still reads green. The script is the job above's,
       # given this run's report: it fails on any skip and on a run in which nothing passed.

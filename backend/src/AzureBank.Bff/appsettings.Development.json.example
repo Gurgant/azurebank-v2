@@ -1,4 +1,11 @@
 {
+  // Copy to appsettings.Development.json (git-ignored). Its one secret stays out of this file:
+  // ServiceCredential:BffKey, the key the API knows this host by (ADR-0055), set with .NET
+  // user-secrets to the SAME value the API holds:
+  //   dotnet user-secrets set "ServiceCredential:BffKey" "<the API's ServiceCredential:BffKey>"
+  // A placeholder here would become the key whenever that user-secret is missing: the BFF would
+  // start and the API would refuse its calls, where without one the BFF refuses to start and
+  // says why.
   "Logging": {
     "LogLevel": {
       "Default": "Information",

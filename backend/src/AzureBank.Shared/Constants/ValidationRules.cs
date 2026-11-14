@@ -28,6 +28,10 @@ public static class ValidationRules
     public const int AzureTagMaxLength = 20;
     // Length {2,19} + first char = 3-20 total, embedded because Schemathesis ignores minLength when pattern exists
     public const string AzureTagPattern = @"^[a-z][a-z0-9_]{2,19}$"; // Must start with letter
+    // What the wire may carry for a PAYEE's handle: the same shape in any letter case. The API
+    // lower-cases it before it checks AzureTagPattern (PayeeAzureTagAttribute), so this is the
+    // published form of the same rule and not a second rule.
+    public const string PayeeAzureTagPattern = @"^[a-zA-Z][a-zA-Z0-9_]{2,19}$";
     public const string AzureTagPatternMessage = "AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.";
 
     // ═══════════════════════════════════════════════════════════════

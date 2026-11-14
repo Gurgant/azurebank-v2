@@ -134,9 +134,12 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
   receipt. Last, type a wrong PIN three times: the PIN locks for 15 minutes, and **Start over**
   gives you a fresh copy. Don't enter real personal data. How long a copy lasts, the other
   journeys and the limits are in [Try the demo](docs/testing/try-the-demo.md).
-- **The UI alone**, against a mock that runs in the browser — Node only:
-  `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
-  PIN `123456`.
+- **The UI alone**, against a mock that runs in the browser — Node only. With Node 24.12 or
+  later, run `corepack enable pnpm` once, and the `packageManager` field of
+  `frontend/package.json` picks the version. Node 25 and later carry no Corepack: install
+  pnpm 12 another way, with pnpm's own installer or `npm install -g pnpm@12.15.0`. Then
+  `cd frontend && pnpm install --frozen-lockfile && pnpm run dev:mock`, and sign in as
+  `demo@azurebank.dev` / `Password1!`, PIN `123456`.
 - **The whole stack** — .NET 10, Node 24 and SQL Server (LocalDB is enough): the
   [local setup](docs/engineering-practices.md#local-setup). The seeded demo user is
   `john@example.com` / `Test123!`, PIN `123456`.

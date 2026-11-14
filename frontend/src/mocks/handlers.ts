@@ -60,6 +60,25 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
   answers 200 to. Measured against the running stack rather than assumed: N, B, P and X all returned
   the correctly scoped total, and an N-format Idempotency-Key was accepted on a deposit.
 
+  D is read more widely than 32 hex digits and four hyphens. .NET reads each of its first five
+  slices, 0-8, 9-13, 14-18, 19-23 and 24-28, with `TryParseHex`: an optional `+`, then an optional
+  `0x` or `0X`, then hex digits that fill the rest of the slice. The last eight characters are hex
+  digits alone.
+  Measured on 2026-10-17 on the API's own test host, against a deposit under the key
+  00000001-0002-0003-0405-060708090a0b, each of
+
+    +0000001-0002-0003-0405-060708090a0b     0x000001-0002-0003-0405-060708090a0b
+    00000001-0x02-0003-0405-060708090a0b     00000001-+002-0003-0405-060708090a0b
+    00000001-0002-0003-0405-+60708090a0b     {0x000001-0002-0003-0405-060708090a0b}
+
+  found that deposit's one row as the listing's `IdempotencyKey`, and was read as the summary's
+  `AccountId` (a 403, not a 400). The first two, made new keys by a last byte of 0x25 and 0x26,
+  were each a 201 as a deposit's `Idempotency-Key`. N reads no prefix:
+  `+0000001000200030405060708090a0b` was a 400 on the listing and on the summary. P hands its
+  middle 36 characters to the same D reader as B does. That, the `+` coming before the `0x` and not
+  after it, and the hex-digits-alone tail were read in .NET's `Guid.cs` (release/10.0), not
+  measured.
+
   Nothing in this app sends anything but D — ids come from the API — so no client could reach the
   gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
   which is the entire failure this file's fidelity suite exists to prevent.
@@ -68,8 +87,34 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 // a template literal is just `(`, which the RegExp then reads as a group opener. Written singly at
 // first, and the P form silently became a capturing group — the format test caught it as a 400.
 const HEX = '[0-9a-f]';
-const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
-const GUID_RE = new RegExp(`^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\))$`, 'i');
+const GUID_N_RE = new RegExp(`^${HEX}{32}$`, 'i');
+/** B and P: the 36 characters of a D between `{` and `}`, or between `(` and `)`. */
+const GUID_B_OR_P_RE = new RegExp(`^(?:\\{.{36}\\}|\\(.{36}\\))$`);
+/** Where each of the first five slices of D starts, and how wide it is. */
+const D_SLICES = [
+  [0, 8],
+  [9, 4],
+  [14, 4],
+  [19, 4],
+  [24, 4],
+] as const;
+const D_SLICE_RE = new RegExp(`^\\+?(?:0x)?(${HEX}+)$`, 'i');
+const D_TAIL_RE = new RegExp(`^${HEX}{8}$`, 'i');
+
+/** The 32 hex digits of a D-spelled GUID, its `+` and `0x` read as .NET reads them, or `null`. */
+function hexOfGuidD(value: string): string | null {
+  if (value.length !== 36 || [8, 13, 18, 23].some((at) => value[at] !== '-')) return null;
+  let hex = '';
+  for (const [start, width] of D_SLICES) {
+    // A slice is four characters at least and its prefix three at most: a prefix never fills a
+    // slice, unlike `0x+`, which fills a component of X, and the digits never outgrow the slice's width.
+    const digits = D_SLICE_RE.exec(value.slice(start, start + width))?.[1];
+    if (digits === undefined) return null;
+    hex += digits.padStart(width, '0');
+  }
+  const tail = value.slice(28);
+  return D_TAIL_RE.test(tail) ? hex + tail : null;
+}
 
 /**
  * The X spelling, `{0xdddddddd,0xdddd,0xdddd,{0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd}}`, read as
@@ -125,8 +170,9 @@ function parseGuid(value: string): string | null {
   // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
   // scoped total from the running API. Without this the mock 400s a request the server answers.
   const trimmed = value.trim();
+  const d = GUID_B_OR_P_RE.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
   const hex = (
-    GUID_RE.test(trimmed) ? trimmed.replace(/[^0-9a-f]/gi, '') : hexOfGuidX(value)
+    GUID_N_RE.test(trimmed) ? trimmed : (hexOfGuidD(d) ?? hexOfGuidX(value))
   )?.toLowerCase();
   if (hex?.length !== 32) return null;
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -941,6 +987,20 @@ function quoteRefusedText(text: string): string {
     : `'${shown}' (shown in part: ${shown.length} of ${text.length} characters)`;
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
+const AZURE_TAG_SENTENCE =
+  'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.';
+
+/**
+ * The API lower-cases a payee handle before it validates it, on the lookup, on the transfer's
+ * authorisation and on the transfer: a capital letter is read as its lower-case letter, so
+ * `Jane_02ga` is answered as `jane_02ga`. A to Z only, as the server does it, so a letter outside
+ * ASCII is left as it is and then fails the pattern.
+ */
+function lowerCasePayeeHandle(handle: string): string;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined {
+  return typeof handle === 'string' ? handle.replace(/[A-Z]/g, (c) => c.toLowerCase()) : handle;
+}
 
 /*
   THE SERVER NO LONGER PUTS A FIGURE IN EITHER SENTENCE. Measured 2026-08-04 the API rendered `:C`
@@ -2224,7 +2284,32 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
  * and self is masked identically to unknown (UserService semantics).
  */
 const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) => {
-  const tag = params.azureTag;
+  /*
+    The API lower-cases a payee handle before it validates it, so a capital letter resolves: the
+    answer for `Jane_02ga` is the answer for `jane_02ga`, with the handle in lower case.
+
+    A handle of the wrong form is then a framework 400 and never an `exists:false`. The key is the
+    parameter's name and there is no `detail`; the three sentences are one per rule, in the order the
+    API checks them: too short, too long, then the pattern. Measured on the API's own pipeline.
+  */
+  const tag = lowerCasePayeeHandle(params.azureTag);
+  if (tag.length < 3) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag must be at least 3 characters.'] }),
+    );
+  }
+  if (tag.length > 20) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag cannot exceed 20 characters.'] }),
+    );
+  }
+  if (!AZURE_TAG_RE.test(tag)) {
+    return response.untyped(
+      modelStateProblem({
+        azureTag: [AZURE_TAG_SENTENCE],
+      }),
+    );
+  }
   const isSelf = mockState.session?.azureTag === tag;
   const found = isSelf ? undefined : mockState.recipients.find((r) => r.azureTag === tag);
   if (found) {
@@ -2921,7 +3006,18 @@ const authoriseTransfer = api.post(
     );
     if (pinBind) return response.untyped(pinBind);
 
+    /*
+      The API lower-cases the payee handle before it validates it, so a capital is read as its
+      lower-case letter. A handle that still breaks the rule (two characters, a hyphen, a first
+      character that is not a letter, 21 characters) is refused with the pattern sentence under the
+      key `RecipientAzureTag`, whatever its length: unlike the lookup, the mint has no sentence
+      for a length. Measured on the API's own pipeline.
+    */
+    const handle = lowerCasePayeeHandle(body.recipientAzureTag);
     const bindingErrors = mintBindingErrors(body);
+    if (typeof handle === 'string' && !AZURE_TAG_RE.test(handle)) {
+      bindingErrors.RecipientAzureTag = [AZURE_TAG_SENTENCE];
+    }
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
@@ -2935,7 +3031,7 @@ const authoriseTransfer = api.post(
 
     // Self-transfer precedes the recipient lookup inside `ResolveExternalPayeeAsync`, so it cannot
     // be reported as "not found" for a handle that plainly exists — it is the caller's own.
-    if (mockState.session?.azureTag?.toLowerCase() === body.recipientAzureTag?.toLowerCase()) {
+    if (mockState.session?.azureTag?.toLowerCase() === handle?.toLowerCase()) {
       return response.untyped(
         problem({
           instance: pathOf(request),
@@ -2947,11 +3043,11 @@ const authoriseTransfer = api.post(
     }
 
     const recipient = mockState.recipients.find(
-      (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
+      (r) => r.azureTag.toLowerCase() === handle?.toLowerCase(),
     );
     if (!recipient) {
       // Observed through the API's test host: 404 / RECIPIENT_NOT_FOUND.
-      return response.untyped(recipientNotFound(body.recipientAzureTag, request));
+      return response.untyped(recipientNotFound(handle, request));
     }
 
     /*
@@ -3024,7 +3120,7 @@ const authoriseTransfer = api.post(
     const minted = mintAuthorization({
       operation: 'Transfer',
       fromAccountId: body.fromAccountId,
-      recipientAzureTag: body.recipientAzureTag,
+      recipientAzureTag: handle,
       amount: body.amount,
     });
 
@@ -3355,7 +3451,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     pin?: string;
   };
   const amount = body.amount as number;
-  const tag = body.recipientAzureTag ?? '';
+  // Lower-cased first, as on the lookup and the mint: what the authorisation holds and what the
+  // payee is matched on is the handle in lower case.
+  const tag = lowerCasePayeeHandle(body.recipientAzureTag ?? '');
 
   /*
     Source account FIRST. `TransferService.TransferAsync` opens with
@@ -3456,7 +3554,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',
     fromAccountId: body.fromAccountId,
-    recipientAzureTag: body.recipientAzureTag,
+    recipientAzureTag: tag,
     amount: body.amount,
   });
   if (authorization.refusal) return response.untyped(authorization.refusal);
@@ -3832,7 +3930,9 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  const pin = authBody.body.pin as string | undefined;
+  // The BFF binds `Pin` whatever its spelling, so {"PIN":"123456"} reaches the session gate;
+  // a case in authGuards.contract.test.ts holds this against the real BFF.
+  const pin = boundMember(authBody.body, 'pin') as string | undefined;
   // Model validation runs before the action, so a malformed PIN is a 400 even for an anonymous
   // caller — and WHICH 400 depends on how it is malformed. See `pinPayloadProblem`.
   if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
@@ -3879,17 +3979,13 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     return pinLockedProblem(mockState.pinLockedUntil, now, 'verify-pin');
   }
   /*
-    A REFUSED PIN IS A 200, and the body is not the caller's current state — `authLevel` is
-    HARD-CODED 1 by the BFF, not echoed back. The mock returned `mockState.authLevel`, so an
-    already-elevated user who fumbled a re-entry saw `2` where production says `1`.
-
-    Measured 2026-08-04 (this cost one of three attempts, hence the exact quote):
-      POST /bff/auth/verify-pin {"pin":"000000"}
-        -> 200 {"data":{"verified":false,"authLevel":1,"pinExpiresAt":null},
-                "message":"Invalid PIN"}
+    A refused PIN is a 200 that carries the session's held level, so an elevated session stays
+    at 2: `BffAuthController.VerifyPin` answers `GetAuthLevel` of the session, which drops to 1
+    only when the elevation has lapsed. The mock never lets one lapse, and its /me answers the
+    same `mockState.authLevel`. The BFF's `AWrongPinOnAnElevatedSession_KeepsItsLevel` holds it.
   */
   return HttpResponse.json({
-    data: { verified: false, authLevel: 1, pinExpiresAt: null },
+    data: { verified: false, authLevel: mockState.authLevel, pinExpiresAt: null },
     message: 'Invalid PIN',
   });
 });
@@ -4608,7 +4704,7 @@ const sessionActivity = http.all('*/api/*', ({ request }) => {
 // NB: never quote this glob inside a BLOCK comment. The `*` + `/` in the middle of it closes the
 // comment early, and what follows becomes code — that mistake put a live `api;` statement in this
 // file, which compiled, passed the tests, and left the docblock quoting a pattern that does not
-// exist. Only eslint's no-unused-expressions caught it.
+// exist. Only lint's `no-unused-expressions` caught it.
 const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
   const { pathname } = new URL(request.url);
   return problem({
