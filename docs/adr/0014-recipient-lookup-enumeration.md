@@ -1,7 +1,8 @@
 # ADR-0014: Recipient lookup — exact-match, harvest-resistant
 
 **Status:** Accepted · **Date:** 2026-07-17 · **Amended:** 2026-09-15 (the limit is the BFF's),
-2026-10-04 (ADR-0063, the public demo) · **Decision Makers:** Vladislav Aleshaev
+2026-10-04 (ADR-0063, the public demo), 2026-11-13 (the handle is read in any letter case) ·
+**Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -30,8 +31,11 @@ goal is harvest-resistance: guessing exact handles one at a time, at a metered, 
    7, says by how much that cap can be overshot).
 3. **Hardening of the exact lookup.** `[Required][AzureTagQuery]` validates the route parameter; the
    EF query projects only `{Id, FirstName, LastName}`, so it never materialises `PasswordHash`,
-   `PinHash` or `SecurityStamp`; the handle is normalised with `ToLowerInvariant` to match
-   registration; a self-lookup answers `exists: false` with no name echoed.
+   `PinHash` or `SecurityStamp`; the handle is lower-cased before it is validated, so `Jane_02ga` is
+   looked up as `jane_02ga`, the one form registration stores (a model binder does it for the
+   route value; the letters A to Z only, so no other character is turned into a letter); a
+   self-lookup answers `exists: false` with no name echoed. The transfer and its authorisation
+   read a payee's handle the same way.
 
 ## Rejected
 
