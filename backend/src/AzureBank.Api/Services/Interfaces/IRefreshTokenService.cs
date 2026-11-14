@@ -13,7 +13,7 @@ public interface IRefreshTokenService
     /// <summary>
     /// Issues a grant for the user, persists its hash with an expiry fixed now
     /// (<c>Jwt:RefreshTokenLifetimeMinutes</c>), and returns the plaintext (shown once) with that
-    /// expiry. Called on login and registration.
+    /// expiry. Called on login, registration and the demo's claim.
     /// </summary>
     Task<IssuedGrant> IssueAsync(ApplicationUser user, CancellationToken cancellationToken = default);
 
