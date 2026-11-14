@@ -1,13 +1,14 @@
 import { Route, Routes } from 'react-router-dom';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
+import { getResponse, http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PinInput } from '../components/PinInput';
 import { enableDemoMode } from '../test/demoMode';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
 import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../mocks/state';
+import { handlers } from '../mocks/handlers';
 import { server } from '../mocks/server';
 import { problem, serviceUnavailable } from '../mocks/problem';
 import {
@@ -589,6 +590,98 @@ describe('PIN setup during an outage', () => {
     expect(screen.queryByText(/the one you chose first/)).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'PIN Setup Complete!' })).not.toBeInTheDocument();
   });
+
+  it.each([
+    ['saved, and its answer arrives', 'PIN Setup Complete!'],
+    [
+      'saved, and its answer is lost',
+      'Your account already has a PIN. To change it, go to Settings.',
+    ],
+  ])(
+    'a session read that lands while other digits are being saved waits for that save: %s',
+    async (outcome, said) => {
+      // The first save, 123456, is answered 503 before it reaches the API: nothing is saved. The
+      // read of the session it starts is held. The second save, 654321, is saved, and its answer
+      // is held. The held read is let go first, and says there is a PIN: the one 654321 put there.
+      let saves = 0;
+      let answerTheSave!: () => void;
+      const saveAnswered = new Promise<void>((resolve) => (answerTheSave = resolve));
+      server.use(
+        http.post('*/bff/auth/set-pin', async ({ request }) => {
+          saves += 1;
+          if (saves === 1) return serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+          const real = await getResponse(handlers, request.clone());
+          await saveAnswered;
+          return outcome === 'saved, and its answer arrives'
+            ? real
+            : serviceUnavailable({ via: 'bff', instance: '/bff/auth/set-pin' });
+        }),
+      );
+      let reads = 0;
+      let answerTheRead!: () => void;
+      const readAnswered = new Promise<void>((resolve) => (answerTheRead = resolve));
+      server.use(
+        http.get('*/bff/auth/me', async () => {
+          reads += 1;
+          if (reads === 1) await readAnswered;
+          return undefined;
+        }),
+      );
+      // Every text the page shows, kept: each node it adds, and each value a text node held, as
+      // React reuses an element of the same type and changes only its text. A view that mounts
+      // and goes again within one task is still seen.
+      const shown: string[] = [];
+      const watch = new MutationObserver((records) => {
+        for (const record of records) {
+          if (record.type === 'characterData') {
+            shown.push(record.oldValue ?? '', record.target.textContent ?? '');
+          } else {
+            record.addedNodes.forEach((node) => shown.push(node.textContent ?? ''));
+          }
+        }
+      });
+      watch.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        characterDataOldValue: true,
+      });
+
+      try {
+        const store = makeTestStore();
+        await toTheConfirmation(store);
+        await pasteDigits('123456');
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(COPY.saveUnknown));
+        await waitFor(() => expect(reads).toBe(1));
+
+        await chooseAgain('654321');
+        await waitFor(() => expect(saves).toBe(2));
+        await waitFor(() => expect(mockState.session?.hasPin).toBe(true));
+
+        answerTheRead();
+        await waitFor(() => expect(selectCurrentUser(store.getState())?.hasPin).toBe(true));
+        // The store tells React on the next frame: past it, the page has drawn the read.
+        await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        // The read says there is a PIN, and the save that put it there has not answered: the page
+        // names no PIN yet.
+        expect(screen.getByText('Confirm your PIN')).toBeInTheDocument();
+        expect(screen.queryByText(/already has a PIN/)).not.toBeInTheDocument();
+
+        answerTheSave();
+        const view =
+          outcome === 'saved, and its answer arrives'
+            ? await screen.findByRole('heading', { name: said })
+            : await screen.findByText(said);
+        await waitFor(() => expect(view).toHaveFocus());
+        // The watch saw the view that ends the page mount, and never the one that names the
+        // first PIN.
+        expect(shown.some((text) => text.includes(said))).toBe(true);
+        expect(shown.some((text) => text.includes('the one you chose first'))).toBe(false);
+      } finally {
+        watch.disconnect();
+      }
+    },
+  );
 
   it('after a 503 focus goes back to the first box', async () => {
     const stop = emulateFocusFixup();

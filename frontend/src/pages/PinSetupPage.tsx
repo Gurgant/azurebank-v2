@@ -234,6 +234,12 @@ export function PinSetupPage() {
   const lostPin = lostSaves.length === 1 ? lostSaves[0] : null;
   // After a lost save, a save was refused because the account has a PIN.
   const [pinRefused, setPinRefused] = useState(false);
+  /*
+    A save on its way. It ends in the same batch as the state its answer sets, which the
+    mutation's `isLoading` does not promise: that one follows the store, whose updates reach React
+    on the store's own schedule.
+  */
+  const [saving, setSaving] = useState(false);
   const shownError = lock ? LOCKED : error;
   const passwordRef = useRef<HTMLInputElement>(null);
   const formCard = useRef<HTMLDivElement>(null);
@@ -262,8 +268,10 @@ export function PinSetupPage() {
 
     After a lost save, a PIN is found by a refusal because the account has one, or by a session
     read that says so. Either is enough, so a read that fails after the refusal changes nothing.
+    A read does not count while a save is out: it can land meanwhile and find the PIN that save
+    has just put on file, so the page waits for the save's own answer before it names one.
   */
-  const pinFound = saveUnknown && (pinRefused || user?.hasPin === true);
+  const pinFound = saveUnknown && !saving && (pinRefused || user?.hasPin === true);
   const finished = step === 'success' || (pinFound && firstPin === lostPin);
   // Found, and not known to be the digits on screen: the account keeps the PIN it has.
   const pinKept = !finished && pinFound;
@@ -291,6 +299,7 @@ export function PinSetupPage() {
     }
     setError(null);
     settled.current = true;
+    setSaving(true);
     try {
       await setPinTrigger({ pin: confirmed, password }).unwrap();
       setStep('success');
@@ -350,6 +359,8 @@ export function PinSetupPage() {
         that teaches people to choose shorter passwords.
       */
       if (refusal.field === 'pin') setConfirmPin('');
+    } finally {
+      setSaving(false);
     }
   };
 
