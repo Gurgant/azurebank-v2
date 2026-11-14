@@ -294,7 +294,7 @@ instance fields. One departure: a private `static readonly` member is PascalCase
 - Throw the typed exceptions of `AzureBank.Shared.Exceptions`, with a message that names what was
   missing, never a bare `Exception`.
 - A comment explains a constraint the code cannot show, never what the next line does or where
-  the code came from.
+  the code came from: no date, no review round, no capitals for emphasis.
 - Feature code is organised by role: `Controllers/`, `Services/{Interfaces,Implementations}/`,
   `Validators/`, `Mappers/`.
 

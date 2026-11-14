@@ -246,12 +246,10 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
     public async Task TheMint_StillRefusesAnUnknownPayee_BeforeTheDaysCeiling()
     {
         // ORDER at the mint: the payee resolution stays above the daily check, so the mint refuses
-        // in the transfer's order (ADR-0050's rung table) — a doomed-for-the-day request to a
-        // handle that does not exist answers 404, not the daily code. This says NOTHING about
-        // enumeration, and the earlier wording here claimed it did: the enumeration argument at the
-        // top of TransferService is the TRANSFER's (RequireAuthorization sits above its payee
-        // resolution), while the mint answers that 404 before the PIN — on main too. See the
-        // comment beside AuthoriseTransferAsync's daily call.
+        // in the transfer's order (ADR-0050's rung table): a doomed-for-the-day request to a
+        // handle that does not exist answers 404, not the daily code. The order hides no handle:
+        // the mint answers that 404 before the PIN, and the transfer answers it to a made-up
+        // authorisation reference. See the comment beside AuthoriseTransferAsync's daily call.
         var (token, _, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token);

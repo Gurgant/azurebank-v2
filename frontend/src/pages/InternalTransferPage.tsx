@@ -1037,7 +1037,10 @@ export function InternalTransferPage() {
           </>
         ) : step === 'pin' ? (
           <>
-            {/* PIN — ADR-0041. The credential travels in THIS request; the API verifies it. */}
+            {/*
+              The PIN goes to the mint, and the transfer carries the authorisation it returns in the
+              `Step-Up-Authorization` header (ADR-0042).
+            */}
             <div className={styles.reviewCard}>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>Moving</Text>

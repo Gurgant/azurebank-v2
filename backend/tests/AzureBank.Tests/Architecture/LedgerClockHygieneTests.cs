@@ -14,8 +14,8 @@ namespace AzureBank.Tests.Architecture;
 /// microsecond every day except at midnight — where a row stamped by the context's
 /// <see cref="TimeProvider"/> and a window computed from the system clock can disagree about which
 /// day it belongs to, and no FakeTimeProvider test can see it because the fake only controls the
-/// half it was handed. <c>TransferService</c> already had none for <c>CreatedAt</c> (its comment
-/// at the `No now here` block says why); this keeps it so.
+/// half it was handed. <c>TransferService</c> already had none for <c>CreatedAt</c> (the comment
+/// where it builds its rows says why); this keeps it so.
 /// </remarks>
 public class LedgerClockHygieneTests
 {

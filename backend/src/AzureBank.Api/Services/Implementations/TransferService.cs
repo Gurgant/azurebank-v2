@@ -30,10 +30,9 @@ public class TransferService : ITransferService
     private readonly DailyLimitOptions _dailyLimitOptions;
 
     /*
-      dailyLimitOptions is read for the applock's WAIT BOUND only — the ceiling itself is
-      IDailyOutflowLimit's to know, and nothing here should be able to compute a limit refusal.
-      Taken as IOptions rather than as a number so a test host's UseSetting reaches it by the same
-      path an appsettings value does.
+      dailyLimitOptions is read for the lock's wait bound only: the ceiling is IDailyOutflowLimit's
+      to know, and nothing here computes a limit refusal. It is taken as IOptions, not as a number,
+      so a test host's UseSetting reaches it by the same path an appsettings value does.
     */
     public TransferService(
         AzureBankDbContext context,
@@ -58,32 +57,10 @@ public class TransferService : ITransferService
     }
 
     /*
-      THE PER-USER APPLICATION LOCK the day's ceiling is proven under (ADR-0050 D5). Taken as the
-      first statement of the transfer's transaction, before any row is built, and released with it.
-
-      sp_getapplock's outcome is a RETURN VALUE, not an error — 0/1 granted, -1 timed out, -2
-      cancelled, -3 deadlock victim, -999 bad call — and ExecuteSqlRawAsync cannot see one. Without
-      the guard a refused lock would read as a lock held, and the whole proof would rest on a
-      statement that silently did nothing. So the batch turns any negative return into a raised
-      error: the transfer then fails loudly instead of summing unserialised.
-
-      THE WAIT IS BOUNDED HERE, AND IT WAS NOT UNTIL THIS PARAMETER EXISTED. Called without
-      @LockTimeout, sp_getapplock waits at @@LOCK_TIMEOUT, and that session default is -1 — wait
-      forever. MEASURED on LocalDB 2026-09-07 (review round 1; ADR-0050 D5 has the figures): the
-      waiter read its own @@LOCK_TIMEOUT as -1, and with @LockTimeout = 2000 supplied it was refused
-      -1 after 2,006-2,012 ms across three runs. So the only bound before this was the global
-      30-second CommandTimeout (AddInfrastructure, sqlOptions.CommandTimeout(30)) — which covers the
-      whole statement rather than the wait, and until it fires the loser holds an open transaction
-      and a pooled connection for half a minute. Under same-payer contention that is one connection
-      per queued transfer. The bound is DailyLimit:LockTimeoutSeconds, kept strictly below that
-      command timeout (Range 1-29) so the refusal is always this one and never the statement's, and
-      above Audit:TailTimeoutSeconds because the holder's own audit tail read sits inside the span
-      this waits on.
-
-      -1 IS A FAULT, NOT A LIMIT REFUSAL, and the message says which negative it was. Waiting the
-      bound out means the server was busy, not that the payer's day is full: it must never surface
-      as DAILY_LIMIT_EXCEEDED, whose 422 would tell the client figures nothing computed. A bare
-      number in the message would have left the two indistinguishable in a log.
+      The per-user lock under which the transfer's transaction checks the day's ceiling (ADR-0050
+      D5). sp_getapplock reports a refused lock as a negative return value, which ExecuteSqlRawAsync
+      does not see, so the batch throws on one: a refused lock fails the transfer and never lets the
+      sum run unserialised. A timeout is a fault, never DAILY_LIMIT_EXCEEDED.
     */
     internal const string DailyLimitLockSql =
         "DECLARE @r int, @t int = {1}; "
@@ -98,34 +75,12 @@ public class TransferService : ITransferService
     internal static string DailyLimitLockResource(Guid userId) => $"daily-limit:{userId:D}";
 
     /// <summary>
-    /// Refuses a transfer that presents no authorisation at all, at the rung the in-band PIN check
-    /// used to occupy (ADR-0042).
+    /// Refuses a transfer that presents no authorisation: 401 <c>AUTHORIZATION_REQUIRED</c>. An
+    /// external transfer reaches it at the rung before the payee is resolved, an internal one after
+    /// both ownership checks (ADR-0042 D8). The parameter stays <c>Guid?</c>: an empty header binds
+    /// to <c>null</c> and reaches this 401, where a required one would answer a 400 with no
+    /// <c>errorCode</c>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// THE RUNG IS THE POINT, not the check. It runs after the source account's ownership 404 and
-    /// BEFORE the payee is resolved, which is exactly where <c>VerifyPinOrThrowAsync</c> ran. Keep
-    /// it there: below the payee resolution, a caller holding no second factor could ask this
-    /// endpoint which handles exist and which of them can receive money, one 404 or 422 at a time.
-    /// The PIN check was providing that property silently; deleting it without putting something in
-    /// its place would have removed it silently too.
-    /// </para>
-    /// <para>
-    /// Split from <see cref="IStepUpAuthorizationService.ValidateAsync"/> deliberately, because the
-    /// two questions become answerable at different moments: "you presented nothing" needs nothing
-    /// but the header, while "what you presented does not match" needs the payee that only exists
-    /// after the tag is resolved.
-    /// </para>
-    /// <para>
-    /// MEASURED, and the reason the parameter stays <c>Guid?</c> rather than becoming required at
-    /// the binding layer: an EMPTY <c>Step-Up-Authorization</c> header binds to <c>null</c>, exactly
-    /// like an absent one — both reach here and both get this 401. A header that is present but not
-    /// a UUID never reaches here at all; MVC model binding refuses it upstream with
-    /// <c>400 {"Step-Up-Authorization": ["The value '…' is not valid."]}</c>. Making the parameter
-    /// non-nullable would have replaced this 401 with a third shape — a model-state 400 carrying no
-    /// <c>errorCode</c> — which is not what ADR-0042's error table promises.
-    /// </para>
-    /// </remarks>
     private static Guid RequireAuthorization(Guid? stepUpAuthorizationId)
     {
         if (stepUpAuthorizationId is not { } authorizationId)
@@ -138,65 +93,27 @@ public class TransferService : ITransferService
     }
 
     /*
-      WHY THE AUTHORISATION IS CHECKED HERE AND NOT IN FRONT OF THE PIPELINE (ADR-0042).
-
-      The obvious place for a step-up gate is the BFF's AuthLevelMiddleware, or a middleware beside
-      the idempotency claim. Both are wrong, and the reason is measured rather than argued:
-      on a replay IdempotencyMiddleware writes the stored response and RETURNS, never reaching
-      `await _next(context)`. A replay therefore runs no model binding, no validation, no
-      controller and no service — so it also runs no authorisation check.
-
-      That is the correct behaviour, and every payment API that documents the ordering agrees:
-      authenticate the CALLER upstream of the replay lookup, authorise the CUSTOMER downstream of it.
-      A gate in front of the claim would refuse a retry whose two-minute authorisation had lapsed
-      BEFORE TryAcquireAsync could hand back the stored 201 — leaving the one client that provably
-      cannot know whether its money moved unable to find out. The in-body PIN already has this
-      property; the authorisation must keep it.
-
-      THE HEADER IS NOW THE ONLY PROOF. It shipped optional for one PR — nothing sent it yet, and
-      its absence fell through to the in-band PIN of ADR-0041 — but while both proofs are accepted
-      the weaker one decides, and six static digits authorising any amount to any payee is the
-      finding ADR-0042 opens with. `TransferRequest.Pin` is gone and a transfer without an
-      authorisation is refused `401 AUTHORIZATION_REQUIRED`.
-
-      Validation happens where the payee is known (an external transfer's binding names the
-      RECIPIENT USER, which only exists after the tag is resolved) and before anything is written, so
-      an expired authorisation still costs nothing. Consumption is deferred into the transaction
-      below, so an authorisation is never spent by a transfer that rolled back.
+      The authorisation is checked in this service and not in a middleware in front of the pipeline:
+      on a replay IdempotencyMiddleware returns the stored response without calling the next step,
+      so a gate in front of it would refuse a retry whose authorisation had lapsed. The header is
+      the only proof, and it is spent inside the transaction (ADR-0042 D2, D6 and D8).
     */
 
     /// <summary>
-    /// Resolves an external transfer's payee, with the same three refusals in the same order the
-    /// transfer has always applied: 404 for a sender whose row is gone, 422
-    /// <c>SELF_TRANSFER_NOT_ALLOWED</c>, 404 <c>RECIPIENT_NOT_FOUND</c>, 422
-    /// <c>RECIPIENT_NO_ACCOUNT</c>.
-    ///
-    /// <para>
-    /// Extracted so minting and sending cannot drift. An authorisation that could name a payee the
-    /// transfer would then refuse is an authorisation for something that cannot happen, and the
-    /// existing TransferEndpointTests are what prove the extraction faithful — they exercise all
-    /// four refusals through the endpoint and never touched this method.
-    /// </para>
-    ///
-    /// <para>
-    /// A PAYEE IS RESOLVED ONLY INSIDE THE SENDER'S DEMO COPY. A handle that another copy holds
-    /// gets the 404 <c>RECIPIENT_NOT_FOUND</c> of a handle nobody holds: at the mint, where it
-    /// comes before the PIN is looked at, and at the transfer. No flag is read on this path:
-    /// outside the demo neither user belongs to a copy, both sides of the comparison are null and
-    /// null matches null, so every user goes on paying every other.
-    /// </para>
+    /// Resolves an external transfer's payee for the mint and the transfer alike, so that an
+    /// authorisation never names a payee the transfer would refuse. A payee is resolved only inside
+    /// the sender's demo copy (ADR-0062 decision 7): outside the demo both copy ids are null, and
+    /// null matches null.
     /// </summary>
     private async Task<(ApplicationUser Sender, ApplicationUser Recipient, Account RecipientAccount)>
         ResolveExternalPayeeAsync(Guid userId, string recipientAzureTag, CancellationToken cancellationToken)
     {
-        // Get sender user for self-transfer check
         var senderUser = await _context.Users.FindAsync([userId], cancellationToken);
         if (senderUser == null)
         {
             throw new NotFoundException("User", userId);
         }
 
-        // Prevent self-transfer
         if (senderUser.AzureTag.Equals(recipientAzureTag, StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
@@ -204,7 +121,6 @@ public class TransferService : ITransferService
                 ErrorCodes.SelfTransferNotAllowed);
         }
 
-        // Find recipient by AzureTag, among the users of the sender's copy
         var recipient = await _context.Users
             .FirstOrDefaultAsync(
                 u => u.AzureTag == recipientAzureTag.ToLower() && u.DemoCopyId == senderUser.DemoCopyId,
@@ -228,24 +144,18 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
-    /// The refusal for a payee with no account the money can go to. One copy, because an external
-    /// transfer gives it in two places: where it resolves the payee, and where the payee's account
-    /// comes back closed from a reload and no other account of that payee is open.
+    /// The refusal for a payee with no account the money can go to. It is given where the payee is
+    /// resolved and where a reload finds the payee's account closed with no other open.
     /// </summary>
     private static BusinessRuleException RecipientHasNoActiveAccount() =>
         new("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
 
     /// <summary>
-    /// A payee's open accounts in the order they are paid: the primary first, then the oldest, and
-    /// the lowest id between two opened at the same instant.
+    /// A payee's open accounts in the order they are paid: the primary first, then the oldest, then
+    /// the lowest id. Both looks of a transfer read it, so they choose the same account. The order
+    /// is the store's, since it and .NET do not sort a <c>uniqueidentifier</c> alike, and closed
+    /// accounts leave the list through the query filter.
     /// </summary>
-    /// <remarks>
-    /// ONE ORDER, WRITTEN ONCE. The first look of a transfer and the look after a reload both read
-    /// this list, so a payee with no open primary account is paid on the same account whichever
-    /// look chooses. The order is the store's: it and .NET do not sort a <c>uniqueidentifier</c>
-    /// the same way, so the list is never sorted again in memory. Closed accounts are left out by
-    /// the filter on every query of accounts.
-    /// </remarks>
     private Task<List<Account>> OpenAccountsInPayingOrderAsync(Guid payeeId, CancellationToken cancellationToken) =>
         _context.Accounts
             .Where(a => a.UserId == payeeId)
@@ -255,49 +165,12 @@ public class TransferService : ITransferService
             .ToListAsync(cancellationToken);
 
     /// <summary>
-    /// Looks at an external transfer's two accounts again after a reload and returns the payee
-    /// account to pay. The sender's account, closed or gone, is refused with the ownership
-    /// check's 404. The payee's account, closed or gone, is replaced by another open account of
-    /// the same payee, the primary first, and the transfer answers the 422 of a payee with no
-    /// account only when that payee has none open.
+    /// A payee account that closed or went since the first look is replaced by another open account
+    /// of the same payee, in the paying order; with none left the answer is the 422 of a payee with
+    /// no account, and the handle is not resolved again (ADR-0049 D9). Never a
+    /// <see cref="NotFoundException"/> for the payee's account: its message carries the account id,
+    /// and a payer knows a payee by handle only.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A reload reads a row by its key and does not apply the filter that hides closed accounts, so
-    /// an account closed after the transfer first read it comes back as an ordinary row with
-    /// <c>IsDeleted</c> set, and a row that is gone leaves its entry detached
-    /// (<see cref="ConcurrencyRetry.IsClosedOrGone"/>). A transfer that looks only at the sender's
-    /// balance then pays into such an account, or out of one, and answers 201.
-    /// </para>
-    /// <para>
-    /// THE PAYEE IS A PERSON, NOT AN ACCOUNT. A payer names a handle, and which account receives is
-    /// the server's choice, the primary first. So a payee account that closed under the transfer is
-    /// chosen again among the open accounts of the SAME user, in the order of
-    /// <see cref="OpenAccountsInPayingOrderAsync"/>. The step-up authorisation binds the recipient
-    /// user and no account of theirs, so nothing the payer authorised changes: same payee, same
-    /// amount.
-    /// </para>
-    /// <para>
-    /// THE HANDLE IS NOT RESOLVED A SECOND TIME, by design: a handle can be renamed and taken by
-    /// someone else (ADR-0015), so a second look by handle could find another person than the one
-    /// the authorisation names. The choice is keyed on the user the first look resolved.
-    /// </para>
-    /// <para>
-    /// ONLY A CLOSED OR MISSING ACCOUNT IS REPLACED. An account that only stopped being the primary
-    /// one while the transfer ran is still paid: it is open and it is the payee's.
-    /// </para>
-    /// <para>
-    /// THE CHOICE IS BOUNDED BY WHAT IT READ. The open accounts are read once, and each is read
-    /// fresh from the store before it is taken: the first look loaded every account of the payee,
-    /// so the tracker can hold one with the values and the <c>RowVersion</c> of that moment. One
-    /// that is closed or gone by the time it is read fresh is passed over for the next in the list,
-    /// and a list with none left open is the 422. The turns are at most the accounts read.
-    /// </para>
-    /// <para>
-    /// Never a <see cref="NotFoundException"/> for the payee's account: its message carries the
-    /// account id, and a payer knows a payee by handle only.
-    /// </para>
-    /// </remarks>
     private async Task<Account> RefuseOrChooseThePayeeAccountAgainAsync(
         Account fromAccount, ApplicationUser recipient, Account recipientAccount,
         CancellationToken cancellationToken)
@@ -323,40 +196,21 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
-    /// What an external transfer looks at between the reload of its accounts and its save, in the
-    /// order it answers: the sender's account and the payee's, the sender's balance, the day's
-    /// ceiling. Returns the payee account to pay.
+    /// What an external transfer looks at between the reload of its accounts and its save. Returns
+    /// the payee account to pay. An attempt and a transfer that lost its last attempt both call it
+    /// (ADR-0058 D6), so the busy answer cannot hide what an attempt refuses. Past the last attempt
+    /// no lock is held, and <paramref name="underTheDaysLock"/> is false: the sum is read as it
+    /// stands.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// ONE COPY FOR TWO CALLERS: each attempt, inside its transaction, and the transfer that lost
-    /// its last attempt and has to say whether its accounts are only busy
-    /// (<see cref="TransferAsync"/>). A look added here is taken by both, so the busy answer cannot
-    /// hide what an attempt refuses.
-    /// </para>
-    /// <para>
-    /// <paramref name="underTheDaysLock"/> IS THE ONE DIFFERENCE. An attempt reads the day's sum
-    /// under the per-user lock its transaction holds, because a save follows the read. Past the
-    /// last attempt nothing is saved and no transaction is open: the sum is read as it stands, the
-    /// way the pre-check before the first attempt reads it.
-    /// </para>
-    /// </remarks>
     private async Task<Account> RefuseWhatAnAttemptRefusesAsync(
         Guid userId, decimal amount, Account fromAccount, ApplicationUser recipient, Account recipientAccount,
         bool underTheDaysLock, CancellationToken cancellationToken)
     {
         /*
-          THE ACCOUNTS FIRST, because the preparation reloads them on EVERY attempt, the first one
-          included. An account that closes between the first look and that reload loses no save
-          and goes round no retry: it is simply here, closed, with a current RowVersion, and the
-          transfer would commit on it at the first attempt.
-
-          THIS PLACE HOLDS THE PAYEE'S ACCOUNT, and the sender's when it closes before the first
-          reload. TransferOrWithdrawalOnClosedAccountSqlServerTests holds the refusals, and
-          PayeeAccountClosedMeanwhileSqlServerTests the payee paid on another account.
-
-          THE PAYEE BEFORE THE FUNDS, the order of the first look: a transfer whose payee has no
-          open account left answers that, whatever the sender's account holds by now.
+          The accounts come first, because the preparation reloads them on every attempt and a
+          closed one then comes back with a current RowVersion (ADR-0049 D9). The payee comes before
+          the funds: a payee with no open account left answers that, whatever the sender's account
+          holds.
         */
         recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
             fromAccount, recipient, recipientAccount, cancellationToken);
@@ -369,58 +223,9 @@ public class TransferService : ITransferService
         }
 
         /*
-          THE AUTHORITATIVE DAILY CHECK, under a per-user application lock (ADR-0050
-          D5). Nothing else in this system serialises money movement across two
-          accounts of one user TO DIFFERENT PAYEES: Account.RowVersion and
-          ConcurrencyRetry protect one account row, so two such transfers touch no
-          shared row and both pass a sum taken outside a lock. (Two transfers to the
-          SAME payee are serialised by the payee's row — its RowVersion moves under
-          the loser, which retries, runs the attempt again and re-sums after the
-          winner's commit. Measured while writing the reproduction: the panel's
-          two-account, one-payee shape stayed green with this lock removed, every
-          run; DailyLimitConcurrencySqlServerTests says so.) The lock is what turns
-          the pre-check before the first attempt into a control for every shape.
-
-          WHY NOT THE AUDIT TAIL. Every audited save reads the AuditEvents tail
-          under UPDLOCK, HOLDLOCK (AuditChain.TailSql), so a re-sum after the first
-          SaveChangesAsync would be serialised for free — but ADR-0044 lists
-          partitioning that chain as an open question, and a business invariant must
-          not silently depend on an audit lock a later change may split. This lock
-          is independent of the chain: partition it and nothing here moves.
-
-          WHY NOT UPDLOCK ON AspNetUsers OR Accounts. Verified in code, not argued:
-          UserService.RenameAzureTagAsync and AuthService's PIN enrol/change modify
-          the user row in an AUDITED save, and AzureBankDbContext.SaveChangesAsync
-          applies the chain (tail lock) BEFORE base.SaveChangesAsync — so those paths
-          lock tail → user row, and a transfer locking the user row first and then
-          waiting on the tail is a 1205 cycle. A deposit is the same shape on the
-          Accounts row: tail → account row. EnableRetryOnFailure would retry the
-          victim (1205 is in the shipped detector), but a design that deadlocks by
-          construction and relies on the retry is not the design to record.
-
-          An application lock participates in no table-lock order. The only other
-          one in backend/src is AccountService's per-user primary-swap lock
-          (2026-09-16), on a different resource and held by a path that takes no
-          tail lock, so the only order this adds is applock → tail, and no cycle can
-          form. It holds under READ COMMITTED and under RCSI (measured ON for
-          AzureBankDev and AzureBankTests, 2026-09-07);
-          it would not hold under transaction-level SNAPSHOT, which nothing sets.
-          Owner = Transaction, so a rollback or commit releases it without a
-          matching sp_releaseapplock.
-
-          BEFORE ANY ROW IS BUILT, so the sum is over committed rows plus nothing of
-          this request's own — `used + amount > limit`, the same comparison as the
-          pre-check (the helper's comment says what changes if this ever moves after
-          the save). A loser therefore writes nothing at all: no ledger rows, no
-          audit row, no consumed authorisation. And a RowVersion retry runs the
-          attempt again and re-takes lock + sum, so the same-account race is covered
-          by the same statement.
-
-          InMemory has no locks and no transactions: it skips the statement and
-          proves only that the check exists. The concurrency property is proven only
-          by DailyLimitConcurrencySqlServerTests, written as a reproduction first —
-          the exact posture ConsumeAsync takes for its own single-statement
-          guarantee.
+          The authoritative check of the day's ceiling, under a per-user application lock taken
+          before any ledger row is built (ADR-0050 D5 and its rejected alternatives). InMemory has
+          no locks and skips the statement: DailyLimitConcurrencySqlServerTests is the proof.
         */
         if (underTheDaysLock && _context.Database.IsRelational())
         {
@@ -439,16 +244,10 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
-    /// What an internal transfer looks at between the reload of its accounts and its save, in the
-    /// order it answers: both accounts, then the source's balance.
+    /// What an internal transfer looks at between the reload of its accounts and its save. A closed
+    /// account of the caller's own is the ownership check's 404, and it comes before the balance
+    /// because the API closes only an empty account (ADR-0049 D9).
     /// </summary>
-    /// <remarks>
-    /// ONE COPY FOR THREE CALLERS: the top of each turn of the loop, each attempt after its reload,
-    /// and the transfer that lost its last attempt and has to say whether its accounts are only
-    /// busy (<see cref="InternalTransferAsync"/>). Both accounts are the caller's own, so a closed
-    /// one is the ownership check's 404, and it comes before the balance for the reason
-    /// <see cref="TransferAsync"/> gives: the API closes only an empty account.
-    /// </remarks>
     private void RefuseWhatTheReloadedAccountsRefuse(Account fromAccount, Account toAccount, decimal amount)
     {
         ConcurrencyRetry.RefuseIfClosed(_context, fromAccount, toAccount);
@@ -470,25 +269,10 @@ public class TransferService : ITransferService
         var (_, recipient, _) = await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag, cancellationToken);
 
         /*
-          THE DAY'S CEILING, BEFORE THE PIN (ADR-0050 D4). The mint checks nothing about money today —
-          measured 2026-09-07, B1: a mint of 400 with 250 left answered 201, and only the transfer
-          refused — so a transfer the day cannot take costs the user a PIN entry before it is
-          refused. This is the ADR-0049 D4 rung: a 422 guard that reveals only the caller's OWN
-          state runs before IPinVerifier spends an attempt (the two closure guards on the deletion
-          mint sit on the same rung). The daily aggregate reveals only the caller's own ledger, so
-          it belongs here; a wrong PIN on a doomed request is answered 422 DAILY_LIMIT_EXCEEDED, not
-          401, and no attempt is spent. The balance guard is deliberately NOT lifted to the mint:
-          its own rule is that funds are checked at the transfer (ADR-0046), and this slice does not
-          move it.
-
-          Below the payee resolution so the mint refuses in the transfer's order — payee 404/422,
-          then the day's 422, then the PIN — the order ADR-0050's rung table records. What this does
-          NOT claim: the enumeration argument at the top of this file is the TRANSFER's
-          (RequireAuthorization sits above its payee resolution) and the mint has no counterpart —
-          it answers 404/422 on a handle here, before the PIN below, to any JWT holder, bounded only
-          by the BFF's per-IP global limiter (ADR-0014's per-user `lookup` policy covers
-          /api/users/* only). Pre-existing since ADR-0042; this check neither widens nor narrows
-          it, because it answers nothing about the payee.
+          The ceiling comes after the payee, so the mint refuses in the transfer's order, and before
+          the PIN, so a transfer the day cannot take costs no attempt (ADR-0050 D4). Not covered:
+          the mint answers 404 or 422 about a handle to any signed-in caller before the PIN, bounded
+          only by the BFF's per-IP limiter (ADR-0014's per-user policy covers /api/users only).
         */
         await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 
@@ -539,15 +323,12 @@ public class TransferService : ITransferService
         Guid userId, TransferRequest request, Guid? stepUpAuthorizationId,
         CancellationToken cancellationToken = default)
     {
-        // Get sender's account with ownership check
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
             request.FromAccountId, userId, cancellationToken);
 
         /*
-          RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the
-          row's usefulness: the helper is static and runs before nothing, while HERE the sender's
-          account is already resolved -- so the refusal can name the account it was refused against
-          instead of naming nobody. Both transfer kinds go through the same helper, so both record.
+          Recorded here and not in RequireAuthorization, which is static: the sender's account is
+          resolved by now, so the refusal row can name the account it was refused against.
         */
         Guid authorizationId;
         try
@@ -568,53 +349,33 @@ public class TransferService : ITransferService
         var (senderUser, recipient, recipientAccount) =
             await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag, cancellationToken);
 
-        // Bound to recipient.Id, not the tag: a handle is renameable (ADR-0015), so an authorisation
-        // naming @admin would survive @admin becoming someone else's handle.
+        // Bound to recipient.Id, not to the handle, which can be renamed (ADR-0042 D4).
         var binding = new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount);
         await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding, cancellationToken);
 
         /*
-          THE DAY'S CEILING, PRE-CHECK (ADR-0050 D4). After ValidateAsync, so an expired or invalid
-          authorisation still wins first and this cannot become an oracle without a minted one; and
-          BEFORE the balance guard in the loop below, so the order on the wire is
-          401 AUTHORIZATION_REQUIRED → 404/422 payee → 401 AUTHORIZATION_EXPIRED/_INVALID →
-          422 DAILY_LIMIT_EXCEEDED → 422 INSUFFICIENT_FUNDS (the binding can only be validated once
-          the payee is resolved — RequireAuthorization's remarks above say why the two 401s split).
-          Daily before balance is a decision, not an accident: the mint has no balance check, so
-          keeping daily first makes the mint and the transfer refuse in the same order, and a
-          request that violates both answers the daily code.
-
-          A pre-check only — cheap, nothing written, on committed rows outside any transaction. Two
-          transfers from two DIFFERENT accounts of one user both pass it together, which is why the
-          authoritative check sits inside the transaction below.
+          The day's ceiling as a pre-check, outside any transaction (ADR-0050 D4): after
+          ValidateAsync, so that an invalid authorisation wins, and before the balance, so that the
+          mint and the transfer refuse in the same order. Two transfers from two accounts both pass
+          it, which is why the authoritative check is inside the transaction.
         */
         await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 
-        // Use transaction for atomicity; retry optimistic-concurrency
-        // conflicts on the accounts (see ConcurrencyRetry).
+        // Optimistic-concurrency conflicts on the accounts are retried (see ConcurrencyRetry).
         var strategy = _context.Database.CreateExecutionStrategy();
 
         for (var attempt = 1; ; attempt++)
         {
             /*
-              THE ACCOUNTS AGAIN, BEFORE THE BALANCE. It changes nothing on the first attempt. After
-              a lost save, the reload at the bottom of this loop hands both rows back, closed or
-              not, and the payee account to pay is the one this returns
-              (RefuseOrChooseThePayeeAccountAgainAsync): from here on the ledger row, the balance,
-              the log line and the next reload all name it. Ahead of the funds check on purpose:
-              the API closes only an empty account, so a sender's account that closed under this
-              transfer comes back with nothing in it, and the funds check would answer 422
-              INSUFFICIENT_FUNDS for an account that answers 404 to every other request.
-
-              THIS PLACE HOLDS THE SENDER'S ACCOUNT: it is what answers that 404 before the funds
-              check. For the payee's account the look after the preparation, inside the attempt, is
-              the one that matters; here the same choice is only made a moment earlier.
+              The accounts again, before the funds, because the API closes only an empty account:
+              one that closed under this transfer would answer INSUFFICIENT_FUNDS where every other
+              request answers 404 (ADR-0049 D9). The payee account this returns is the one that the
+              ledger row, the log line and the next reload name.
             */
             recipientAccount = await RefuseOrChooseThePayeeAccountAgainAsync(
                 fromAccount, recipient, recipientAccount, cancellationToken);
 
-            // Check sufficient funds (inside the loop: a reloaded balance
-            // may no longer cover the transfer)
+            // Inside the loop: a reloaded balance may no longer cover the transfer.
             if (fromAccount.Balance < request.Amount)
             {
                 throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
@@ -624,11 +385,10 @@ public class TransferService : ITransferService
             {
                 return await strategy.ExecuteAsync(async ct =>
                 {
-                    // EnableRetryOnFailure re-runs this whole delegate on a
-                    // transient fault against the SAME DbContext. Make each
-                    // attempt idempotent: discard the failed attempt's tracked
-                    // work (Case A) and never re-execute an already-committed
-                    // transfer (Case B). See PrepareTransferAttemptAsync.
+                    // EnableRetryOnFailure runs this delegate again on a transient fault, against
+                    // the same DbContext. Case A discards the failed attempt's tracked work, and
+                    // case B never runs a committed transfer again: see
+                    // PrepareTransferAttemptAsync.
                     await PrepareTransferAttemptAsync([fromAccount, recipientAccount], ct);
 
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync(ct);
@@ -636,16 +396,10 @@ public class TransferService : ITransferService
                     try
                     {
                         /*
-                          THE ACCOUNTS, THE FUNDS AND THE DAY'S CEILING, AS THE RELOAD LEFT THEM
-                          (RefuseWhatAnAttemptRefusesAsync says why each look is there, and in that
-                          order). Inside the transaction, because the day's sum is read under a
-                          lock the transaction holds; a refusal rolls back a transaction that has
-                          written nothing.
-
-                          AFTER the preparation, and not inside it between its reload and its read
-                          of the claim: a transfer that committed and lost its acknowledgement is
-                          answered from its claim, also when an account closed in between
-                          (ClosureAfterALostAcknowledgementSqlServerTests).
+                          Inside the transaction, because the day's sum is read under the lock it
+                          holds, and after the preparation, not inside it: a transfer that committed
+                          and lost its acknowledgement is answered from its claim even when an
+                          account closed since (ADR-0049 D9).
                         */
                         recipientAccount = await RefuseWhatAnAttemptRefusesAsync(
                             userId, request.Amount, fromAccount, recipient, recipientAccount,
@@ -653,21 +407,14 @@ public class TransferService : ITransferService
 
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
 
-                        /*
-                          No `now` here on purpose. AzureBankDbContext.UpdateTimestamps owns
-                          CreatedAt/UpdatedAt and runs inside SaveChanges, so anything this method
-                          assigned was overwritten a moment later. The one value that used to
-                          SURVIVE was the copy handed back as ProcessedAt — so the API reported an
-                          instant the database never held. ProcessedAt is now read back from the
-                          persisted row, below.
-                        */
+                        // No timestamp is set here: UpdateTimestamps owns CreatedAt and UpdatedAt
+                        // inside the save, so a value assigned here would be overwritten.
+                        // ProcessedAt is read back from the saved row below, so that the API
+                        // reports the instant the database holds.
 
-                        // Create outgoing transaction (sender).
-                        // RelatedTransactionId stays null for now: the pair
-                        // references each other, and two mutually referencing
-                        // INSERTs are a circular FK dependency SQL Server
-                        // cannot order. The back-link is written once below,
-                        // inside this same transaction.
+                        // RelatedTransactionId stays null: two rows that reference each other are a
+                        // circular foreign-key dependency that SQL Server cannot insert in one
+                        // pass. The back-link is written below, inside the same transaction.
                         var outgoingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
@@ -684,18 +431,14 @@ public class TransferService : ITransferService
                             Status = TransactionStatus.Completed
                         };
 
-                        // Create incoming transaction (recipient). No IdempotencyKey: the row is the
-                        // payee's, and the key is the sender's handle on its own request, which the
-                        // payee is never handed (ADR-0009).
+                        // No IdempotencyKey on the payee's row: the key is the sender's handle on
+                        // its own request, which the payee is never handed (ADR-0009).
                         var incomingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
-                            // Own number in the documented format: the old "-R"
-                            // suffix appended to the OUTGOING number overflowed
-                            // the column, and SQL Server rejected EVERY transfer
-                            // with a truncation error. Generating a second number
-                            // is also what keeps the check symbol correct on both
-                            // rows. The pair is linked by RelatedTransactionId.
+                            // Its own number: a suffix on the outgoing one overflows the column,
+                            // and the check symbol is right on both rows only when each number is
+                            // generated (ADR-0035).
                             TransactionNumber = IdGenerator.GenerateTransactionNumber(),
                             AccountId = recipientAccount.Id,
                             Account = recipientAccount,
@@ -709,34 +452,16 @@ public class TransferService : ITransferService
                             Status = TransactionStatus.Completed
                         };
 
-                        // Update balances
                         fromAccount.Balance -= request.Amount;
                         recipientAccount.Balance += request.Amount;
 
-                        // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
                         _context.Transactions.Add(incomingTransaction);
 
                         /*
-                          ONE ROW FOR ONE ACT. A transfer writes two ledger rows — a debit and a
-                          credit — but they are the bookkeeping of a single thing the actor did, so
-                          the audit trail records it once. The subject is the OUTGOING row: the one
-                          whose owner IS the actor, and the one the step-up authorisation is consumed
-                          against a few lines below.
-
-                          That choice matters more here than anywhere else in this file. The incoming
-                          row lands on the PAYEE's account, and its Account.UserId is provably not the
-                          acting principal — the payee is resolved by handle with no ownership check,
-                          and the self-transfer guard plus the unique AzureTag index make the two ids
-                          different by construction. Subjecting the audit row to that row would name
-                          the wrong person.
-
-                          Detail names the authorisation this transfer consumes, and nothing else:
-                          amount, counterparty and description are on the ledger rows SubjectId
-                          reaches (ADR-0044 D5). The id is on no ledger row and is the actor's own
-                          act, so D5 holds; what it buys is a binding inside the chain, where the
-                          only one until 2026-09-14 lived in the unchained authorisation table
-                          (AuditDetails, ADR-0044 D8).
+                          One audit row for the act, on the outgoing ledger row: its account is the
+                          actor's, where the incoming row lands on the payee's. Detail names the
+                          authorisation this transfer consumes and nothing else (ADR-0044 D5).
                         */
                         _audit.Record(
                             SecurityEvents.MoneyTransferred, AuditOutcome.Succeeded,
@@ -750,14 +475,9 @@ public class TransferService : ITransferService
                         outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
                         await _context.SaveChangesAsync(ct);
 
-                        /*
-                          Spend the authorisation INSIDE this transaction, and after the rows exist
-                          so the evidence can name the movement it paid for. One set-based UPDATE
-                          conditional on the row still being Pending: two concurrent transfers
-                          presenting the same authorisation resolve to exactly one success, because
-                          the loser matches zero rows and ConsumeAsync throws — which rolls this
-                          transaction back rather than moving money on a spent authorisation.
-                        */
+                        // Spent inside the transaction and after the rows exist, so that it names
+                        // the outgoing row. A second transfer on the same authorisation matches no
+                        // row, and the throw rolls this one back (ADR-0042 D6).
                         if (stepUpAuthorizationId is { } toConsume)
                         {
                             await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id, ct);
@@ -767,10 +487,8 @@ public class TransferService : ITransferService
                         // fired, and once started, nothing cancels it.
                         await dbTransaction.CommitAsync(ct);
 
-                        // No amount in the log line: logs are exported (Loki), and a money amount
-                        // is financial data — the transaction number is the audit-trail key.
-                        // Accounts, not handles (ADR-0017's log-identifier rule, 2026-09-11): the
-                        // same ids the internal transfer's line below already logs.
+                        // No amount and no handle in the log line (ADR-0017): the transaction
+                        // number is the audit-trail key.
                         _logger.LogInformation(
                             "Transfer from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
                             fromAccount.Id, recipientAccount.Id, transactionNumber);
@@ -783,19 +501,17 @@ public class TransferService : ITransferService
                             NewBalance = fromAccount.Balance,
                             RecipientAzureTag = recipient.AzureTag,
                             RecipientName = $"{recipient.FirstName} {recipient.LastName[0]}.",
-                            // The PERSISTED instant: UpdateTimestamps stamped it during the first
-                            // SaveChanges above, onto this tracked entity.
+                            // The persisted instant: UpdateTimestamps stamped it in the first save,
+                            // onto this tracked entity.
                             ProcessedAt = outgoingTransaction.CreatedAt
                         };
                     }
                     catch
                     {
-                        // Preserve the ORIGINAL fault (e.g. the transient the
-                        // execution strategy must see to retry): rolling back a
-                        // transaction whose connection/commit already failed can
-                        // itself throw and would otherwise mask it. Never the
-                        // request's token: a cancelled request is exactly the one
-                        // whose rollback must run.
+                        // Keep the original fault, such as the transient the execution strategy
+                        // must see to retry: a rollback on a connection that already failed can
+                        // throw and would mask it. Never the request's token: a cancelled request
+                        // is the one whose rollback must run.
                         try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
@@ -813,43 +529,11 @@ public class TransferService : ITransferService
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
             {
                 /*
-                  THE LAST ATTEMPT LOST AN ACCOUNT TOO, the sender's or the payee's: the save
-                  carries both rows. The answer is the deposit's, by the deposit's rule
-                  (TransactionService.DepositAsync says why each step is there): the busy 503 only
-                  when the record, read now, is still this request's own claim with no commit let
-                  start.
-
-                  HERE, WHERE THE LOOP GIVES UP, and not inside the delegate: the conflict has left
-                  the execution strategy, the attempt's transaction is rolled back with the daily
-                  limit's lock it held, and nothing runs the delegate again.
-
-                  THEN THE LOOKS AN ATTEMPT TAKES BEFORE ITS SAVE, ONCE MORE, WITH THE ATTEMPT'S
-                  ANSWER. The busy 503 says "send it again", so it is given only when nothing an
-                  attempt looks at refuses the write at that moment. The accounts from the store,
-                  and the looks of an attempt in their order, by the method the attempt calls. The
-                  sender's account closed is the 404. The payee's account closed is chosen again:
-                  with another account of the payee open the transfer can still be busy, and sent
-                  again it has that one to pay; with none open it is the 422 of a payee with no
-                  account. A debit that left too little is the 422 of the funds, and a day that
-                  another transfer filled is the 422 of the ceiling, read without the lock:
-                  nothing is saved after it.
-
-                  NOT THE PAYEE'S HANDLE. It is resolved once per request, before the first
-                  attempt, and no attempt looks at it again, so neither does this: a payee who
-                  gave the handle up during the attempts is still the payee here, and the
-                  transfer can be answered busy.
-
-                  AND THE AUTHORISATION. An attempt looks at it when it spends it, after both
-                  saves, and here no save follows; so the validation that ran before the first
-                  attempt runs again, reading and writing nothing. This request has not spent it:
-                  the spend is sent inside the transaction, and no transaction that sent it was
-                  let commit. But another request can have spent it meanwhile, which is the 401
-                  an attempt's spend gives, and it can have expired, which is the 401 of the
-                  validation: AUTHORIZATION_EXPIRED, where an attempt's spend gives
-                  AUTHORIZATION_INVALID.
-
-                  ONLY WHEN NONE OF THEM REFUSES ARE THE ACCOUNTS BUSY. BusyMoneyWriteSqlServerTests
-                  holds each answer, and the day's ceiling untouched by a transfer answered busy.
+                  The last attempt lost an account too, and the answer is the deposit's (ADR-0058
+                  D6). It is given here and not inside the delegate, because the conflict has left
+                  the execution strategy, the attempt's transaction is rolled back with the lock it
+                  held, and nothing runs the delegate again. The looks an attempt takes before its
+                  save run once more.
                 */
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {
@@ -873,11 +557,10 @@ public class TransferService : ITransferService
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
                 // A regenerable clash on the transaction number: the next attempt mints a fresh
-                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
-                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
-                // authoritative copy instead of four that drift. Warning, not Information: it
-                // should never happen, so an occurrence means the entropy assumption deserves
-                // re-checking, which needs to know WHICH account.
+                // one. Why that is safe, and why the match is on the index name, is on
+                // ConcurrencyRetry.IsTransactionNumberCollision. It is logged as a warning because
+                // it should never happen: an occurrence means the number's entropy needs another
+                // look.
                 _logger.LogWarning(
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on transfer from "
@@ -894,29 +577,17 @@ public class TransferService : ITransferService
         Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId,
         CancellationToken cancellationToken = default)
     {
-        // Validate accounts belong to user
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
             request.FromAccountId, userId, cancellationToken);
         var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(
             request.ToAccountId, userId, cancellationToken);
 
         /*
-          AFTER BOTH OWNERSHIP CHECKS here, where the external path refuses before resolving its
-          payee — and the asymmetry is deliberate rather than an oversight.
-
-          It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the reason the two
-          differ is what the check upstream of it reveals. On the external path that is SOMEONE
-          ELSE's handle, so answering it to a caller holding no second factor would turn the
-          endpoint into a directory. Here both accounts are the caller's OWN: `GetAccountWithOwner-
-          shipCheckAsync` tells them only what `GET /api/accounts` already does, so there is nothing
-          to withhold and the more specific refusal is the more useful one.
+          After both ownership checks, where the external path refuses before it resolves a payee:
+          the accounts here are the caller's own, so the more specific refusal withholds nothing
+          (ADR-0042 D8).
         */
-        /*
-          RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the
-          row's usefulness: the helper is static and runs before nothing, while HERE the sender's
-          account is already resolved -- so the refusal can name the account it was refused against
-          instead of naming nobody. Both transfer kinds go through the same helper, so both record.
-        */
+        // Recorded at the call site, for the reason TransferAsync gives.
         Guid authorizationId;
         try
         {
@@ -926,11 +597,8 @@ public class TransferService : ITransferService
         {
             await _audit.RecordRefusalAsync(
                 SecurityEvents.MoneyTransferRefused, AuditOutcome.Refused,
-                // fromAccount, NOT toAccount: the subject is the account the money would have LEFT
-                // and the one the step-up is consumed against, which is the same rule the four
-                // success events follow. An internal transfer resolves both accounts before this
-                // point, so the nearer variable is the destination -- and naming it here would put
-                // the refusal on the wrong account while every test still passed.
+                // The subject is fromAccount, the account the money would have left, as in the four
+                // success events. toAccount is the nearer variable here, and the wrong one.
                 actorUserId: userId, subjectType: "Account", subjectId: fromAccount.Id,
                 detail: ErrorCodes.AuthorizationRequired,
                 // Never the request's token: the refusal's row must land (ADR-0044 D1, ADR-0058).
@@ -944,9 +612,9 @@ public class TransferService : ITransferService
             throw new BusinessRuleException("Cannot transfer to the same account.", ErrorCodes.SameAccountTransfer);
         }
 
-        // The payee is the payer, so the binding names the destination ACCOUNT instead of a
-        // recipient user. Same hash definition, different populated fields. One binding for the
-        // request: the look a transfer past its attempts takes at its authorisation uses it too.
+        // The payee is the payer, so the binding names the destination account and no recipient
+        // user. One binding for the request: the look a transfer past its attempts takes at its
+        // authorisation uses it too.
         var binding = new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount);
         await _stepUp.ValidateAsync(
             userId, authorizationId, StepUpOperation.InternalTransfer, binding, cancellationToken);
@@ -955,25 +623,21 @@ public class TransferService : ITransferService
         // counted (ADR-0050 D2). The row this path writes carries no RecipientAzureTag, which is
         // what keeps it out of the day's sum.
 
-        // Use transaction for atomicity; retry optimistic-concurrency
-        // conflicts on the accounts (see ConcurrencyRetry).
+        // Optimistic-concurrency conflicts on the accounts are retried (see ConcurrencyRetry).
         var strategy = _context.Database.CreateExecutionStrategy();
 
         for (var attempt = 1; ; attempt++)
         {
-            // Both accounts again before the balance, here and after the reload inside the attempt,
-            // for the reasons TransferAsync gives at the same two places.
+            // Both accounts again before the balance, here and after the reload inside the attempt
+            // (ADR-0049 D9).
             RefuseWhatTheReloadedAccountsRefuse(fromAccount, toAccount, request.Amount);
 
             try
             {
                 return await strategy.ExecuteAsync(async ct =>
                 {
-                    // EnableRetryOnFailure re-runs this whole delegate on a
-                    // transient fault against the SAME DbContext. Make each
-                    // attempt idempotent: discard the failed attempt's tracked
-                    // work (Case A) and never re-execute an already-committed
-                    // transfer (Case B). See PrepareTransferAttemptAsync.
+                    // As in TransferAsync: a transient fault runs this delegate again against the
+                    // same DbContext, so each attempt starts from PrepareTransferAttemptAsync.
                     await PrepareTransferAttemptAsync([fromAccount, toAccount], ct);
 
                     // The second place: the line above reloads on every attempt, the first included.
@@ -985,16 +649,16 @@ public class TransferService : ITransferService
                     {
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
 
-                        // No `now` here — same reason as the external transfer above:
-                        // UpdateTimestamps owns the stamp, and ProcessedAt is read back below.
+                        // No timestamp is set here, as in the external transfer: UpdateTimestamps
+                        // owns the stamp, and ProcessedAt is read back below.
 
                         // On both rows, where the external transfer puts it on one: both accounts
                         // are the caller's own.
                         var idempotencyKey = ConcurrencyRetry.ClaimedKey(_context);
 
-                        // Create outgoing transaction. RelatedTransactionId
-                        // stays null: mutual references cannot be inserted in
-                        // one shot (circular FK); back-link written below.
+                        // RelatedTransactionId stays null: rows that reference each other cannot be
+                        // inserted in one pass (circular foreign key). The back-link is written
+                        // below.
                         var outgoingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
@@ -1010,12 +674,10 @@ public class TransferService : ITransferService
                             Status = TransactionStatus.Completed
                         };
 
-                        // Create incoming transaction
                         var incomingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
-                            // Own number (documented format; the old "-I"
-                            // suffix exceeded the column max length, see above)
+                            // Its own number, as in the external transfer.
                             TransactionNumber = IdGenerator.GenerateTransactionNumber(),
                             AccountId = toAccount.Id,
                             Account = toAccount,
@@ -1029,18 +691,16 @@ public class TransferService : ITransferService
                             Status = TransactionStatus.Completed
                         };
 
-                        // Update balances
                         fromAccount.Balance -= request.Amount;
                         toAccount.Balance += request.Amount;
 
-                        // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
                         _context.Transactions.Add(incomingTransaction);
 
-                        // Same shape as the external transfer above, and a DIFFERENT event on
-                        // purpose: a move between the actor's own accounts and a payment to a third
-                        // party do not carry the same weight, and an evidence pack should not have
-                        // to re-derive which one this was from the ledger.
+                        // A different event from the external transfer's, on purpose: a move
+                        // between the actor's own accounts and a payment to a third party do not
+                        // weigh the same, and an evidence pack should not have to derive which it
+                        // was from the ledger.
                         _audit.Record(
                             SecurityEvents.MoneyTransferredInternally, AuditOutcome.Succeeded,
                             actorUserId: userId, subjectType: "Transaction",
@@ -1061,7 +721,7 @@ public class TransferService : ITransferService
                         // Through the commit gate, as the external transfer's commit above.
                         await dbTransaction.CommitAsync(ct);
 
-                        // No amount in the log line (financial data in an exported log — see above).
+                        // No amount in the log line, as in the external transfer (ADR-0017).
                         _logger.LogInformation(
                             "Internal transfer from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
                             fromAccount.Id, toAccount.Id, transactionNumber);
@@ -1077,17 +737,14 @@ public class TransferService : ITransferService
                             Description = request.Description,
                             FromAccountNewBalance = fromAccount.Balance,
                             ToAccountNewBalance = toAccount.Balance,
-                            // The PERSISTED instant, not a copy the hook then overwrote.
+                            // The persisted instant, not a copy that the save then overwrote.
                             ProcessedAt = outgoingTransaction.CreatedAt
                         };
                     }
                     catch
                     {
-                        // Preserve the ORIGINAL fault (e.g. the transient the
-                        // execution strategy must see to retry): rolling back a
-                        // transaction whose connection/commit already failed can
-                        // itself throw and would otherwise mask it. Never the
-                        // request's token, as above.
+                        // Keep the original fault, and never the request's token, as in
+                        // TransferAsync.
                         try { await dbTransaction.RollbackAsync(CancellationToken.None); }
                         catch { /* best effort: the transaction may already be gone */ }
                         throw;
@@ -1104,14 +761,9 @@ public class TransferService : ITransferService
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.IsAccountRace(ex))
             {
-                // The last attempt lost an account too: the external transfer's answer at the same
-                // place, by the same rule. After the proof that nothing committed, the looks an
-                // attempt takes before its save, once more, by the method the attempt calls: both
-                // accounts are the caller's own, so one that closed as the last attempt lost is
-                // the 404 of every other attempt, as is a destination whose row went, and a debit
-                // that left too little is the 422. Then the authorisation, by the validation that
-                // ran before the first attempt: spent by another request or expired meanwhile, it
-                // is that validation's 401. Only when none of them refuses are the accounts busy.
+                // The last attempt lost an account too: the answer of TransferAsync at the same
+                // place, by the same rule (ADR-0058 D6). Both accounts are the caller's own, so one
+                // that closed meanwhile is the 404 of every other attempt.
                 if (!await ConcurrencyRetry.ClaimIsOwnAndNothingCommittedAsync(_context, cancellationToken))
                 {
                     throw;
@@ -1130,12 +782,7 @@ public class TransferService : ITransferService
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                // A regenerable clash on the transaction number: the next attempt mints a fresh
-                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
-                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
-                // authoritative copy instead of four that drift. Warning, not Information: it
-                // should never happen, so an occurrence means the entropy assumption deserves
-                // re-checking, which needs to know WHICH account.
+                // A regenerable clash on the transaction number, as in TransferAsync.
                 _logger.LogWarning(
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
@@ -1148,36 +795,11 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
-    /// Prepares one more transfer attempt. The logic moved to
-    /// <see cref="ConcurrencyRetry.PrepareIdempotentAttemptAsync"/> when the withdrawal joined the
-    /// step-up rail and needed it verbatim (ADR-0056); this stays as the name the two transfer call
-    /// sites read by, and as the place their Case-A/Case-B notes point at.
+    /// Prepares one more transfer attempt through
+    /// <see cref="ConcurrencyRetry.PrepareIdempotentAttemptAsync"/>, which the withdrawal shares
+    /// (ADR-0056). Case A: nothing committed, and the attempt starts from the store. Case B: the
+    /// commit landed and its acknowledgement was lost, and the transfer is not run again.
     /// </summary>
-    /// <remarks>
-    /// Idempotent reset run at the TOP of every transfer execution attempt.
-    /// The EF execution strategy (EnableRetryOnFailure, production only) re-runs
-    /// the delegate on a transient fault against the SAME shared DbContext, so
-    /// each attempt must rebuild the same state from scratch.
-    ///
-    /// Case A — the fault hit before/at the business SaveChanges (nothing
-    /// committed): <see cref="ConcurrencyRetry.ResetToStoreAsync"/> detaches the
-    /// leftover Added/Unchanged Transaction rows and reloads the accounts, so a
-    /// fresh attempt does not double the transactions or the balance mutations.
-    ///
-    /// Case B — the fault hit after the transaction actually committed (commit
-    /// ack lost): the idempotency record is already Executed/Completed in the
-    /// DATABASE. Re-executing would post a SECOND real transfer, so we re-read
-    /// the record fresh and signal the documented "committed, response unknown"
-    /// path (409 IDEMPOTENCY_RESULT_UNKNOWN) instead of creating new rows.
-    ///
-    /// If the record is still Processing (nothing committed), we realign the
-    /// tracked record to database truth and re-apply the pending Executed flip
-    /// (rotating the fencing token) so it rides THIS attempt's SaveChanges even
-    /// if a prior attempt's AcceptAllChanges had already marked it Unchanged.
-    ///
-    /// The idempotency step is a no-op when no record is tracked (e.g. a direct
-    /// service-level call outside the middleware): there is nothing to guard.
-    /// </remarks>
     private Task PrepareTransferAttemptAsync(Account[] accounts, CancellationToken cancellationToken) =>
         ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, accounts, cancellationToken);
 }

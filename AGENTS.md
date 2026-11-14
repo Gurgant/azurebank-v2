@@ -124,8 +124,9 @@ every pull request.
   `python infra/check_british_spelling.py` reports an American form; in CI that is a red mark
   that blocks no merge. A name that keeps its own spelling goes in backticks, or in
   `infra/british_spelling_allowed.txt` with its reason.
-- A comment explains a constraint the code cannot show. It does not restate the next line and it
-  does not argue that the change is right.
+- A comment explains a constraint the code cannot show. It does not restate the next line, say
+  where the code came from or argue that the change is right: no date, no review round, no
+  capitals for emphasis. A longer reason goes in the decision record the comment names.
 - No at-sign in front of a name in a commit message, a pull request, a comment or a review:
   GitHub links it to the real account of that name, and outside a commit message notifies it.
   The one exception is the review bot's own handle in a request for review.

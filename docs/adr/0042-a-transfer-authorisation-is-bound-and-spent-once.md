@@ -45,8 +45,12 @@ and no change invalidated it (d).
    half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
    are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN
    check occupied, after the source account's ownership 404 and before the payee is resolved, so a
-   caller with no second factor cannot ask this endpoint which handles exist.
-   `StepUpAuthorizationOperationTransformer` publishes the header as required.
+   caller with no second factor cannot ask this endpoint which handles exist. The presence check is
+   a method of its own, apart from the validation, because it needs only the header and the
+   validation needs the payee, which exists once the handle is resolved. On an internal transfer
+   both accounts are the caller's own, so the check follows both ownership checks: the more
+   specific refusal withholds nothing. `StepUpAuthorizationOperationTransformer` publishes the
+   header as required.
 
 ### Error codes
 

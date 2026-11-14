@@ -49,11 +49,11 @@ import {
  */
 
 /**
- * `pin` is ADR-0041's step. A transfer now carries its PIN in the request body and the API verifies
- * it, so the credential is collected HERE — in the flow — rather than by the root step-up modal
- * reacting to a 403 from the BFF. Both consumers of this hook move money and both need it, which is
- * why the step lives in the shared machine; the PIN VALUE does not, because only the page knows
- * which body field it belongs in.
+ * `pin` is ADR-0041's step. The PIN goes to the mint, and the transfer carries the authorisation
+ * that comes back (ADR-0042), so the credential is collected here, in the flow, rather than by the
+ * root step-up modal reacting to a 403 from the BFF. Both consumers of this hook move money and
+ * both need it, which is why the step lives in the shared machine; the PIN value does not, because
+ * only the page knows which mint it goes to.
  */
 export type MoneyWizardStep = 'form' | 'review' | 'pin';
 
