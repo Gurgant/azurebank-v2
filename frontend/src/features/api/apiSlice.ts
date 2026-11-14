@@ -75,8 +75,11 @@ function staleBalanceTags(error: unknown, accountIds: (string | undefined)[]) {
  * shown without the movement. Measured on the running app before this: behind a deposit that had
  * landed, the dashboard kept the old balance through the lost answer and the check view.
  *
- * Keyed on the code alone. The other two ways a send ends up unconfirmed, a rejection with no
- * HTTP status and a 409 that named no code, refresh nothing here.
+ * Keyed on the code alone. The other ways a send ends up unconfirmed invalidate nothing here: a
+ * 409 that named no code and a limiter's refusal of a resend carry no code that does, and a
+ * rejection with no HTTP status, a body that failed its schema or an abort never reaches
+ * `invalidatesTags`. The check view invalidates these same tags itself when it is given the copy
+ * of a send, whichever way the send latched it (`foundTags`, `useMovementCheck`).
  */
 function outcomeUnknown(error: unknown): boolean {
   return (error as ApiProblem | undefined)?.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN';
@@ -100,11 +103,13 @@ function closedAccountTags(error: unknown) {
 }
 
 /**
- * A movement the listing found by a send's key: the send went through, so what it changed is
- * stale here, and the tags are the ones the send's success invalidates. A move names both of its
- * accounts, whichever of the two it was found on.
+ * The tags a send's success invalidates, from the account the listing is asked on and a move's
+ * other account. `findMovementByKey` invalidates them when it finds the movement: the send went
+ * through, so what it changed is stale here. The check view invalidates them as it is given the
+ * copy of a send whose outcome is unknown, since the send may have gone through
+ * (`useMovementCheck`). A move names both of its accounts, whichever of the two it is asked on.
  */
-function foundTags(arg: MovementLookupArg) {
+export function foundTags(arg: Pick<MovementLookupArg, 'accountId' | 'otherAccountId'>) {
   return [
     { type: 'Account' as const, id: arg.accountId },
     ...(arg.otherAccountId ? [{ type: 'Account' as const, id: arg.otherAccountId }] : []),
@@ -210,7 +215,9 @@ export const HISTORY_PAGE_SIZE = 20;
  * the LIST (`closedAccountTags`), in the mutation itself: on rename, setPrimary, delete, the
  * reveal of the full number, deposit, withdraw, transfer, internal and the four mints of an
  * authorisation. The account is already gone; the LIST is stale.
- * `findMovementByKey` invalidates the send's success tags when it finds the movement.
+ * `findMovementByKey` invalidates the send's success tags when it finds the movement, and the
+ * check view invalidates them when it is given the copy of any send left unconfirmed, whatever
+ * latched it (`foundTags`, `useMovementCheck`).
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
