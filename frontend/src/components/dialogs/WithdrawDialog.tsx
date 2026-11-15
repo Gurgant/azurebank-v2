@@ -20,7 +20,12 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
-import { isProvenCommit, isUnconfirmedSend, type MoneyPhase } from '../../api/moneyProblem';
+import {
+  isLimiterRefusal,
+  isProvenCommit,
+  isUnconfirmedSend,
+  type MoneyPhase,
+} from '../../api/moneyProblem';
 import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { useMountedRef } from '../../hooks/useMountedRef';
@@ -550,7 +555,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     `phase` is which call failed, and it matters only where the two differ: a SEND with no HTTP
     status, answered a 409 that named no code, or refused by a limiter on a resend has latched
     verify-first in the hook (the withdrawal may have landed). A MINT with any of these moved
-    nothing and keeps the fallback sentence; an outage during the mint moved no money.
+    nothing and keeps the fallback sentence, but for a limiter's refusal of a mint under a
+    retained key, which shows the check view (below); an outage during the mint moved no money.
   */
   const handleRefusal = (problem: ApiProblem, phase: MoneyPhase) => {
     if (
@@ -651,6 +657,20 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       }
     } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
       setError(CONNECTION_FAILED);
+    } else if (phase === 'mint' && keyRetained && isLimiterRefusal(problem)) {
+      /*
+        A limiter refused the mint made under a retained key, which follows only a refused
+        authorisation: `RATE_LIMIT_EXCEEDED`, a demo copy past its limit, which refuses every
+        mint after this one, or a 429 whose code cannot be read. The key keeps the X disabled,
+        and Withdraw can only ask the limiter again. So the dialog latches the check view as
+        `accountIsClosed` does, without the closed account: the key is let go, and the view's
+        "It didn't go through — try again" leads back to the form. Every authorisation presented
+        under the key was refused, so it is offered once the listing has answered, with no wait
+        for the bound. With no key held the X is open, and the last arm says the refusal.
+      */
+      requireVerify();
+      setError(null);
+      setInFlight(false);
     } else {
       setError(problem.detail || 'Withdrawal failed. Please try again.');
     }
@@ -670,7 +690,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // rather than rotating — which also drops the key, so dismissal does come back, but by way of
   // a view that says the request may or may not have gone through. The only explicit release
   // left is the verify branch's "It didn't go through — try again"; for a closed account the
-  // release is `accountIsClosed`, whose check view has no way back to the form. The verify
+  // release is `accountIsClosed`, whose check view has no way back to the form, and for a
+  // limiter's refusal of a mint under the key it is the same latch in `handleRefusal`. The verify
   // branch is not drawn when the answer said `applied: true`: the went-through view takes its
   // place, with the key dropped and dismissal back all the same, and it offers no release at
   // all — `resetIntent` does nothing there.
