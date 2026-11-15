@@ -8,7 +8,7 @@ namespace AzureBank.Shared.Options;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Policy, not regulation. PSD2 Art. 68(1) lets the payer and the payment service provider AGREE a
+/// Policy, not regulation. PSD2 Art. 68(1) lets the payer and the payment service provider agree a
 /// spending limit, and fixes no figure, no window and no zone. The figure is ours, and it is the
 /// first slice of the backlog's umbrella entry ("Transaction limits and tiering") — one number, one
 /// window, external transfers only. Tiers, rolling windows, withdrawals under an aggregate and
@@ -17,7 +17,7 @@ namespace AzureBank.Shared.Options;
 /// <c>UseSetting</c> to make the SQL Server proof cheap.
 /// </para>
 /// <para>
-/// An aggregate has no JSON-schema slot, so this number is deliberately NOT a schema
+/// An aggregate has no JSON-schema slot, so this number is deliberately not a schema
 /// <c>maximum</c>: <c>ValidationRules.TransactionMaxAmount</c> stays the one per-request bound the
 /// document publishes (ADR-0046 D1), and this one reaches the client only through the refusal body.
 /// </para>
@@ -28,7 +28,7 @@ public class DailyLimitOptions
     public const string SectionName = "DailyLimit";
 
     /// <summary>
-    /// The sum of a user's COMPLETED external <c>TransferOut</c> rows in the current UTC calendar
+    /// The sum of a user's completed external <c>TransferOut</c> rows in the current UTC calendar
     /// day, plus the requested amount, may not exceed this. Validated at startup: positive, and at
     /// most two decimals, so no sub-cent noise can reach the 422 body.
     ///
@@ -46,47 +46,19 @@ public class DailyLimitOptions
     /// How long a transfer may wait for the payer's application lock, in seconds, before the
     /// movement is refused as a fault. Bounds the queue same-payer transfers stand in
     /// (<c>TransferService.DailyLimitLockSql</c>); passed to <c>sp_getapplock</c> as
-    /// <c>@LockTimeout</c>, in MILLISECONDS.
+    /// <c>@LockTimeout</c>, in milliseconds.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// MEASURED, which is why this exists at all. <c>sp_getapplock</c> called without
-    /// <c>@LockTimeout</c> waits at <c>@@LOCK_TIMEOUT</c>, and that session default is
-    /// <b>-1 — wait forever</b> (read off the waiter's own connection on LocalDB, 2026-09-07). The
-    /// only thing that ended the wait was the global 30-second command timeout set in
-    /// <c>AddInfrastructure</c>
-    /// (<c>AzureBank.Infrastructure/Extensions/ServiceCollectionExtensions.cs</c>,
-    /// <c>sqlOptions.CommandTimeout(30)</c>) — which bounds the whole statement rather than the
-    /// wait, and holds an open transaction and a pooled connection for half a minute while it does.
-    /// With the parameter supplied the wait ends at the parameter: a holder took the lock in one
-    /// transaction and a second connection asking with <c>@LockTimeout = 2000</c> was refused
-    /// <b>-1 after 2,006-2,012 ms across three runs</b>.
-    /// </para>
-    /// <para>
-    /// TEN SECONDS, and the number is bracketed rather than guessed. The lock is held from the
-    /// first statement of the transfer's transaction to its commit, and that span CONTAINS the
-    /// audit chain's tail read, which <see cref="AuditOptions.TailTimeoutSeconds"/> already bounds
-    /// at five — so anything at or below five would refuse a waiter whose winner was still inside a
-    /// wait the bank had been told to tolerate. Ten is two of those, and a third of the command
-    /// timeout above it, so the refusal is always THIS bound's and never the statement's.
-    /// </para>
-    /// <para>
-    /// A REFUSED LOCK IS A FAULT, NOT A LIMIT REFUSAL. Waiting out this bound says the server was
-    /// busy, not that the payer's day is full, so the batch raises and the transfer fails loudly —
-    /// it must never become a <c>DailyLimitExceededException</c>, whose 422 tells the client a
-    /// figure that was never computed.
-    /// </para>
+    /// Called without a lock timeout, <c>sp_getapplock</c> waits for ever and only the 30-second
+    /// command timeout ends the wait (ADR-0050 D5 has the measurement). The default, ten seconds,
+    /// is above <see cref="AuditOptions.TailTimeoutSeconds"/> (five), because the lock's span
+    /// contains the audit chain's tail read, and below the command timeout, so this bound is the
+    /// one that fires. A refused lock is a fault, never a <c>DailyLimitExceededException</c>.
     /// </remarks>
     /*
-      RANGE-VALIDATED, because the two invalid values fail in opposite and equally bad ways — the
-      shape Audit:TailTimeoutSeconds records for the same reason.
-      ZERO is the dangerous one here in the other direction: sp_getapplock reads @LockTimeout = 0 as
-      DO NOT WAIT, so a plausible typo would turn every concurrent transfer by one payer into an
-      immediate fault instead of a queue of milliseconds.
-      NEGATIVE is the bug this option removes: -1 is sp_getapplock's own "wait forever", so a
-      negative value would silently restore the unbounded wait.
-      TWENTY-NINE is not a considered maximum; it is the largest whole second STRICTLY BELOW the
-      30-second CommandTimeout, so the wait can never outlive the statement that carries it.
+      Range 1 to 29: zero would mean do not wait, so a typo would turn every concurrent transfer by
+      one payer into an immediate fault, and a negative value is the wait for ever this option
+      removes. 29 is the largest whole second below the 30-second command timeout.
     */
     [Range(1, 29, ErrorMessage =
         "DailyLimit:LockTimeoutSeconds must be between 1 and 29. Zero means DO NOT WAIT to "

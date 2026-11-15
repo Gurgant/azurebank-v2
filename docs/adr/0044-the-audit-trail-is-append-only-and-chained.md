@@ -75,7 +75,9 @@ from modification, and PSD2 Art. 72 that an institution can reconstruct what hap
   Four are money movements (B1 in the code), `MoneyDeposited`, `MoneyWithdrawn`, `MoneyTransferred`
   and `MoneyTransferredInternally`: one row each, a transfer's on its outgoing ledger row, dropped
   with a failed attempt (`ADepositThatRetries_WritesExactlyOneAuditRow`), and no log line: evidence
-  to keep, not an alert. Five are refusals: `MoneyWithdrawalRefused`, `MoneyTransferRefused` and
+  to keep, not an alert. A transfer's row is on the outgoing ledger row because, on an external
+  transfer, the incoming row's account is the payee's and the audit row is the actor's. Five are
+  refusals: `MoneyWithdrawalRefused`, `MoneyTransferRefused` and
   `AccountDeletionRefused` (ADR-0049) for no step-up authorisation, or a PIN compared and found
   wrong at the four mints (ADR-0056), `PinChangeRefused` for one at a PIN change, and
   `PinVerificationRefused` for one at the PIN check that raises a session; the last two share one

@@ -26,7 +26,12 @@ The only place that can express the check is the point of replacement.
    uncounted brute-force oracle, which is worse than the hole it replaces.
 3. **When `PinHash` is null the request is an enrolment.** No current PIN is asked for, because
    there is none to prove. The account password is required in the same request, because a session
-   cookie alone would otherwise mint the credential that authorises every money movement.
+   cookie alone would otherwise mint the credential that authorises every money movement: measured
+   through the BFF before the password was asked for, a new account's cookie alone set a PIN (200),
+   verified it (authLevel 2), deposited and withdrew 250 (201) and read the full account number
+   (200). The password is also the ceiling: NIST SP 800-63B-4 §4.1.2.1 binds a new authenticator at
+   the highest level the account already has or will use it at, whichever is lower, and with no PIN
+   that is the password, so asking for anything heavier would be invention.
 4. **Failure shapes match the API's other PIN checks**, so the step-up paths answer alike. A missing
    proof is **422 `PIN_REQUIRED`** and not 400 (a rule the schema cannot express: the split
    `BusinessRuleException` documents), a wrong PIN is **401 `INVALID_PIN`**, and a locked PIN is

@@ -52,8 +52,11 @@ and no change invalidated it (d).
    `404 RECIPIENT_NOT_FOUND` for a handle nobody holds, `422 RECIPIENT_NO_ACCOUNT` for one with no
    open account, and `401 AUTHORIZATION_INVALID` only for one that can be paid. So a caller with
    no second factor can still ask this endpoint which handles exist, as it can ask the mint before
-   the PIN, under the limit ADR-0014 states.
-   `StepUpAuthorizationOperationTransformer` publishes the header as required.
+   the PIN, under the limit ADR-0014 states. The presence check is a method of its own, apart
+   from the validation, because it needs only the header and the validation needs the payee,
+   which exists once the handle is resolved. On an internal transfer both accounts are the
+   caller's own, so the check follows both ownership checks: the more specific refusal
+   withholds nothing. `StepUpAuthorizationOperationTransformer` publishes the header as required.
 
 ### Error codes
 

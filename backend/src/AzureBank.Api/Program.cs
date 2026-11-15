@@ -17,10 +17,6 @@ using Serilog.Sinks.OpenTelemetry;
 // the UI culture, the language of messages: formatting keeps the host's culture.
 CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// BOOTSTRAP LOGGER (captures startup errors before config is loaded)
-// ═══════════════════════════════════════════════════════════════════════════
-
 // JSON in Production from the first line (ConsoleLogFormat). This logger, not the host's, writes
 // "Starting", the success line and a refusal's Fatal, and one container output that mixed text
 // lines into JSON ones would have its collector parse some records and not others.
@@ -35,10 +31,6 @@ try
     Log.Information("Starting AzureBank API...");
 
     var builder = WebApplication.CreateBuilder(args);
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SERILOG CONFIGURATION (reads from appsettings.json)
-    // ═══════════════════════════════════════════════════════════════════════════
 
     // preserveStaticLogger: true keeps the static bootstrap logger (console) untouched
     // instead of freezing it into the host logger. Freezing is a one-shot operation on
@@ -108,10 +100,6 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<Serilog.Core.ILogEventEnricher, RequestPathEnricher>();
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SERVICE REGISTRATION (using extension methods for clean organization)
-    // ═══════════════════════════════════════════════════════════════════════════
-
     builder.Services
         .AddInfrastructure(builder.Configuration, builder.Environment)
         .AddIdentityServices()
@@ -123,15 +111,7 @@ try
         .AddApiDocumentation()
         .AddObservability(builder.Environment, builder.Configuration);
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // BUILD APPLICATION
-    // ═══════════════════════════════════════════════════════════════════════════
-
     var app = builder.Build();
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // DEVELOPMENT CONFIGURATION
-    // ═══════════════════════════════════════════════════════════════════════════
 
     if (app.Environment.IsDevelopment())
     {
@@ -144,10 +124,6 @@ try
                    .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
         });
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MIDDLEWARE PIPELINE
-    // ═══════════════════════════════════════════════════════════════════════════
 
     // The instant each request ARRIVED, first of all (ADR-0057 §4.3): a revoke writes it as
     // RevokedAt and a renewal carries it, and the tripwire compares the two. Taken before anything
@@ -263,15 +239,7 @@ try
             ResponseWriter = AzureBank.Api.HealthChecks.HealthCheckResponse.WriteAsync,
         });
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // DATABASE SEEDING (Development only)
-    // ═══════════════════════════════════════════════════════════════════════════
-
     //await app.SeedDatabaseAsync();
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RUN APPLICATION
-    // ═══════════════════════════════════════════════════════════════════════════
 
     // ⚠️ LOGGED FROM THE LIFETIME CALLBACK, NOT FROM ABOVE app.Run(). It used to sit here
     // unconditionally, where it was merely premature -- the host came up a moment later, so the line
@@ -313,9 +281,5 @@ finally
     Log.CloseAndFlush();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PARTIAL CLASS FOR INTEGRATION TESTS
-// Enables WebApplicationFactory to access the Program class for testing
-// ═══════════════════════════════════════════════════════════════════════════
-
+// Enables WebApplicationFactory to access the Program class for testing.
 public partial class Program { }
