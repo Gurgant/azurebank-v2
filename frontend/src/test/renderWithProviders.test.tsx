@@ -2,7 +2,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button } from '@fluentui/react-components';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { renderWithProviders } from './renderWithProviders';
+import { actionsSeen, makeTestStore, renderWithProviders } from './renderWithProviders';
 
 describe('renderWithProviders', () => {
   it('renders under theme + store + router', () => {
@@ -24,6 +24,23 @@ describe('renderWithProviders', () => {
     expect(store).not.toBe(another);
     expect(store.getState()).toHaveProperty('auth');
     expect(store.getState()).toHaveProperty('api');
+  });
+
+  it("keeps each store's own actions in order, those a thunk dispatches inside included", () => {
+    const store = makeTestStore();
+    const another = makeTestStore();
+
+    store.dispatch({ type: 'first' });
+    store.dispatch((dispatch) => {
+      dispatch({ type: 'inside', meta: { arg: { endpointName: 'someEndpoint' } } });
+    });
+
+    // The API middleware registers itself when the store is made, so the two come last.
+    expect(actionsSeen(store).slice(-2)).toEqual([
+      { type: 'first', endpointName: undefined },
+      { type: 'inside', endpointName: 'someEndpoint' },
+    ]);
+    expect(actionsSeen(another).map(({ type }) => type)).not.toContain('first');
   });
 });
 

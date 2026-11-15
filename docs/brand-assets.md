@@ -69,9 +69,13 @@ candidates were judged at a 14% inset; the 5% inset that ships measures **66%**.
 ## Regenerating the icons
 
 ```bash
+# once, from the repository root
+mkdir .icon-tools
+pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2
+
+# then
 cd frontend
-npm install --no-save @resvg/resvg-js@2.6.2
-npm run generate:icons
+pnpm run generate:icons
 ```
 
 That writes eight files into `frontend/public/`:
@@ -85,9 +89,15 @@ That writes eight files into `frontend/public/`:
 - `web-app-manifest-any-192x192.png`, `web-app-manifest-any-512x512.png`: **any**, drawn larger
   because nothing crops them
 
-**`--no-save`.** `@resvg/resvg-js` is a native module and the icons change roughly never, so it
-is not a devDependency: `--no-save` installs it and leaves `package.json` and the lockfile
-untouched. The script exits with this exact command if the module is missing.
+**A folder of its own, not `--no-save`.** `@resvg/resvg-js` is a native module and the icons
+change roughly never, so it is not a devDependency. It goes into `.icon-tools/` at the repository
+root, which git ignores, and both scripts read it from there (`ICON_TOOLS_DIR` points them
+elsewhere). The folder is outside `frontend/` on purpose: pnpm would take a folder under it for
+part of the frontend workspace. `npm install --no-save` is wrong in a pnpm folder: it rebuilds
+`node_modules` npm's way and resolves the whole tree afresh, without the age limit and the trust
+policy of `pnpm-workspace.yaml`, so it bypasses the checks the move to pnpm added. The folder is
+temporary: delete it when the icons are done and the next run installs it again. The scripts exit
+with this exact command if the module is missing.
 
 **The version is pinned.** The committed PNGs and ICO are artefacts of one rasteriser: a release
 that changes antialiasing by a hair would rewrite every icon, with no change to `logo.svg` to

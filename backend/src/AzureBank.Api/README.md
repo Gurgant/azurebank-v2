@@ -134,7 +134,8 @@ and under the same key, with a sentence of its own that does not list the names.
 
 The limits are constants in `../AzureBank.Shared/Constants/ValidationRules.cs`: a password of 8
 to 128 characters with an uppercase letter, a lowercase letter, a digit and a special character;
-a PIN of exactly 6 digits; an AzureTag of 3 to 20 characters, lowercase, starting with a letter;
+a PIN of exactly 6 digits; an AzureTag of 3 to 20 characters, lowercase, starting with a letter (a payee's handle, in a
+lookup, an authorisation or a transfer, may be sent in any letter case and is read in lower case);
 an account name of 2 to 100 characters; an email of at most 255 characters; an amount from 0.01
 to 100,000.00 with at most 2 decimal places.
 

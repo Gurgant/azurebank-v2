@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { menuDividerClassNames, tokens } from '@fluentui/react-components';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -39,7 +39,7 @@ function seedTempFund(id: string) {
 }
 
 /** Holds every request that matches until the returned function is called; the mock answers. */
-function holdUntilReleased(method: 'get' | 'patch', path: string) {
+function holdUntilReleased(method: 'get' | 'patch' | 'post', path: string) {
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -489,6 +489,150 @@ describe('a dialog whose answer arrives after another action started', () => {
     answerSetPrimary();
     await screen.findByText('"Rainy Day" is now your primary account.', { exact: true });
     saidInTheSlot('"Rainy Day" is now your primary account.');
+  });
+});
+
+describe('a dialog opened while a cancelled one still waits for its answer', () => {
+  /** Create, with its answer held and its dialog cancelled; returns what lets the answer go. */
+  async function cancelAHeldCreate() {
+    const answerCreate = holdUntilReleased('post', '*/api/accounts');
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    fireEvent.change(await screen.findByLabelText('Account name'), {
+      target: { value: 'Holiday Pot' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    return answerCreate;
+  }
+
+  /** Rename of Rainy Day, with its answer held and its dialog cancelled. */
+  async function cancelAHeldRename() {
+    const answerRename = holdUntilReleased('patch', '*/api/accounts/:id');
+    await openMenu('Rainy Day');
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const input = await screen.findByLabelText('Account name');
+    fireEvent.change(input, { target: { value: 'Storm Fund' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    return answerRename;
+  }
+
+  /** Opens Rename for an account and types over its name. */
+  async function startRename(accountName: string, typed: string) {
+    await openMenu(accountName);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    fireEvent.change(await screen.findByLabelText('Account name'), { target: { value: typed } });
+  }
+
+  /**
+   * Lets a held answer go and waits until the page has read it. RTK Query holds the list read back
+   * while a mutation is pending, so the wait cannot be on the list. In `act`, because the list read
+   * that the answer starts updates the page during the wait.
+   */
+  async function releaseAndRead(release: () => void, method: string, pathname: RegExp) {
+    const read = answered(method, pathname);
+    await act(async () => {
+      release();
+      await read;
+    });
+  }
+
+  it('keeps the new Create dialog open, and its Cancel closes it', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const answerCreate = await cancelAHeldCreate();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    fireEvent.change(await screen.findByLabelText('Account name'), {
+      target: { value: 'School Fund' },
+    });
+
+    await releaseAndRead(answerCreate, 'POST', /\/api\/accounts$/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // The cancelled request did open its account.
+    await screen.findByText('Holiday Pot');
+  });
+
+  it('lets the new Create dialog save, and says its own sentence', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+    const answerCreate = await cancelAHeldCreate();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }));
+    fireEvent.change(await screen.findByLabelText('Account name'), {
+      target: { value: 'School Fund' },
+    });
+
+    await releaseAndRead(answerCreate, 'POST', /\/api\/accounts$/);
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+
+    await screen.findByText('Your new account "School Fund" is open.', { exact: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    saidInTheSlot('Your new account "School Fund" is open.');
+  });
+
+  it('keeps a new Rename dialog of the same account open, and its Cancel closes it', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = await cancelAHeldRename();
+
+    await startRename('Rainy Day', 'Sunny Day');
+
+    await releaseAndRead(answerRename, 'PATCH', /\/api\/accounts\/[^/]+$/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('lets a new Rename dialog of the same account save, and says its own sentence', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = await cancelAHeldRename();
+
+    await startRename('Rainy Day', 'Sunny Day');
+
+    await releaseAndRead(answerRename, 'PATCH', /\/api\/accounts\/[^/]+$/);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    // The dialog opened on "Rainy Day", and its sentence names the account as it was then.
+    await screen.findByText('"Rainy Day" is now called "Sunny Day".', { exact: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    saidInTheSlot('"Rainy Day" is now called "Sunny Day".');
+  });
+
+  it('keeps a new Rename dialog of another account open, and its Cancel closes it', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = await cancelAHeldRename();
+
+    await startRename('Main Account', 'Everyday');
+
+    await releaseAndRead(answerRename, 'PATCH', /\/api\/accounts\/[^/]+$/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('lets a new Rename dialog save, and says its own sentence', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Rainy Day');
+    const answerRename = await cancelAHeldRename();
+
+    await startRename('Main Account', 'Everyday');
+
+    await releaseAndRead(answerRename, 'PATCH', /\/api\/accounts\/[^/]+$/);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByText('"Main Account" is now called "Everyday".', { exact: true });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    saidInTheSlot('"Main Account" is now called "Everyday".');
   });
 });
 

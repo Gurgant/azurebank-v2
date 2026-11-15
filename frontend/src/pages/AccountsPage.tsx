@@ -436,11 +436,17 @@ export function AccountsPage() {
   // The action count when the Create or Rename dialog opened: its answer is said only while that
   // is still the latest action, as set-primary's is. Closing either dialog counts as an action,
   // so that an answer which arrives after a Cancel says nothing; on a save the sentence is held
-  // before the dialog closes. A dialog cancelled while its request was out still closes itself
+  // before the dialog closes. A dialog cancelled while its request was out still calls its close
   // when the answer comes, after it has gone: that close counts only while its dialog is still
   // the latest action, or it would silence an action started after the Cancel.
   const [createOpenedAt, setCreateOpenedAt] = useState(0);
   const [renameOpenedAt, setRenameOpenedAt] = useState(0);
+  // The opening that is current, one per dialog. A late close that names an older opening is
+  // dropped, or it would shut the dialog the visitor has opened since. Each moves only as a new
+  // dialog opens, in the handler that sets the state above, so a dialog on screen always holds
+  // the current value and can close itself.
+  const currentCreateOpening = useRef(0);
+  const currentRenameOpening = useRef(0);
 
   const startAction = () => {
     actionsStarted.current += 1;
@@ -508,6 +514,7 @@ export function AccountsPage() {
 
   const handleAddAccount = () => {
     startAction();
+    currentCreateOpening.current = actionsStarted.current;
     setCreateOpenedAt(actionsStarted.current);
     setIsCreateOpen(true);
   };
@@ -640,6 +647,7 @@ export function AccountsPage() {
                         <MenuItem
                           onClick={() => {
                             startAction();
+                            currentRenameOpening.current = actionsStarted.current;
                             setRenameOpenedAt(actionsStarted.current);
                             setRenameTarget(account);
                           }}
@@ -745,6 +753,7 @@ export function AccountsPage() {
             }
           }}
           onClose={() => {
+            if (createOpenedAt !== currentCreateOpening.current) return;
             if (actionsStarted.current === createOpenedAt) actionsStarted.current += 1;
             setIsCreateOpen(false);
           }}
@@ -760,6 +769,7 @@ export function AccountsPage() {
             }
           }}
           onClose={() => {
+            if (renameOpenedAt !== currentRenameOpening.current) return;
             if (actionsStarted.current === renameOpenedAt) actionsStarted.current += 1;
             setRenameTarget(null);
           }}

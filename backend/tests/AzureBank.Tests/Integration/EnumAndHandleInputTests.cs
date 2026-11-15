@@ -218,7 +218,7 @@ public sealed class EnumAndHandleInputTests : IntegrationTestBase
     [Theory]
     [InlineData("ab", "AzureTag must be at least 3 characters.")]
     [InlineData("this_handle_is_longer_than_twenty", "AzureTag cannot exceed 20 characters.")]
-    [InlineData("Has_Capitals", "AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.")]
+    [InlineData("has-a-hyphen", "AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.")]
     [InlineData("9starts_with_digit", "AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.")]
     public async Task AStringThatCannotBeAHandle_Is400_WithTheRuleItBroke(string handle, string rule)
     {

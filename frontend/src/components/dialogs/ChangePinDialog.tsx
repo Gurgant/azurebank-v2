@@ -14,6 +14,7 @@ import {
   Text,
 } from '@fluentui/react-components';
 import { colors } from '../../theme/tokens';
+import { landingRing } from '../../theme/landingRing';
 import { isServiceOutage, type ApiProblem } from '../../api/problemBaseQuery';
 import { CONNECTION_FAILED, SAVE_OUTCOME_UNKNOWN } from '../../api/problemMessages';
 import { useSetPinMutation } from '../../features/api/apiSlice';
@@ -43,6 +44,9 @@ const useStyles = makeStyles({
     fontWeight: 600,
     color: colors.neutral[800],
   },
+  // After a send by keys the browser matches `:focus-visible` on the sentence that takes the lost
+  // focus: without this rule it draws its own default ring, not the app's.
+  landing: landingRing,
 });
 
 export interface ChangePinDialogProps {
@@ -87,9 +91,10 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
   /*
     The submit is disabled while the request is out, and the browser hands its focus to `body`,
     where an Escape reaches no dialog. The success view and the lock each take back the focus that
-    was lost: Done after a change, and Cancel after the lock, the one control the lock leaves on.
+    was lost: the sentence after a change, so that a screen reader reads it, and Cancel after the
+    lock, the one control the lock leaves on.
   */
-  const doneButton = useFocusWhenLost<HTMLButtonElement>(changed);
+  const changedSentence = useFocusWhenLost<HTMLParagraphElement>(changed);
   const cancelButton = useFocusWhenLost<HTMLButtonElement>(locked);
   const ready =
     currentPin.length === PIN_LENGTH &&
@@ -189,14 +194,18 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
           <DialogBody>
             <DialogTitle>Change your PIN</DialogTitle>
             <DialogContent>
-              {/* role="status": Fluent's MessageBar is no live region by itself, and the form
-                  this replaces was where focus sat, so the change is announced (review, 2026-09-15). */}
-              <MessageBar intent="success" role="status">
-                <MessageBarBody>Your PIN has been changed.</MessageBarBody>
+              {/* A paragraph that takes focus, in no alert or status: focus is what reads it, and
+                  a live region as well would say it a second time. */}
+              <MessageBar intent="success">
+                <MessageBarBody>
+                  <Text as="p" className={styles.landing} ref={changedSentence} tabIndex={-1}>
+                    Your PIN has been changed.
+                  </Text>
+                </MessageBarBody>
               </MessageBar>
             </DialogContent>
             <DialogActions>
-              <Button appearance="primary" onClick={onClose} ref={doneButton}>
+              <Button appearance="primary" onClick={onClose}>
                 Done
               </Button>
             </DialogActions>

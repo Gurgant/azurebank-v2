@@ -1,7 +1,7 @@
 # ADR-0019: SPA–BFF integration architecture for the frontend build-out
 
-**Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-05 (decision 3), and by ADR-0023
-(decision 6) · **Decision Makers:** Vladislav Aleshaev
+**Status:** Accepted · **Date:** 2026-07-20 · **Amended:** 2026-09-05 and 2026-11-13 (decision 3),
+and by ADR-0023 (decision 6) · **Decision Makers:** Vladislav Aleshaev
 
 ## Context
 
@@ -31,7 +31,9 @@ two PIN models, a five-state idempotency protocol that fingerprints raw body byt
    `AUTHORIZATION_EXPIRED` and `AUTHORIZATION_INVALID` in the transfer, because those are thrown
    after the cookie was accepted. The boot probe's 401 resolves to `anonymous`, with no banner.
    Every other 401 dispatches `sessionExpired()` and resets the RTK Query cache, because financial
-   data must not outlive the session it was fetched under.
+   data must not outlive the session it was fetched under. A sign-out that succeeded resets the
+   cache too, for the same reason: the next person to sign in on the same tab must not be shown
+   the last one's accounts.
 4. **No polling, explicit keep-alive** (D6/D14). `session-status` is the safe probe, because the BFF
    excludes it from activity (ADR-0018); `/bff/auth/me` is the deliberate refresher behind the "Stay
    signed in" warning, two minutes before the end, driven by a client mirror of LastActivity. No

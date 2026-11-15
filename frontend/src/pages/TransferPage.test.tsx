@@ -2,17 +2,20 @@ import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { confirmWithPin, enterPin } from '../test/pinFlow';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import { settle } from '../test/settle';
-import { StepUpModal } from '../features/auth';
+import { StepUpModal, sessionExpired } from '../features/auth';
+import { apiSlice } from '../features/api/apiSlice';
+import { ProtectedRoute } from '../components/layout/ProtectedRoute';
 import { TransferPage } from './TransferPage';
 import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, seedMockSession } from '../mocks/state';
 import { ACCOUNT_CLOSED } from '../api/problemMessages';
 import { COPY, emulateFocusFixup } from '../test/outage';
+import { holdTheMint } from '../test/heldMint';
 
 /**
  * PR-11 — the external transfer end to end, PIN collected in the page (ADR-0041/0042): pick an
@@ -41,6 +44,7 @@ function renderTransfer(routerEntries: RouterEntries = ['/']) {
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
       <Route path="/history" element={<div>HISTORY</div>} />
+      <Route path="/login" element={<div>SIGN IN</div>} />
       <Route path="/transfer/internal" element={<div>BETWEEN MY ACCOUNTS</div>} />
     </Routes>,
     { routerEntries },
@@ -288,6 +292,67 @@ describe('external transfer (PR-11)', () => {
         await screen.findByText(/check your connection/, {}, { timeout: 8000 }),
       ).toBeInTheDocument();
       expect(screen.queryByText(/Too many lookups/)).not.toBeInTheDocument();
+    },
+  );
+
+  it('sends the handle in lower case, which is how handles are stored, and a phone types a capital', async () => {
+    /*
+      A phone capitalises the first letter of a text field, so the guide's `jane_02ga` arrives as
+      `Jane_02ga`. Handles are stored in lower case, so the page sends the lower-case one: what it
+      shows, and what it compares with the visitor's own handle, is what the server stores.
+    */
+    const asked: string[] = [];
+    server.use(
+      http.get('*/api/users/:azureTag', ({ params }) => {
+        asked.push(String(params.azureTag));
+      }),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    await verifyRecipient('@Friend');
+
+    expect(await screen.findByText('A. Friend')).toBeInTheDocument();
+    expect(asked).toEqual(['friend']);
+  });
+
+  it('asks the phone for no capital and no correction in the handle field', async () => {
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    const field = screen.getByLabelText('Recipient handle');
+
+    expect(field).toHaveAttribute('autocapitalize', 'none');
+    expect(field).toHaveAttribute('autocorrect', 'off');
+    expect(field).toHaveAttribute('spellcheck', 'false');
+  });
+
+  it.each(['ab', 'my-handle', 'a'.repeat(21), '9friend'])(
+    'a handle the API refuses (%s) is told what a handle is, and Review asks for another',
+    async (tag) => {
+      /*
+        The refusal is a model-state 400 with no `detail`, which the page said nothing true about:
+        "We couldn't check that handle. Please try again." and, under Review, "Press Verify to
+        check the handle." The same press gets the same 400 and spends one of the 20 lookups a minute.
+      */
+      const sentence =
+        'A handle is 3 to 20 letters, numbers or underscores, and starts with a letter.';
+      renderTransfer();
+      await screen.findByText('Main Account');
+      const review = screen.getByRole('button', { name: 'Review Transfer' });
+
+      await verifyRecipient(tag);
+
+      expect((await screen.findByText(sentence)).closest('[role="alert"]')).not.toBeNull();
+      expect(screen.queryByText(/We couldn't check that handle/)).not.toBeInTheDocument();
+      expect(review).toBeDisabled();
+      expect(review).toHaveAccessibleDescription('Change the handle to continue.');
+
+      // Edited, it is a handle nobody has checked.
+      await userEvent.type(screen.getByLabelText('Recipient handle'), 'x');
+
+      expect(screen.queryByText(sentence)).not.toBeInTheDocument();
+      expect(review).toHaveAccessibleDescription('Press Verify to check the handle.');
     },
   );
 
@@ -1106,6 +1171,311 @@ describe('external transfer: the shortcuts of the form and the ways off the page
     await act(() => router.navigate(-1));
     await userEvent.click(within(await question()).getByRole('button', { name: 'Leave anyway' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+
+  /*
+    The wait for the PIN to be checked comes before the send and, on a first attempt, holds no
+    key. The page's own exits are disabled for it and the browser's Back is held; and a visitor
+    who is gone, by "Leave anyway" or by a sign-out, has nothing left to show a receipt in, so
+    what the answer would have set off is not sent.
+  */
+
+  /**
+   * The request for the authorisation is out, and the page has drawn it: the boxes are disabled
+   * for it. The browser's Back is held from that render, not from the request.
+   */
+  async function untilThePinIsBeingChecked(mint: ReturnType<typeof holdTheMint>) {
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+  }
+
+  it("holds the browser's Back while the PIN is being checked, and the transfer goes on if the visitor stays", async () => {
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router } = await toReview('50', ['/dashboard', '/']);
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate(-1));
+    const question = await screen.findByRole('alertdialog', { name: 'Leave without finishing?' });
+    expect(screen.queryByText('DASHBOARD')).not.toBeInTheDocument();
+    await userEvent.click(within(question).getByRole('button', { name: 'Stay on this page' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+
+    mint.release();
+
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  it('sends nothing when the visitor leaves while the PIN is being checked', async () => {
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router, store } = await toReview('50', ['/dashboard', '/']);
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+  });
+
+  it('sends nothing for a PIN checked before "Leave anyway" when the Back lands on this page, and a new PIN sends once', async () => {
+    // The Back lands on another entry of the same route, so the page is not removed: only the
+    // attempt knows that its visitor has left it.
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router, store } = await toReview('50', ['/', '/']);
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    // The router is done with the choice, and this page is still the one on screen.
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+    // Back at the PIN, empty and ready: the PIN typed before the choice was not carried over.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+
+    await enterPin();
+
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(sends).toHaveLength(1);
+  });
+
+  /**
+   * "Leave anyway" for a Back that lands on another entry of this same route: the router is done
+   * with the choice, and this page is still the one on screen.
+   */
+  async function leaveAnywayToThisPage(router: ReturnType<typeof renderTransfer>['router']) {
+    await act(() => router.navigate(-1));
+    await userEvent.click(
+      within(
+        await screen.findByRole('alertdialog', { name: 'Leave without finishing?' }),
+      ).getByRole('button', { name: 'Leave anyway' }),
+    );
+    await waitFor(() =>
+      expect([...router.state.blockers.values()].every((held) => held.state === 'unblocked')).toBe(
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  }
+
+  /** The messages the page is saying in an alert: it also keeps an empty one for its accounts. */
+  const alertsSaid = () =>
+    screen.queryAllByRole('alert').filter((region) => region.textContent?.trim());
+
+  it('lets go of the authorisation a PIN minted after "Leave anyway", keeps the key, and sends under it for a new PIN', async () => {
+    /*
+      A send answered AUTHORIZATION_EXPIRED keeps its key and drops its authorisation, so the next
+      PIN mints a new one. If the visitor leaves during that mint, the authorisation it brings is
+      the abandoned attempt's: held, it would show a "Check again" that sends nothing, the PIN
+      being gone. The key stays, and the new PIN sends the same move under it.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transfers', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+      }),
+    );
+    const { router } = await toReview('50', ['/', '/']);
+    await confirmWithPin();
+    await screen.findByText(/your confirmation expired/);
+    expect(keys).toHaveLength(1);
+
+    // Every mint that reaches the mock from here on, whoever answers it. The new PIN has to mint
+    // again: a send that re-presented what the abandoned attempt brought would skip it.
+    let mints = 0;
+    const countMints = ({ request }: { request: Request }) => {
+      if (new URL(request.url).pathname.endsWith('/api/transfers/authorizations')) mints += 1;
+    };
+    server.events.on('request:start', countMints);
+    onTestFinished(() => {
+      server.events.removeListener('request:start', countMints);
+    });
+
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    await enterPin();
+    await untilThePinIsBeingChecked(mint);
+    await leaveAnywayToThisPage(router);
+    mint.release();
+
+    // The boxes are disabled until the attempt is over, so enabled again is its end.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+    expect(keys).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    expect(mints).toBe(1);
+
+    await enterPin();
+
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(mints).toBe(2);
+  });
+
+  it.each([
+    { status: 422, errorCode: 'PIN_REQUIRED' },
+    { status: 401, errorCode: 'INVALID_PIN' },
+  ])(
+    'acts on nothing of a $errorCode that answers the PIN after "Leave anyway" to this page',
+    async ({ status, errorCode }) => {
+      // The visitor chose to leave: a refusal that arrives later must not take them to PIN setup,
+      // nor tell the page they came back to that their PIN was wrong.
+      const sends = watchSends();
+      const mint = holdTheMint('*/api/transfers/authorizations', () =>
+        problem({ status, errorCode, detail: 'The check refused it.' }),
+      );
+      const { router, store } = await toReview('50', ['/', '/']);
+      await confirmWithPin();
+      await untilThePinIsBeingChecked(mint);
+      await leaveAnywayToThisPage(router);
+      const where = router.state.location.pathname + router.state.location.search;
+      mint.release();
+      await mint.answered(store, 'rejected');
+
+      expect(sends).toEqual([]);
+      expect(router.state.location.pathname + router.state.location.search).toBe(where);
+      expect(alertsSaid()).toEqual([]);
+      await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled());
+      expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+      expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('sends nothing when the visitor is sent to the sign-in page while the PIN is being checked', async () => {
+    // A navigation to the sign-in page is not held (ADR-0028), and it abandons the attempts of the
+    // page it reaches. This one reaches the page mounted; a sign-out does not (next describe).
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const { router, store } = await toReview();
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate('/login', { replace: true }));
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sends).toEqual([]);
+  });
+
+  it('does not move the visitor off the sign-in page when the PIN check then answers PIN_REQUIRED', async () => {
+    // The page is gone without "Leave anyway": the refusal that comes in late must not take the
+    // visitor to PIN setup, whether it finds the attempt abandoned or the page gone.
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const { router, store } = await toReview();
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    await act(() => router.navigate('/login', { replace: true }));
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+    const where = router.state.location.pathname + router.state.location.search;
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sends).toEqual([]);
+    expect(router.state.location.pathname + router.state.location.search).toBe(where);
+    expect(where).toBe('/login');
+  });
+
+  it('sends nothing when the session ends while the PIN is being checked, through the real ProtectedRoute', async () => {
+    /*
+      The way the app ends a session: the auth status leaves 'authenticated' (a 401 that logs out,
+      the expiry warning), and ProtectedRoute puts <Navigate to="/login"> in the place of the page.
+      The page, its mounted ref and its blocker are gone before the router is asked for /login, so
+      the blocker is never consulted and the mounted check refuses the send.
+
+      Evidence, not a red proof: this passes at cb07be52, before the blocker counted a navigation
+      to /login, because the send was refused on this path already.
+    */
+    const sends = watchSends();
+    const mint = holdTheMint('*/api/transfers/authorizations');
+    const store = makeTestStore();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
+    const { router } = renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <TransferPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/login" element={<div>SIGN IN</div>} />
+      </Routes>,
+      { routerEntries: ['/'], store },
+    );
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    await untilThePinIsBeingChecked(mint);
+
+    // The mint is released at the moment the router is asked for /login, and the page is looked
+    // for at the same moment.
+    const asked: { to: string; pageThere: boolean }[] = [];
+    const navigate = router.navigate.bind(router);
+    router.navigate = ((to: unknown, opts?: unknown) => {
+      // `Navigate` hands the router a location object, `navigate('/login')` a string.
+      const path = typeof to === 'string' ? to : ((to as { pathname?: string }).pathname ?? '');
+      asked.push({ to: path, pageThere: screen.queryByLabelText('Digit 1 of 6') !== null });
+      if (path === '/login') mint.release();
+      return (navigate as (a: unknown, b?: unknown) => Promise<void>)(to, opts);
+    }) as typeof router.navigate;
+
+    await act(async () => {
+      store.dispatch(sessionExpired());
+    });
+    expect(await screen.findByText('SIGN IN')).toBeInTheDocument();
+    await mint.answered(store);
+
+    expect(asked).toEqual([{ to: '/login', pageThere: false }]);
+    expect(sends).toEqual([]);
+    expect(router.state.location.pathname).toBe('/login');
   });
 });
 

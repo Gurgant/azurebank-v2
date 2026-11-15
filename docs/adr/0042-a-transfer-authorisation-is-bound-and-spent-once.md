@@ -39,13 +39,20 @@ and no change invalidated it (d).
    an authentication code (EBA Q&A 2018_4141; Art. 4(3)(d)'s five minutes limit inactivity on
    account access). The client mints and sends on the sixth PIN digit, one user action, so only a
    request sent again reaches the expiry, after a lost response or after a busy 503 (ADR-0058 D6):
-   it has its own code, costs no PIN attempt, and the re-prompt keeps amount and payee (WCAG 2.2
-   SC 3.3.7, Level A).
+   it has its own code (except where the window ends between the check and the spend: see the
+   table below), costs no PIN attempt, and the re-prompt keeps amount and payee (WCAG 2.2 SC 3.3.7,
+   Level A).
 8. **The header is required, and no transfer body carries a PIN** (the flip, this record's second
    half: `TransferRequest.Pin` and `InternalTransferRequest.Pin` are gone), because while two proofs
    are accepted the weaker one decides. A transfer presenting none is refused at the rung the PIN
-   check occupied, after the source account's ownership 404 and before the payee is resolved, so a
-   caller with no second factor cannot ask this endpoint which handles exist.
+   check occupied, after the source account's ownership 404 and before the payee is resolved: the
+   SPA, its contract tests and its mock rely on that order, ADR-0050's rung table publishes it,
+   and a request presenting nothing is a client bug that is better told so first. One presenting
+   a well-formed reference that names nothing is answered about the payee first:
+   `404 RECIPIENT_NOT_FOUND` for a handle nobody holds, `422 RECIPIENT_NO_ACCOUNT` for one with no
+   open account, and `401 AUTHORIZATION_INVALID` only for one that can be paid. So a caller with
+   no second factor can still ask this endpoint which handles exist, as it can ask the mint before
+   the PIN, under the limit ADR-0014 states.
    `StepUpAuthorizationOperationTransformer` publishes the header as required.
 
 ### Error codes
@@ -54,7 +61,7 @@ and no change invalidated it (d).
 | --- | --- | --- |
 | `AUTHORIZATION_REQUIRED` | 401 | none presented: the header is absent or empty |
 | `AUTHORIZATION_EXPIRED` | 401 | valid, window passed: re-prompt the PIN, keep the form |
-| `AUTHORIZATION_INVALID` | 401 | uniform across unknown, not-yours, already-spent, wrong binding |
+| `AUTHORIZATION_INVALID` | 401 | uniform across unknown, not-yours, already-spent, wrong binding, and one whose window passed between the check and the spend |
 
 The specific reason is logged and never sent, so the endpoint is no oracle for which references
 exist or whose they are. A header value that is not a UUID is refused `400` by model binding, with
@@ -76,7 +83,7 @@ place on the transfer path that spends a PIN attempt.
   owns the action, and it consumes with a null `ConsumedByTransactionId` (ADR-0049).
 - The external-transfer mint answers `422 DAILY_LIMIT_EXCEEDED` ahead of the PIN, at no cost in
   attempts; on the transfer the daily check comes after `AUTHORIZATION_REQUIRED` and the payee
-  resolution, so decision 8's argument is intact (ADR-0050).
+  resolution, as ADR-0050's rung table records.
 - The audit row a consumed authorisation buys names it, under the chain's hash, and the
   authorisation's `ConsumedByTransactionId` names the transfer's outgoing ledger row (ADR-0044).
 - Not covered: the PIN is not a one-time code. That needs a second channel, which does not exist.
@@ -92,4 +99,4 @@ place on the transfer path that spends a PIN attempt.
 
 ## Related
 
-ADR-0009, ADR-0010, ADR-0015, ADR-0041, ADR-0044, ADR-0049, ADR-0050, ADR-0056, ADR-0062.
+ADR-0009, ADR-0010, ADR-0014, ADR-0015, ADR-0041, ADR-0044, ADR-0049, ADR-0050, ADR-0056, ADR-0062.

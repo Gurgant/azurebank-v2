@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Validation;
 
@@ -41,7 +42,8 @@ public class TransferAuthorizationRequest
     public Guid FromAccountId { get; set; }
 
     [Required]
-    [AzureTag]
+    [PayeeAzureTag]
+    [JsonConverter(typeof(LowerCasingJsonConverter))]
     public required string RecipientAzureTag { get; set; }
 
     [Required]

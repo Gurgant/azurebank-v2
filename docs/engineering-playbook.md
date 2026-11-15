@@ -23,18 +23,18 @@ a change takes from a plan to the live demo, and what stands between an agent an
 
 | Number | What it counts |
 |--:|---|
-| **[402](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
+| **[446](https://github.com/Gurgant/azurebank-v2/pulls?q=is%3Apr+is%3Amerged)** | pull requests merged: each one by me, each one through the automated tests |
 | **[11](https://github.com/Gurgant/azurebank-v2/rules/18930321)** | checks now required before `main` takes a pull request, plus a security scan |
-| **[3,284](https://github.com/Gurgant/azurebank-v2/actions/runs/41036338372/job/123997977089)** | backend tests that run with no database |
-| **[509](https://github.com/Gurgant/azurebank-v2/actions/runs/41036338372/job/123997976795)** | backend proofs on a real SQL Server, in a job of their own |
-| **[2,021](https://github.com/Gurgant/azurebank-v2/actions/runs/41036338372/job/123997977161)** | frontend tests |
-| **[103](https://github.com/Gurgant/azurebank-v2/actions/runs/41036338372/job/123997977203)** | browser tests on the real stack |
-| **[64](adr/README.md)** | decisions written down as architecture decision records |
+| **[3,330](https://github.com/Gurgant/azurebank-v2/actions/runs/43604922050/job/132477399043)** | backend tests that run with no database |
+| **[509](https://github.com/Gurgant/azurebank-v2/actions/runs/43604922050/job/132477399292)** | backend proofs on a real SQL Server, in a job of their own |
+| **[2,171](https://github.com/Gurgant/azurebank-v2/actions/runs/43604922050/job/132477399317)** | frontend tests |
+| **[103](https://github.com/Gurgant/azurebank-v2/actions/runs/43604922050/job/132477399199)** | browser tests on the real stack |
+| **[65](adr/README.md)** | decisions written down as architecture decision records |
 | **4** | agents coordinated: one orchestrator and three working in parallel |
 | **0** | merges made by an agent |
 
-Counted on 30 October 2026. The four test numbers are those of one CI run on `main`,
-[run 41036338372](https://github.com/Gurgant/azurebank-v2/actions/runs/41036338372), each linked to
+Counted on 14 November 2026. The four test numbers are those of one CI run on `main`,
+[run 43604922050](https://github.com/Gurgant/azurebank-v2/actions/runs/43604922050), each linked to
 its job, whose page shows it; the other linked numbers lead to where they can be counted again.
 The two without a link, 4 and 0, are my own statement: on GitHub every merge shows one account,
 mine.

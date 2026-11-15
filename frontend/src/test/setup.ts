@@ -8,6 +8,7 @@ import { server } from '../mocks/server';
 import { resetMockState, seedMockSession } from '../mocks/state';
 import { resetDemoMode } from './demoMode';
 import { keepAnimationFramesOnTheRealClock } from './frames';
+import { stopRequestsLeftRunning } from './requestStops';
 import { installKeyborgBeforeUserEvent } from './keyborg';
 import { installLayoutStubs } from './layout';
 import {
@@ -195,6 +196,10 @@ afterEach(() => {
     later auto-cleanup becomes a no-op either way.
   */
   cleanup();
+  // Then the requests the test's stores still have on their way, now that no component is left to
+  // hear them stop. A read waiting for its retry would go out seconds later, in whichever test runs
+  // then, in this file or the next one of the worker, and that test's handlers would answer it.
+  stopRequestsLeftRunning();
   // Then the real clock, and only now: a timer created on the fake clock has to be cancelled
   // on the fake clock. A tree unmounted after the restore hands a fake interval id to the real
   // `clearInterval`, which cancels nothing, and the interval goes on setting state in the next
