@@ -298,8 +298,8 @@ public class SourceHygieneTests
     /// Each match is a comment or a literal, in the order they stand in the file, so that a
     /// <c>//</c> inside a string is never read as a comment and a quote inside a comment never
     /// opens a string. A TypeScript regular-expression literal is told from a division by what
-    /// stands before its slash, an operator, a bracket, a line's start or <c>return</c>, so that
-    /// its escaped slash and closing slash are not read as a comment.
+    /// stands before its slash, a sign such as <c>=</c> or <c>(</c>, a line's start or
+    /// <c>return</c>, so that its escaped slash and closing slash are not read as a comment.
     /// </summary>
     private static readonly Regex CommentOrLiteral = new(
         @"(?<=(?:^|[=(,:;!&|?{}\[\n])[ \t]*|\breturn[ \t]+)/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n\[])+/[a-z]*"
