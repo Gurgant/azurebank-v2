@@ -13,6 +13,7 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 import { authReducer } from '../features/auth/authSlice';
 import { sessionMiddleware } from '../features/auth/sessionMiddleware';
 import { apiSlice } from '../features/api/apiSlice';
+import { noteRequestsToStop } from './requestStops';
 
 /**
  * A FRESH store per test (never the app singleton — RTK Query caches would leak between
@@ -38,6 +39,11 @@ export function makeTestStore(...observers: Middleware[]) {
       ),
   });
   actionsSeenBy.set(store, seen);
+  // `setup.ts` stops what this store still has on its way when the test ends.
+  noteRequestsToStop(() => {
+    for (const request of store.dispatch(apiSlice.util.getRunningQueriesThunk())) request.abort();
+    for (const request of store.dispatch(apiSlice.util.getRunningMutationsThunk())) request.abort();
+  });
   return store;
 }
 

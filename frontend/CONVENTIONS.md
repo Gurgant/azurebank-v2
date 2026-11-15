@@ -257,7 +257,9 @@ None of these fails in a way that points at the cause.
 - **A test passes whatever ran before it.** The files of a worker share one page and one module
   registry (`isolate: false` in `vitest.config.ts`), so a test must clean up what it adds
   outside the tree it renders: restore what it spied on or stubbed, and leave no node, style
-  rule or global for the next file to find. With `--sequence.shuffle --sequence.seed=<n>` Vitest
+  rule or global for the next file to find. The requests that the stores of `makeTestStore`
+  still have on their way when a test ends are stopped by `src/test/setup.ts`: a read waiting
+  for its retry would otherwise reach the handlers of a later test. With `--sequence.shuffle --sequence.seed=<n>` Vitest
   runs the tests in a random order. Runs with several seeds help find a test that leans on
   another, but a pass does not prove there is none: which files meet in a worker depends on
   timing, so a failure may not repeat. A file that
