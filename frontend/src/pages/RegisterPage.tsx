@@ -248,15 +248,17 @@ export function RegisterPage() {
       )}
 
       {rateLimited && lockDeadline !== null && (
-        <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
-          <MessageBarBody>
-            Too many attempts from your connection.{' '}
-            <RetryCountdown
-              deadline={lockDeadline}
-              onElapsed={() => setElapsedDeadline(lockDeadline)}
-            />
-          </MessageBarBody>
-        </MessageBar>
+        <>
+          <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
+            <MessageBarBody>Too many attempts from your connection.</MessageBarBody>
+          </MessageBar>
+          {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+              re-announce the whole banner every second. It carries its own polite region. */}
+          <RetryCountdown
+            deadline={lockDeadline}
+            onElapsed={() => setElapsedDeadline(lockDeadline)}
+          />
+        </>
       )}
 
       {errors.root?.message && (
@@ -269,7 +271,7 @@ export function RegisterPage() {
         !['REGISTRATION_FAILED', 'RATE_LIMIT_EXCEEDED', 'VALIDATION_ERROR'].includes(
           problem.errorCode,
         ) && (
-          <MessageBar intent="error" className={styles.errorMessage}>
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>
               {problem.detail || 'Registration failed. Please try again.'}
             </MessageBarBody>
