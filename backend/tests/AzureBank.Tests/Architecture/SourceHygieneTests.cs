@@ -309,19 +309,27 @@ public class SourceHygieneTests
         + @"|@""(?:[^""]|"""")*"""
         + @"|""(?:\\.|[^""\\\r\n])*"""
         + @"|'(?:\\.|[^'\\\r\n])*'"
-        + @"|`(?:\\.|[^`\\])*`",
+        + @"|`(?:\\.|\$\{(?:[^{}`]|`(?:\\.|[^`\\])*`)*\}|[^`\\])*`",
         RegexOptions.Singleline);
 
     private static readonly Regex MarkedComment =
         new(@"\b20\d\d-\d\d-\d\d\b|review round|\u26A0", RegexOptions.IgnoreCase);
 
+    // A line of the source counts once, however many marked comments stand on it.
     private static int MarkedCommentLines(string source) =>
         CommentOrLiteral.Matches(source)
-            .Select(match => match.Value)
-            .Where(text => text.StartsWith("//", StringComparison.Ordinal)
-                || text.StartsWith("/*", StringComparison.Ordinal))
-            .SelectMany(text => text.Split('\n'))
-            .Count(MarkedComment.IsMatch);
+            .Where(match => match.Value.StartsWith("//", StringComparison.Ordinal)
+                || match.Value.StartsWith("/*", StringComparison.Ordinal))
+            .SelectMany(match =>
+            {
+                var first = source.AsSpan(0, match.Index).Count('\n');
+                return match.Value.Split('\n')
+                    .Select((text, offset) => (Line: first + offset, Text: text));
+            })
+            .Where(part => MarkedComment.IsMatch(part.Text))
+            .Select(part => part.Line)
+            .Distinct()
+            .Count();
 
     private static IEnumerable<string> ProductionSourceFiles(string root)
     {
@@ -405,6 +413,8 @@ public class SourceHygieneTests
     [InlineData("var year = 2026; var month = 09;", 0)]
     [InlineData("const slash = /\\//; const date = '2026-09-07';", 0)]
     [InlineData("const r = /a\\/b/; // 2026-09-07", 1)]
+    [InlineData("const s = `${`// 2026-09-07`}`;", 0)]
+    [InlineData("/* 2026-09-07 */ const n = 1; /* review round */", 1)]
     public void TheCountReadsCommentsAndNotStrings(string source, int expected)
     {
         // A count that read a string as a comment would charge every literal that holds a date, and
