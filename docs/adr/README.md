@@ -22,7 +22,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Sixty-four decisions is more than anyone reads cold. These four carry the architecture; the rest
+Sixty-five decisions is more than anyone reads cold. These four carry the architecture; the rest
 is detail hanging off them.
 
 | | Why this one |
@@ -35,14 +35,15 @@ is detail hanging off them.
 ## By theme
 
 One line per record: number, title, status. Every record is Accepted; ADR-0021 and ADR-0034 are
-superseded in part by ADR-0057, as their lines say. The four above are in bold.
+superseded in part by ADR-0057, and ADR-0019 by ADR-0023, as their lines say. The four above
+are in bold.
 
 **Platform and topology** — where each part runs, and who may call whom.
 
 - **[ADR-0001](0001-bff-pattern.md)** · Backend-For-Frontend (BFF) Pattern · Accepted
 - [ADR-0002](0002-yarp-proxy.md) · YARP Reverse Proxy Selection · Accepted
 - [ADR-0018](0018-bff-origin-hardening.md) · BFF origin hardening — __Host- session cookie, Fetch-Metadata, no CORS · Accepted
-- **[ADR-0019](0019-spa-bff-integration.md)** · SPA–BFF integration architecture for the frontend build-out · Accepted
+- **[ADR-0019](0019-spa-bff-integration.md)** · SPA–BFF integration architecture for the frontend build-out · Accepted; decision 6 superseded by ADR-0023
 - [ADR-0039](0039-bff-session-cache-is-a-fallback.md) · The BFF session cache is a fallback, never the answer · Accepted
 - [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) · The BFF serves the built SPA under a CSP measured against it · Accepted
 - [ADR-0055](0055-the-api-serves-one-client-the-bff.md) · The API serves one client, the BFF · Accepted

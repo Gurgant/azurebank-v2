@@ -4,7 +4,7 @@ AzureBank is a banking application (a .NET API, a React frontend, SQL Server) th
 alone, with four AI coding agents working under my direction. I designed it, and before I merge
 a change I read its diff with a list of the test and workflow files it edits, because those are
 the files where a check can be made easier to pass; that reading is
-[my own statement](#what-this-does-not-show). 64 [decision records][adr] say why it is built the
+[my own statement](#what-this-does-not-show). 65 [decision records][adr] say why it is built the
 way it is. Harness engineering is the part of that work that is not the application: what I
 build around agents made by others. It has three parts:
 
@@ -30,7 +30,7 @@ This page takes the public part of the harness piece by piece, each with the fil
 the rule that shows it, and says where a part rests on my word alone. How I lead the work is in
 the [Engineering Playbook][pb]; its [table][who] names the agents. The numbers in
 [the last table](#the-numbers) were counted on 12 October 2026, and the first four were
-recounted on 30 October 2026; it says where each can be counted again.
+recounted on 14 November 2026; it says where each can be counted again.
 
 ## One change, start to finish
 
@@ -115,8 +115,8 @@ inferential when an AI model judges the result.
 
 | Part | What is here, and where it shows |
 |---|---|
-| Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
-| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 25 [architecture-test][arch] files |
+| Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 65 [decisions][adr], the [traps][tr] |
+| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 26 [architecture-test][arch] files |
 | Checks a model judges (inferential sensors) | An AI review on pull requests; a [second reader][who] |
 | Limits and my checkpoints | The [rule set][rs], 11 required checks; my merge; a [deploy][dep] |
 | Isolation | A separate folder and branch per agent ([the path of a change][path]): it separates files, nothing else |
@@ -274,8 +274,8 @@ elsewhere. I keep the merge decision because these changes can affect rules abou
 | Number | Where it can be counted again |
 |--:|---|
 | 11 | The required checks listed on the [rule set][rs] page |
-| 64 | The numbered files in [`docs/adr/`][adrdir]: 65, one of which is the template |
-| 25 | The files in the [architecture tests' folder][arch]: 26, one of which holds no test |
+| 65 | The numbered files in [`docs/adr/`][adrdir]: 66, one of which is the template |
+| 26 | The files in the [architecture tests' folder][arch]: 27, one of which holds no test |
 | 9 | Eight steps of [`ci.yml`][ci] and one of [`contract-tests.yml`][bru], named below |
 | 17 | The results on the last commit of [#283][p283]: 16 check runs and one status |
 | 273, of which 202 before 25 September | GitHub's list of [merged pull requests][merged] up to #283; [the same list before that day][early] |
