@@ -40,7 +40,7 @@ git diff --name-only origin/main...HEAD               # read the list: one topic
 | Changed | Run | From |
 |---|---|---|
 | `backend/` | the three backend commands on `AzureBank.slnx`, with no `--filter` and no `--include`: a filter drops a test project, and a format check that matches no file passes. Two "Test run for" lines are due, one for each test project | `backend/` |
-| `frontend/` | the frontend line (`npm ci` first in a fresh checkout) | `frontend/` |
+| `frontend/` | the frontend line (`pnpm install --frozen-lockfile` first in a fresh checkout) | `frontend/` |
 | `infra/`, `.github/workflows/` | `python -m unittest discover -s infra -p 'test_*.py'` | the root |
 | `.github/workflows/` | also `actionlint`, with `shellcheck` installed: the infrastructure job runs it, and it reads the shell of every `run:` block | the root |
 | any Markdown, `docs-site/`, or a file moved, renamed or deleted | every relative link and anchor still resolves. For a page under `docs/`, the root `README.md` or `SECURITY.md`, a heading renamed or removed in any Markdown file, a file moved, renamed or deleted, or a change under `docs-site/`: `npm ci --ignore-scripts && npm run build` from `docs-site/`, whose last line must read `check-links: <n> references in <m> pages, none broken`. The pages link to files and to headings all over the repository, and the build stops on a target that is gone. The links written in Markdown outside `docs/` other than those two (`AGENTS.md`, a README in `backend/` or `frontend/`) the build does not check: open each one the diff adds or changes | the root |
@@ -65,8 +65,8 @@ What these commands do not run. CI runs all of it on every pull request: say whi
 CI, and never count them as passed.
 
 - The suites that need a SQL Server: they skip themselves without `AZUREBANK_TEST_SQLSERVER`.
-- Four frontend suites that need a stack: `npm run test:contract:real`, `npm run test:integration`
-  and `npm run test:e2e` (the real stack), and `npm run test:e2e:demo` (the stack in containers,
+- Four frontend suites that need a stack: `pnpm run test:contract:real`, `pnpm run test:integration`
+  and `pnpm run test:e2e` (the real stack), and `pnpm run test:e2e:demo` (the stack in containers,
   with the demo on).
 - The frontend unit suite under two other time zones, the run of Schemathesis against the running
   API, the Bruno collection, the check that every model change has a migration, the compile and
@@ -89,7 +89,7 @@ AZUREBANK_REGENERATE_OPENAPI=1 dotnet test --filter "FullyQualifiedName~Committe
 # again without the flag: must pass
 dotnet test --filter "FullyQualifiedName~CommittedOpenApiDocumentTests"
 # from frontend/
-npm run generate:api && npm run generate:zod
+pnpm run generate:api && pnpm run generate:zod
 ```
 
 Read the diff of the contract: every changed path is one the change meant. If the same branch

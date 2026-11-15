@@ -124,6 +124,13 @@ public sealed class RequestBodySchemaConstraintsTransformer : IOpenApiDocumentTr
                 // AzureTagQuery is the body/param variant of the same rule set
                 // (UpdateAzureTagRequest uses it) — without this case a spec regen
                 // silently DROPS the documented constraints.
+                case PayeeAzureTagAttribute:
+                    schema.Type = JsonSchemaType.String;
+                    schema.MinLength = ValidationRules.AzureTagMinLength;
+                    schema.MaxLength = ValidationRules.AzureTagMaxLength;
+                    schema.Pattern = ValidationRules.PayeeAzureTagPattern;
+                    break;
+
                 case AzureTagAttribute:
                 case AzureTagQueryAttribute:
                     schema.MinLength = ValidationRules.AzureTagMinLength;

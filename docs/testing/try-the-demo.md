@@ -25,6 +25,12 @@ The sign-in page also says what is kept, before you press anything: "This browse
 copy's sign-in details so you can come back to it. To limit abuse, a one-way code of your
 network address is kept with the copy and removed when the copy is deleted."
 
+The entry page that wakes the demo also asks GitHub's API for the count of merged pull requests it
+shows. That request gives GitHub your network address and the time. It is made on every load of
+the page, a load from the browser's cache included, and not when Back or Forward brings back a page
+the browser kept whole: that page resumes without loading again. (**Not seen**: the entry page is
+not part of the compose stack.)
+
 ## Where it runs
 
 Open **the demo's address** in your browser. For the public demo it is in
@@ -434,9 +440,13 @@ saw unless it says otherwise.
    same of its account, and its **Continue** stays switched off.
 2. **Pay a handle that does not exist.** Type `zz_nobody_here` and press **Verify**. You should
    see `We couldn't find @zz_nobody_here. Check the handle and try again.` Your own handle
-   gets the same sentence. One letter gets "We couldn't check that handle. Please try again."
-   A handle of another visitor's copy reads as one nobody has: the second walk had two copies,
-   and from one of them two handles of the other got that sentence.
+   gets its own sentence: "That's your own handle. To move money between your own accounts, use
+   "Between your own accounts" below." Two letters get "A handle is 3 to 20 letters, numbers
+   or underscores, and starts with a letter." (a page test holds this; no walk has seen it). A
+   capital letter is no refusal: the page sends the handle in lower case (a page test holds
+   this too; no walk has seen it). A handle of another visitor's copy reads as one nobody
+   has: the second walk had two copies, and from one of them two handles of the other got
+   the "We couldn't find" sentence.
 3. **Send the same payment twice.** Double-click **Deposit €5.00**. You should see one deposit:
    the total goes up by €5.00, not €10.00.
 4. **Reload mid-way.** On "Review Transfer", reload the page. You should see an empty "Send
@@ -536,6 +546,11 @@ The other lines marked not seen are read from
 [`PinService.cs`](../../backend/src/AzureBank.Api/Services/Implementations/PinService.cs) (a
 right PIN starting the count again) and
 [`deleteAccount.spec.ts`](../../frontend/e2e/deleteAccount.spec.ts) (deleting an account).
+
+**The entry page** is published from `site/` by GitHub Pages and is not on the compose stack,
+so neither walk saw it. Its request to GitHub's API is in
+[`entry.js`](../../site/entry.js), and the page's own note on that request is in
+[`index.html`](../../site/index.html).
 
 **The numbers.**
 

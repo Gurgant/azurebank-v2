@@ -6,8 +6,9 @@
  * generate-icons.js, so a reviewer can disagree with the conclusion on evidence rather than on
  * whether the evidence exists.
  *
- *   npm install --no-save @resvg/resvg-js@2.6.2
- *   node scripts/favicon-contrast.js
+ *   mkdir .icon-tools                       (once, at the repository root)
+ *   pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2
+ *   node frontend/scripts/favicon-contrast.js
  *
  * The metric: of the mark's ink, weighted by alpha, what share falls below 3:1 against whatever sits
  * immediately behind it — the plate for a plated candidate, the tab strip for a transparent one.
@@ -16,16 +17,27 @@
  * exactly as hard as it deserves. 3:1 is WCAG 2.2's non-text contrast threshold.
  */
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
+// The same folder as generate-icons.js: at the repository root, outside frontend/, or ICON_TOOLS_DIR.
+const ICON_TOOLS = resolve(
+  process.env.ICON_TOOLS_DIR ??
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.icon-tools'),
+);
+
 let Resvg;
 try {
-  ({ Resvg } = await import('@resvg/resvg-js'));
+  ({ Resvg } = createRequire(join(ICON_TOOLS, 'package.json'))('@resvg/resvg-js'));
 } catch {
-  console.error('Needs the rasteriser:\n\n  npm install --no-save @resvg/resvg-js@2.6.2\n');
+  console.error(
+    `Needs the rasteriser, looked for in ${ICON_TOOLS}. From the repository root, once:\n\n` +
+      '  mkdir .icon-tools\n' +
+      '  pnpm add --dir .icon-tools @resvg/resvg-js@2.6.2\n',
+  );
   process.exit(1);
 }
 

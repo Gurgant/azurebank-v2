@@ -32,7 +32,8 @@ namespace AzureBank.Tests.Architecture;
 /// says. Measured by these tests before this change: 0 of the 27 actions took a token, nor 31 of the
 /// 32 service methods, and 69 of the 129 EF calls in the API and Infrastructure passed none (2 more
 /// passed <c>CancellationToken.None</c>). CA2016 (an error in both projects) catches a token a method
-/// has and does not forward; these catch the methods that never had one to forward.
+/// has and does not forward; these catch the methods that never had one to forward. The opposite rule
+/// holds at a refusal's audit row, which must never take the request's token (ADR-0058 D12).
 /// </para>
 /// <para>
 /// Three token endpoints stay without one, on purpose: refresh, revoke and logout run to completion
@@ -141,9 +142,12 @@ public class CancellationFlowTests
     ];
 
     /// <summary>
-    /// Where <c>CancellationToken.None</c> is the design: a rollback must run whatever happened to the
-    /// request, and a refusal's audit row is written in its own scope so that it survives the
-    /// rollback of what it refused (ADR-0044 D1).
+    /// Where <c>CancellationToken.None</c> is the design. A rollback must run whatever happened to the
+    /// request, so it may take None. A refusal's audit row must take it: a caller who hangs up, or the
+    /// deadline, must not cancel the write (ADR-0058 D12), which already runs in its own scope so that
+    /// it survives the rollback of what it refused (ADR-0044 D1).
+    /// <see cref="EveryRefusalsAuditRow_PassesCancellationTokenNone"/> fails on every call that does
+    /// not pass it.
     /// </summary>
     private static readonly HashSet<string> UncancellableCalls = ["RollbackAsync", "RecordRefusalAsync"];
 
@@ -173,10 +177,147 @@ public class CancellationFlowTests
     [Fact]
     public void EveryEfCall_PassesTheRequestsToken_AndNoneOnlyWhereItMustNotBeCancelled()
     {
-        var root = RepositoryFiles.Root().FullName;
         var offenders = new List<string>();
         var efCalls = 0;
         var files = 0;
+
+        foreach (var (file, relative, code) in ScannedSources())
+        {
+            files++;
+            var calls = new List<(string Name, int Open, int Close)>();
+
+            foreach (Match match in Call.Matches(code))
+            {
+                var name = match.Groups["name"].Value;
+                var open = match.Index + match.Length;
+                var close = ClosingParenthesis(code, open);
+                calls.Add((name, open, close));
+
+                if (!EfCalls.Contains(name))
+                {
+                    continue;
+                }
+
+                efCalls++;
+                var arguments = SplitArguments(code[open..close]);
+                var line = LineOf(code, match.Index);
+                var last = arguments.Count == 0 ? string.Empty : Regex.Replace(arguments[^1], @"\s+", " ");
+                var token = TokenArgument.Match(last);
+
+                // A token inside a params list is bound as a SQL parameter or a key value: it
+                // compiles, and fails at run time, on SQL Server only. The token goes after a
+                // collection: (sql, new object[] { ... }, ct) and (new object[] { ... }, ct).
+                var paramsShape = name switch
+                {
+                    "ExecuteSqlRawAsync" when arguments.Count > 2
+                        && !(arguments.Count == 3 && IsCollection(arguments[1])) =>
+                        "; with values, the token goes after them as a collection: (sql, new object[] { ... }, ct)",
+                    "FindAsync" when !(arguments.Count == 2 && IsCollection(arguments[0])) =>
+                        "; the key values go in a collection before the token: (new object[] { ... }, ct)",
+                    _ => null,
+                };
+
+                if (!token.Success)
+                {
+                    offenders.Add($"{relative}:{line} {name}(...) passes no token{paramsShape}");
+                }
+                else if (paramsShape is not null)
+                {
+                    offenders.Add($"{relative}:{line} {name}(...) binds its token as a value{paramsShape}");
+                }
+                else if (IsNone(token.Groups["token"].Value) && !UncancellableCalls.Contains(name))
+                {
+                    offenders.Add($"{relative}:{line} {name}(..., {last}) passes a token nothing can cancel");
+                }
+            }
+
+            // Any other None: attributed to the innermost call it is an argument of. A rollback
+            // and a refusal's audit row may take it; an EF call's was judged above.
+            foreach (Match none in NoneToken.Matches(code))
+            {
+                var owner = calls
+                    .Where(c => none.Index >= c.Open && none.Index < c.Close)
+                    .OrderBy(c => c.Close - c.Open)
+                    .Select(c => c.Name)
+                    .FirstOrDefault();
+
+                if (owner is null
+                    && Path.GetFileName(file) == UncancellableWriteFile
+                    && RequestAbortedAssignment.IsMatch(StatementAt(code, none.Index)))
+                {
+                    continue;
+                }
+
+                if (owner is null || !(UncancellableCalls.Contains(owner) || EfCalls.Contains(owner)))
+                {
+                    offenders.Add($"{relative}:{LineOf(code, none.Index)} {none.Value} passed to "
+                                  + $"{owner ?? "a call"}(...), outside a rollback or a refusal's audit row");
+                }
+            }
+        }
+
+        files.Should().BeGreaterThan(50, "a scan that reads nothing reports clean");
+        efCalls.Should().BeGreaterThan(100, "measured at 129 EF calls when this was written; far fewer means the scan broke");
+
+        offenders.Should().BeEmpty(
+            "the deadline cancels one token and caps only what receives it ({0} offenders in {1} EF calls):{2}{3}",
+            offenders.Count, efCalls, Environment.NewLine, string.Join(Environment.NewLine, offenders));
+    }
+
+    [Fact]
+    public void EveryRefusalsAuditRow_PassesCancellationTokenNone()
+    {
+        var sites = new List<string>();
+        var offenders = new List<string>();
+
+        foreach (var (_, relative, code) in ScannedSources())
+        {
+            foreach (Match match in Call.Matches(code))
+            {
+                if (match.Groups["name"].Value != nameof(IAuditService.RecordRefusalAsync))
+                {
+                    continue;
+                }
+
+                var open = match.Index + match.Length;
+                var arguments = SplitArguments(code[open..ClosingParenthesis(code, open)]);
+                var last = arguments.Count == 0 ? string.Empty : Regex.Replace(arguments[^1], @"\s+", " ");
+                var token = TokenArgument.Match(last);
+                var site = $"{relative}:{LineOf(code, match.Index)}";
+                sites.Add(site);
+
+                // A call with no token is an offender too. The parameter's default is None, so such a
+                // call cannot be cancelled either, but it compiles, and CA2016 reports it only where a
+                // token is in scope: each site states None where the choice is made, and does not
+                // inherit it from a default declared in IAuditService.
+                if (!token.Success || !IsNone(token.Groups["token"].Value))
+                {
+                    offenders.Add($"{site} RecordRefusalAsync(..., {last}): the last argument is not CancellationToken.None");
+                }
+            }
+        }
+
+        sites.Should().HaveCount(
+            8,
+            "these are the eight _audit.RecordRefusalAsync( calls that SecurityEventConstantTests counts; "
+            + "a scan that finds fewer is not reading them, and a new _audit.RecordRefusalAsync( site moves both counts");
+
+        offenders.Should().BeEmpty(
+            "a refusal's audit row is written in its own scope so that it outlives what it refused "
+            + "(ADR-0044 D1), and with the request's token a caller who hangs up, or the deadline, would "
+            + "cancel its write (ADR-0058 D12); each call passes cancellationToken: CancellationToken.None "
+            + "({0} of {1} do not):{2}{3}",
+            offenders.Count, sites.Count, Environment.NewLine, string.Join(Environment.NewLine, offenders));
+    }
+
+    /// <summary>
+    /// The sources both scans read: every <c>.cs</c> file of the API and of Infrastructure but those
+    /// under <c>bin</c>, <c>obj</c> and <c>Migrations</c>, with its path from the repository root and
+    /// its text through <see cref="CodeOnly"/>.
+    /// </summary>
+    private static IEnumerable<(string FullPath, string Relative, string Code)> ScannedSources()
+    {
+        var root = RepositoryFiles.Root().FullName;
 
         foreach (var project in new[] { "AzureBank.Api", "AzureBank.Infrastructure" })
         {
@@ -192,87 +333,9 @@ public class CancellationFlowTests
                     continue;
                 }
 
-                files++;
-                var code = CodeOnly(File.ReadAllText(file));
-                var calls = new List<(string Name, int Open, int Close)>();
-
-                foreach (Match match in Call.Matches(code))
-                {
-                    var name = match.Groups["name"].Value;
-                    var open = match.Index + match.Length;
-                    var close = ClosingParenthesis(code, open);
-                    calls.Add((name, open, close));
-
-                    if (!EfCalls.Contains(name))
-                    {
-                        continue;
-                    }
-
-                    efCalls++;
-                    var arguments = SplitArguments(code[open..close]);
-                    var line = LineOf(code, match.Index);
-                    var last = arguments.Count == 0 ? string.Empty : Regex.Replace(arguments[^1], @"\s+", " ");
-                    var token = TokenArgument.Match(last);
-
-                    // A token inside a params list is bound as a SQL parameter or a key value: it
-                    // compiles, and fails at run time, on SQL Server only. The token goes after a
-                    // collection: (sql, new object[] { ... }, ct) and (new object[] { ... }, ct).
-                    var paramsShape = name switch
-                    {
-                        "ExecuteSqlRawAsync" when arguments.Count > 2
-                            && !(arguments.Count == 3 && IsCollection(arguments[1])) =>
-                            "; with values, the token goes after them as a collection: (sql, new object[] { ... }, ct)",
-                        "FindAsync" when !(arguments.Count == 2 && IsCollection(arguments[0])) =>
-                            "; the key values go in a collection before the token: (new object[] { ... }, ct)",
-                        _ => null,
-                    };
-
-                    if (!token.Success)
-                    {
-                        offenders.Add($"{relative}:{line} {name}(...) passes no token{paramsShape}");
-                    }
-                    else if (paramsShape is not null)
-                    {
-                        offenders.Add($"{relative}:{line} {name}(...) binds its token as a value{paramsShape}");
-                    }
-                    else if (IsNone(token.Groups["token"].Value) && !UncancellableCalls.Contains(name))
-                    {
-                        offenders.Add($"{relative}:{line} {name}(..., {last}) passes a token nothing can cancel");
-                    }
-                }
-
-                // Any other None: attributed to the innermost call it is an argument of. A rollback
-                // and a refusal's audit row may take it; an EF call's was judged above.
-                foreach (Match none in NoneToken.Matches(code))
-                {
-                    var owner = calls
-                        .Where(c => none.Index >= c.Open && none.Index < c.Close)
-                        .OrderBy(c => c.Close - c.Open)
-                        .Select(c => c.Name)
-                        .FirstOrDefault();
-
-                    if (owner is null
-                        && Path.GetFileName(file) == UncancellableWriteFile
-                        && RequestAbortedAssignment.IsMatch(StatementAt(code, none.Index)))
-                    {
-                        continue;
-                    }
-
-                    if (owner is null || !(UncancellableCalls.Contains(owner) || EfCalls.Contains(owner)))
-                    {
-                        offenders.Add($"{relative}:{LineOf(code, none.Index)} {none.Value} passed to "
-                                      + $"{owner ?? "a call"}(...), outside a rollback or a refusal's audit row");
-                    }
-                }
+                yield return (file, relative, CodeOnly(File.ReadAllText(file)));
             }
         }
-
-        files.Should().BeGreaterThan(50, "a scan that reads nothing reports clean");
-        efCalls.Should().BeGreaterThan(100, "measured at 129 EF calls when this was written; far fewer means the scan broke");
-
-        offenders.Should().BeEmpty(
-            "the deadline cancels one token and caps only what receives it ({0} offenders in {1} EF calls):{2}{3}",
-            offenders.Count, efCalls, Environment.NewLine, string.Join(Environment.NewLine, offenders));
     }
 
     private static bool IsCollection(string argument)

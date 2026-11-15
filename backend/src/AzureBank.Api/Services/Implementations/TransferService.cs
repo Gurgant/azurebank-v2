@@ -273,6 +273,7 @@ public class TransferService : ITransferService
           the PIN, so a transfer the day cannot take costs no attempt (ADR-0050 D4). Not covered:
           the mint answers 404 or 422 about a handle to any signed-in caller before the PIN, bounded
           only by the BFF's per-IP limiter (ADR-0014's per-user policy covers /api/users only).
+          The transfer answers the same to a made-up authorisation reference (ADR-0042 D8).
         */
         await _dailyLimit.AssertCanMoveAsync(userId, request.Amount, cancellationToken);
 

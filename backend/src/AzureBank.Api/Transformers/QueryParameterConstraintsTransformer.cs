@@ -68,7 +68,8 @@ public sealed class QueryParameterConstraintsTransformer : IOpenApiDocumentTrans
                 parameter.Required = true;
                 schema.MinLength = ValidationRules.AzureTagMinLength;
                 schema.MaxLength = ValidationRules.AzureTagMaxLength;
-                schema.Pattern = ValidationRules.AzureTagPattern;
+                // The lookup reads a payee's handle in any letter case (LowerCasingRouteValueBinder).
+                schema.Pattern = ValidationRules.PayeeAzureTagPattern;
                 break;
         }
     }

@@ -1,6 +1,7 @@
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Validation;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace AzureBank.Shared.DTOs.Transfer;
 
@@ -11,7 +12,8 @@ public class TransferRequest
     public Guid FromAccountId { get; set; }
 
     [Required]
-    [AzureTag]
+    [PayeeAzureTag]
+    [JsonConverter(typeof(LowerCasingJsonConverter))]
     public required string RecipientAzureTag { get; set; }
 
     [Required]

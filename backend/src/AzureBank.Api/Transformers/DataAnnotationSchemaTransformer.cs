@@ -155,6 +155,16 @@ public sealed class DataAnnotationSchemaTransformer : IOpenApiSchemaTransformer
                         + "character that is none of these.";
                     break;
 
+                // A payee's AzureTag: the same rule, written for the wire, where any letter case is read
+                case PayeeAzureTagAttribute:
+                    // The property's own JSON converter makes the generator forget the type.
+                    schema.Type = JsonSchemaType.String;
+                    schema.MinLength = ValidationRules.AzureTagMinLength;
+                    schema.MaxLength = ValidationRules.AzureTagMaxLength;
+                    schema.Pattern = ValidationRules.PayeeAzureTagPattern;
+                    schema.Description = "A handle in any letter case: it is read in lower case. Must start with a letter and contain only letters, numbers, and underscores.";
+                    break;
+
                 // AzureTag - minLength: 3, maxLength: 20, pattern for format
                 case AzureTagAttribute:
                     schema.MinLength = ValidationRules.AzureTagMinLength;

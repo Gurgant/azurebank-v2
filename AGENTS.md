@@ -37,7 +37,7 @@ dotnet format AzureBank.slnx --verify-no-changes
 Frontend, from `frontend/`:
 
 ```bash
-npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
+pnpm run format:check && pnpm run lint && pnpm run build && pnpm test && pnpm run test:contract:mock
 ```
 
 Deployment scripts, templates and workflows, from the root:
@@ -49,14 +49,14 @@ actionlint        # for a change to a workflow; with ShellCheck installed, as in
 
 Build in Release: warnings are errors there, as in CI. Name the solution and do not filter: a
 filter on `AzureBank.Tests` drops the BFF's suite and still reports success. The type gate is
-`npm run build`, not `tsc --noEmit`.
+`pnpm run build`, not `tsc --noEmit`.
 
 These run without a stack. The tests that need a SQL Server skip themselves unless
 `AZUREBANK_TEST_SQLSERVER` holds a connection string, and three frontend suites need the real
-stack up: `npm run test:contract:real`, `npm run test:integration` and `npm run test:e2e`
+stack up: `pnpm run test:contract:real`, `pnpm run test:integration` and `pnpm run test:e2e`
 (`frontend/CONVENTIONS.md` says what that stack must be, and
 [Local setup](docs/engineering-practices.md#local-setup) has the commands). A fourth,
-`npm run test:e2e:demo`, needs the stack in containers with the demo on. CI runs all of them on
+`pnpm run test:e2e:demo`, needs the stack in containers with the demo on. CI runs all of them on
 every pull request.
 
 ## Before a change is called done

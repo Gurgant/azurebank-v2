@@ -7,6 +7,7 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { holdTheMint } from '../test/heldMint';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
 
@@ -174,6 +175,29 @@ describe('the PIN step recovers from what the server refuses', () => {
       '/pin-setup?returnTo=/transfer',
     );
   });
+
+  it("PIN_REQUIRED on the request for the authorisation routes to PIN setup, though the browser's Back is held for it", async () => {
+    /*
+      The wizard holds the browser's Back while the request for the authorisation is out, and this
+      page's own way on to PIN setup goes through the same router when that request is answered,
+      before the page has drawn the end of the wait. A page that held it would ask "Leave without
+      finishing?" and then release the visitor into the page they were being sent away from.
+    */
+    const mint = holdTheMint('*/api/transfers/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'PIN must be set.' }),
+    );
+    const { router } = renderTransfer();
+    await reachPinStep();
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+
+    mint.release();
+
+    expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/transfer',
+    );
+  });
 });
 
 describe('the internal transfer recovers the same way', () => {
@@ -228,6 +252,23 @@ describe('the internal transfer recovers the same way', () => {
     );
     const { router } = renderInternal();
     await reachInternalPinStep();
+
+    expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      '/pin-setup?returnTo=/transfer/internal',
+    );
+  });
+
+  it("PIN_REQUIRED on the request for the authorisation routes to PIN setup here too, though the browser's Back is held for it", async () => {
+    const mint = holdTheMint('*/api/transfers/internal/authorizations', () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'PIN must be set.' }),
+    );
+    const { router } = renderInternal();
+    await reachInternalPinStep();
+    await mint.arrived;
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toBeDisabled());
+
+    mint.release();
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
     expect(router.state.location.pathname + router.state.location.search).toBe(

@@ -169,18 +169,35 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
   }
 
   /*
+    A sign-out that succeeded drops the cache, in the demo and off it. The accounts, the history
+    and the month's summary in it were fetched for the person who has just left, and the next
+    person to sign in or register in this tab would be handed them from the cache for as long as
+    it keeps an unused answer (RTK Query's default is 60 seconds), beside their own name and with
+    no request to the server. The same reset follows a 401 while signed in, below, and the expiry
+    dialog's "Sign out now" (SessionExpiryWarning.tsx), for the reason ADR-0019 gives for the 401:
+    financial data must not outlive the session it was fetched under.
+
+    A sign-out that failed drops nothing here: the session may be alive, and so is its owner's
+    cache. src/features/demo/claim.test.ts holds both.
+  */
+  if (isFulfilled(action) && isActionOf(action, 'logout')) {
+    middlewareApi.dispatch(apiSlice.util.resetApiState());
+  }
+
+  /*
     In the demo a sign-in that succeeded drops the cache as well, and keeps nothing: a sign-in's
     answer carries no copy.
 
     The reason is the claim's second one. In the demo every visitor signs in to a copy of their
-    own, and one browser can sign in to a copy while its cache still holds another's: a sign-out
-    drops nothing, and a sign-in invalidates the `Session` tag only. The accounts of the copy
-    before would still be in the cache when the owner of the next asks for theirs.
+    own, and a sign-in invalidates the `Session` tag only: the accounts of a copy before would
+    still be in the cache when the owner of the next asks for theirs. The sign-out's reset, above,
+    does not make this one redundant: a sign-in is the moment the copy changes, and it must not
+    depend on a sign-out having run first.
 
-    Off the demo a sign-in drops nothing, as it never has. A deployment with the demo off has to
-    behave as it did before there was a demo, down to the requests it makes, and what a sign-out
-    leaves in the cache there is left as it is. src/features/demo/claim.test.ts holds both: the
-    cache gone after a sign-in in the demo, and still there after one off it.
+    Off the demo a sign-in drops nothing, as it never has: a deployment with the demo off has to
+    behave as it did before there was a demo, down to the requests it makes. What the person
+    before left is dropped by their sign-out, above. src/features/demo/claim.test.ts holds both:
+    the cache gone after a sign-in in the demo, and still there after one off it.
   */
   if (isFulfilled(action) && isActionOf(action, 'login') && isDemoMode()) {
     middlewareApi.dispatch(apiSlice.util.resetApiState());

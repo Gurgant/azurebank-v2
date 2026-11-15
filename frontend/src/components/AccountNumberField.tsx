@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Button, makeStyles, Spinner, Text } from '@fluentui/react-components';
 import { Copy16Regular, Eye16Regular, EyeOff16Regular } from '@fluentui/react-icons';
 import { colors } from '../theme/tokens';
@@ -84,6 +85,8 @@ export function AccountNumberField({
   // Counts the copies started and the times the number was hidden, so that a clipboard write which
   // finishes after either says nothing over a newer notice.
   const copyEpoch = useRef(0);
+  const eyeButton = useRef<HTMLButtonElement>(null);
+  const copyButton = useRef<HTMLButtonElement>(null);
 
   // Unmount (e.g. navigating away) counts as an auto-rehide: drop both timers so nothing fires
   // against a gone component and no revealed value lingers.
@@ -114,6 +117,19 @@ export function AccountNumberField({
     conceal(null);
   };
 
+  // The timer takes Copy off the page, and a button removed while it has focus leaves focus on
+  // the page itself. Focus that was on Copy goes to the eye button, and only once `flushSync` has
+  // drawn the hidden state: focused before, the button is read as "Hide …", a name that is wrong
+  // a moment later. The page does not scroll to it: the timer moves focus, not the visitor, and a
+  // visitor who scrolled the card away keeps the view they chose. Focus anywhere else stays where
+  // it is. Hide needs none of this: it is pressed on the eye button, which stays.
+  const hideAgain = () => {
+    const copyHadFocus =
+      copyButton.current !== null && document.activeElement === copyButton.current;
+    flushSync(() => conceal('hiddenAgain'));
+    if (copyHadFocus) eyeButton.current?.focus({ preventScroll: true });
+  };
+
   const reveal = async () => {
     onActionStart?.();
     setNotice(null);
@@ -124,7 +140,7 @@ export function AccountNumberField({
       // only in this component's transient state (ASVS 14.3.1), never in Redux.
       reset();
       clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => conceal('hiddenAgain'), REVEAL_TIMEOUT_MS);
+      hideTimer.current = setTimeout(hideAgain, REVEAL_TIMEOUT_MS);
     } catch (error) {
       // A cancelled PIN step-up is a benign no-op — stay masked, no toast. Anything else is real.
       const problem = error as ApiProblem;
@@ -182,6 +198,7 @@ export function AccountNumberField({
           (`aria-progressbar-name`, serious; Chromium, 2026-10-06), and with it hidden, nothing. */}
       <div className={styles.buttons}>
         <Button
+          ref={eyeButton}
           appearance="subtle"
           size="small"
           icon={
@@ -207,6 +224,7 @@ export function AccountNumberField({
 
         {revealed && (
           <Button
+            ref={copyButton}
             appearance="subtle"
             size="small"
             icon={<Copy16Regular />}

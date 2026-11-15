@@ -65,12 +65,15 @@ the Identity roles, without which registration answers 500. The seeded demo user
 `john@example.com` / `Test123!`, PIN `123456`, with two months of history on two accounts.
 
 **Running it.** Three processes, each in a terminal of its own. Start them one after the other
-the first time: two parallel first builds race on `AzureBank.Shared.dll`.
+the first time: two parallel first builds race on `AzureBank.Shared.dll`. The frontend installs
+with pnpm. With Node 24.12 or later, run `corepack enable pnpm` once, and the `packageManager`
+field of `frontend/package.json` picks the version. Node 25 and later carry no Corepack: install
+pnpm 12 another way, with pnpm's own installer or `npm install -g pnpm@12.15.0`.
 
 ```bash
 dotnet run --project backend/src/AzureBank.Api --launch-profile https   # https://localhost:7215
 dotnet run --project backend/src/AzureBank.Bff --launch-profile http    # http://localhost:5000
-cd frontend && npm ci && npm run dev                                     # http://localhost:5173
+cd frontend && pnpm install --frozen-lockfile && pnpm run dev       # http://localhost:5173
 ```
 
 The API must run the **https** profile: the BFF's proxy points at 7215, and with the http profile
@@ -87,7 +90,7 @@ while they run, and the build that `dotnet test` starts fails with
 
 ```bash
 dotnet test backend/AzureBank.slnx    # name the solution
-cd frontend && npm run build && npx vitest run
+cd frontend && pnpm run build && pnpm exec vitest run
 ```
 
 A `dotnet test` filtered on `AzureBank.Tests` drops the BFF's tests and still reports success,
@@ -135,7 +138,7 @@ docker compose up --build -d   # after exporting the eight variables compose.yam
   says how to run it. It asks for a ninth variable, `DEMO_CLIENT_KEY_SECRET`, and every command
   that loads the file needs it, `down` included.
 
-**The public demo on that stack, and in the dev loop.** `npm run test:e2e:demo`, from
+**The public demo on that stack, and in the dev loop.** `pnpm run test:e2e:demo`, from
 `frontend/`, drives the demo in Chromium on `http://localhost:5000`. CI runs it on every pull
 request, in the job `demo-stack`, on a stack the job builds from the two compose files and takes
 down. By hand, run it on a stack nobody else is using: it **restarts the BFF's container and
@@ -145,7 +148,7 @@ a run leaves on disk to delete. In the dev loop the demo's screens need `AZUREBA
 the dev server's environment ([`frontend/README.md`](../frontend/README.md#run-it)). That sets
 the page and not the backend: a BFF with the demo off answers the claim 404.
 
-The default suite, `npm run test:e2e`, expects the demo off. On the compose stack one of its
+The default suite, `pnpm run test:e2e`, expects the demo off. On the compose stack one of its
 tests, `e2e/pinLockExpiry.spec.ts`, failed in two of four whole runs on 2026-10-05 with its own
 expectations met: the browser's context did not close within the test's 30 s. Why is not known.
 
@@ -162,7 +165,7 @@ dotnet format AzureBank.slnx --verify-no-changes
 From `frontend/`:
 
 ```bash
-npm run format:check && npm run lint && npm run build && npm test && npm run test:contract:mock
+pnpm run format:check && pnpm run lint && pnpm run build && pnpm test && pnpm run test:contract:mock
 ```
 
 For the deployment scripts, the templates and the workflows, from the root:
@@ -174,7 +177,7 @@ actionlint        # for a change to a workflow; with ShellCheck installed, as in
 
 - **Build in Release.** Warnings are errors there, as in CI: a Debug build passes with a warning
   that CI refuses.
-- **Name the solution**, and take `npm run build` as the type gate, not `tsc --noEmit`
+- **Name the solution**, and take `pnpm run build` as the type gate, not `tsc --noEmit`
   ([traps](engineering-traps.md#frontend-test-infrastructure)).
 - **A gate is a delta against `main`, never an absolute count.** "This change introduces no new
   alert" survives an untriaged backlog; "zero open alerts" dies at the first one.
@@ -189,7 +192,7 @@ actionlint        # for a change to a workflow; with ShellCheck installed, as in
 **CI also counts what the tests run.** On every pull request the job `coverage` runs the
 backend's two test projects with a collector, the API's whole and against a SQL Server so that
 the concurrency proofs run too, and then the frontend's unit and component tests
-(`npm run test:coverage`). Its summary gives the share of the lines of hand-written code that
+(`pnpm run test:coverage`). Its summary gives the share of the lines of hand-written code that
 ran, for each backend assembly and in total, and the job fails under a floor set a little under
 the last figure measured: a tripwire, not a target. The backend holds two floors, one on all its
 hand-written code and one on the application alone (`backend/src`), which the first does not

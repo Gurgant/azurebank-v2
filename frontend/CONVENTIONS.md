@@ -64,8 +64,8 @@ for ever.
 page, one fixed sentence in the "Start over" dialog. `DEMO_POOL_EMPTY` and `DEMO_DAILY_LIMIT` are
 worded by their code, in the app's sentences and never the server's, with no countdown. Nothing
 is built for a fourth code, `DEMO_COPY_LIMIT` (ADR-0063, decision 11): each surface shows the
-fallback it has, but for a money resend under a held key, which goes to the check (ADR-0022,
-decision 4).
+fallback it has, but for two money requests under a held key, which go to the check: a resend
+(ADR-0022, decision 4) and the mint of a new authorisation (decision 6).
 
 **One place acts for good on an instant the server gave, against the browser's clock:** the
 sign-in page removes a kept demo copy whose `expiresAt` has passed when the page opens. A clock
@@ -257,7 +257,9 @@ None of these fails in a way that points at the cause.
 - **A test passes whatever ran before it.** The files of a worker share one page and one module
   registry (`isolate: false` in `vitest.config.ts`), so a test must clean up what it adds
   outside the tree it renders: restore what it spied on or stubbed, and leave no node, style
-  rule or global for the next file to find. With `--sequence.shuffle --sequence.seed=<n>` Vitest
+  rule or global for the next file to find. The requests that the stores of `makeTestStore`
+  still have on their way when a test ends are stopped by `src/test/setup.ts`: a read waiting
+  for its retry would otherwise reach the handlers of a later test. With `--sequence.shuffle --sequence.seed=<n>` Vitest
   runs the tests in a random order. Runs with several seeds help find a test that leans on
   another, but a pass does not prove there is none: which files meet in a worker depends on
   timing, so a failure may not repeat. A file that
@@ -273,14 +275,14 @@ The traps of jsdom's missing layout are in
 
 **The type gate runs on the native compiler, and everything that loads the compiler's API stays
 on TypeScript 5.** `typescript` (`~5.9.3`) is what `typescript-eslint`, `openapi-typescript` and
-the editor load. `@typescript/native` is `typescript@7.0.2` under another name, and `npm run
+the editor load. `@typescript/native` is `typescript@7.0.2` under another name, and `pnpm run
 build` calls its binary by path (`node node_modules/@typescript/native/bin/tsc -b`). Both
-packages declare a `tsc` bin and npm links only one into `node_modules/.bin`, so `npx tsc` can
-be either: never call it, and never move `typescript` itself to 7 until those tools support it.
+packages declare a `tsc` bin and pnpm links only one into `node_modules/.bin`, so `pnpm exec tsc`
+can be either: never call it, and never move `typescript` itself to 7 until those tools support it.
 
 ## Two linters
 
-**`npm run lint` runs Oxlint, then ESLint, and a rule runs in one of them.** `.oxlintrc.json`
+**`pnpm run lint` runs Oxlint, then ESLint, and a rule runs in one of them.** `.oxlintrc.json`
 lists what Oxlint runs, and `eslint.config.js` ends with `eslint-plugin-oxlint`, which turns
 those same rules off in ESLint: to move a rule, edit the first file and nothing else. A rule
 goes to Oxlint only once both report the same rules on a file that breaks each one. What stays
@@ -291,10 +293,10 @@ Compiler rule is on in ESLint, its Babel pass runs on every file.
 
 ## `vitest run` does not run the whole suite — it excludes `src/contract/**` and `src/integration/**`
 
-The suite is five commands: `npm test`, `test:contract:mock`, `test:contract:real`,
+The suite is five commands: `pnpm test`, `test:contract:mock`, `test:contract:real`,
 `test:integration` and `test:e2e` ([`README.md`](README.md#check-it)). `vitest run`, which is
-`npm test`, covers the unit and component tests only: a green `vitest run` is not a green suite.
-A sixth command, `npm run test:e2e:demo`, is no part of it: it runs against the compose stack
+`pnpm test`, covers the unit and component tests only: a green `vitest run` is not a green suite.
+A sixth command, `pnpm run test:e2e:demo`, is no part of it: it runs against the compose stack
 with the demo on, in CI's `demo-stack` job on every pull request and by hand.
 
 The last three need the real stack: a seeded `AzureBankE2E`, the API on

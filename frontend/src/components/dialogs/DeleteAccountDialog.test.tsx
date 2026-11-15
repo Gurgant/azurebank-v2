@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,7 @@ import { mockState } from '../../mocks/state';
 import { apiSlice } from '../../features/api/apiSlice';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { enterPin, TEST_PIN } from '../../test/pinFlow';
+import { holdTheMint } from '../../test/heldMint';
 import {
   COPY,
   advanceUntil,
@@ -22,6 +24,8 @@ import {
 } from '../../test/outage';
 import { CONNECTION_FAILED } from '../../api/problemMessages';
 import { FLUENT_STATES, paintedIn, type FluentState } from '../../test/fluentStates';
+import { AppToaster } from '../feedback';
+import { ACCOUNT_CLOSED } from '../../api/problemMessages';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 
 // The `server.events` listeners some tests register are module-level and must not leak into
@@ -56,25 +60,33 @@ function seedTempFund() {
   });
 }
 
-function renderDialog(account = TEMP_FUND, store: TestStore = makeTestStore()) {
+function renderDialog(
+  account = TEMP_FUND,
+  store: TestStore = makeTestStore(),
+  outlet: ReactNode = null,
+) {
   const onClose = vi.fn();
   const onDeleted = vi.fn();
   const onAlreadyClosed = vi.fn();
   const { router } = renderWithProviders(
-    <Routes>
-      <Route
-        path="/"
-        element={
-          <DeleteAccountDialog
-            account={account}
-            onClose={onClose}
-            onDeleted={onDeleted}
-            onAlreadyClosed={onAlreadyClosed}
-          />
-        }
-      />
-      <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
-    </Routes>,
+    <>
+      {outlet}
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DeleteAccountDialog
+              account={account}
+              onClose={onClose}
+              onDeleted={onDeleted}
+              onAlreadyClosed={onAlreadyClosed}
+            />
+          }
+        />
+        <Route path="/pin-setup" element={<div>PIN SETUP PAGE</div>} />
+        <Route path="/elsewhere" element={<div>ELSEWHERE</div>} />
+      </Routes>
+    </>,
     { routerEntries: ['/'], store },
   );
   return { onClose, onDeleted, onAlreadyClosed, store, router };
@@ -712,5 +724,90 @@ describe('DeleteAccountDialog — the closure costs a PIN (ADR-0049)', () => {
     await advanceUntil(shownAt, 20_000);
     hintRegion(COPY.stillTrying, dialog);
     expect(within(dialog).queryByRole('button', { name: COPY.stopWaiting })).toBeNull();
+  });
+});
+
+/**
+ * The visitor leaves while the PIN is being checked. The DELETE follows the answer, and the dialog
+ * does not hold the browser's Back: what keeps the account open is that a dialog that is gone
+ * sends nothing, because a closed account cannot be undone.
+ */
+describe('DeleteAccountDialog — the page is left while the PIN is being checked', () => {
+  it('does not send the DELETE once the dialog is gone, and the account stays open', async () => {
+    seedTempFund();
+    const mint = holdTheMint(MINT_URL);
+    const sent = { deletes: 0 };
+    server.use(
+      http.delete(ACCOUNT_URL, () => {
+        sent.deletes += 1;
+        return undefined;
+      }),
+    );
+    const { router, store, onDeleted } = renderDialog();
+    await reachPinStep();
+    await enterPin();
+    await mint.arrived;
+
+    await act(() => router.navigate('/pin-setup'));
+    expect(await screen.findByText('PIN SETUP PAGE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store);
+
+    expect(sent.deletes).toBe(0);
+    expect(mockState.accounts.some((account) => account.id === TEMP_FUND.id)).toBe(true);
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it('does not move the visitor to PIN setup when the PIN check then answers PIN_REQUIRED', async () => {
+    seedTempFund();
+    const mint = holdTheMint(MINT_URL, () =>
+      problem({ status: 422, errorCode: 'PIN_REQUIRED', detail: 'Set a PIN first.' }),
+    );
+    const sent = { deletes: 0 };
+    server.use(
+      http.delete(ACCOUNT_URL, () => {
+        sent.deletes += 1;
+        return undefined;
+      }),
+    );
+    const { router, store } = renderDialog();
+    await reachPinStep();
+    await enterPin();
+    await mint.arrived;
+
+    await act(() => router.navigate('/elsewhere'));
+    expect(await screen.findByText('ELSEWHERE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(sent.deletes).toBe(0);
+    expect(router.state.location.pathname).toBe('/elsewhere');
+    expect(screen.queryByText('PIN SETUP PAGE')).not.toBeInTheDocument();
+  });
+
+  it('still says the account is closed in the root toaster when the mint answers ACCOUNT_NOT_FOUND after the dialog is gone', async () => {
+    seedTempFund();
+    const mint = holdTheMint(MINT_URL, () =>
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: `Account with identifier '${TEMP_FUND.id}' was not found.`,
+      }),
+    );
+    const { router, store } = renderDialog(TEMP_FUND, makeTestStore(), <AppToaster />);
+    await reachPinStep();
+    await enterPin();
+    await mint.arrived;
+
+    await act(() => router.navigate('/elsewhere'));
+    expect(await screen.findByText('ELSEWHERE')).toBeInTheDocument();
+
+    mint.release();
+    await mint.answered(store, 'rejected');
+
+    expect(await screen.findByRole('listitem', { name: ACCOUNT_CLOSED })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/elsewhere');
   });
 });

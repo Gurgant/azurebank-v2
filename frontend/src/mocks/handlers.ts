@@ -60,6 +60,25 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
   answers 200 to. Measured against the running stack rather than assumed: N, B, P and X all returned
   the correctly scoped total, and an N-format Idempotency-Key was accepted on a deposit.
 
+  D is read more widely than 32 hex digits and four hyphens. .NET reads each of its first five
+  slices, 0-8, 9-13, 14-18, 19-23 and 24-28, with `TryParseHex`: an optional `+`, then an optional
+  `0x` or `0X`, then hex digits that fill the rest of the slice. The last eight characters are hex
+  digits alone.
+  Measured on 2026-10-17 on the API's own test host, against a deposit under the key
+  00000001-0002-0003-0405-060708090a0b, each of
+
+    +0000001-0002-0003-0405-060708090a0b     0x000001-0002-0003-0405-060708090a0b
+    00000001-0x02-0003-0405-060708090a0b     00000001-+002-0003-0405-060708090a0b
+    00000001-0002-0003-0405-+60708090a0b     {0x000001-0002-0003-0405-060708090a0b}
+
+  found that deposit's one row as the listing's `IdempotencyKey`, and was read as the summary's
+  `AccountId` (a 403, not a 400). The first two, made new keys by a last byte of 0x25 and 0x26,
+  were each a 201 as a deposit's `Idempotency-Key`. N reads no prefix:
+  `+0000001000200030405060708090a0b` was a 400 on the listing and on the summary. P hands its
+  middle 36 characters to the same D reader as B does. That, the `+` coming before the `0x` and not
+  after it, and the hex-digits-alone tail were read in .NET's `Guid.cs` (release/10.0), not
+  measured.
+
   Nothing in this app sends anything but D — ids come from the API — so no client could reach the
   gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
   which is the entire failure this file's fidelity suite exists to prevent.
@@ -68,8 +87,34 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 // a template literal is just `(`, which the RegExp then reads as a group opener. Written singly at
 // first, and the P form silently became a capturing group — the format test caught it as a 400.
 const HEX = '[0-9a-f]';
-const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
-const GUID_RE = new RegExp(`^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\))$`, 'i');
+const GUID_N_RE = new RegExp(`^${HEX}{32}$`, 'i');
+/** B and P: the 36 characters of a D between `{` and `}`, or between `(` and `)`. */
+const GUID_B_OR_P_RE = new RegExp(`^(?:\\{.{36}\\}|\\(.{36}\\))$`);
+/** Where each of the first five slices of D starts, and how wide it is. */
+const D_SLICES = [
+  [0, 8],
+  [9, 4],
+  [14, 4],
+  [19, 4],
+  [24, 4],
+] as const;
+const D_SLICE_RE = new RegExp(`^\\+?(?:0x)?(${HEX}+)$`, 'i');
+const D_TAIL_RE = new RegExp(`^${HEX}{8}$`, 'i');
+
+/** The 32 hex digits of a D-spelled GUID, its `+` and `0x` read as .NET reads them, or `null`. */
+function hexOfGuidD(value: string): string | null {
+  if (value.length !== 36 || [8, 13, 18, 23].some((at) => value[at] !== '-')) return null;
+  let hex = '';
+  for (const [start, width] of D_SLICES) {
+    // A slice is four characters at least and its prefix three at most: a prefix never fills a
+    // slice, unlike `0x+`, which fills a component of X, and the digits never outgrow the slice's width.
+    const digits = D_SLICE_RE.exec(value.slice(start, start + width))?.[1];
+    if (digits === undefined) return null;
+    hex += digits.padStart(width, '0');
+  }
+  const tail = value.slice(28);
+  return D_TAIL_RE.test(tail) ? hex + tail : null;
+}
 
 /**
  * The X spelling, `{0xdddddddd,0xdddd,0xdddd,{0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd,0xdd}}`, read as
@@ -125,8 +170,9 @@ function parseGuid(value: string): string | null {
   // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
   // scoped total from the running API. Without this the mock 400s a request the server answers.
   const trimmed = value.trim();
+  const d = GUID_B_OR_P_RE.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
   const hex = (
-    GUID_RE.test(trimmed) ? trimmed.replace(/[^0-9a-f]/gi, '') : hexOfGuidX(value)
+    GUID_N_RE.test(trimmed) ? trimmed : (hexOfGuidD(d) ?? hexOfGuidX(value))
   )?.toLowerCase();
   if (hex?.length !== 32) return null;
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -941,6 +987,20 @@ function quoteRefusedText(text: string): string {
     : `'${shown}' (shown in part: ${shown.length} of ${text.length} characters)`;
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
+const AZURE_TAG_SENTENCE =
+  'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.';
+
+/**
+ * The API lower-cases a payee handle before it validates it, on the lookup, on the transfer's
+ * authorisation and on the transfer: a capital letter is read as its lower-case letter, so
+ * `Jane_02ga` is answered as `jane_02ga`. A to Z only, as the server does it, so a letter outside
+ * ASCII is left as it is and then fails the pattern.
+ */
+function lowerCasePayeeHandle(handle: string): string;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined;
+function lowerCasePayeeHandle(handle: string | undefined): string | undefined {
+  return typeof handle === 'string' ? handle.replace(/[A-Z]/g, (c) => c.toLowerCase()) : handle;
+}
 
 /*
   THE SERVER NO LONGER PUTS A FIGURE IN EITHER SENTENCE. Measured 2026-08-04 the API rendered `:C`
@@ -2224,7 +2284,32 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
  * and self is masked identically to unknown (UserService semantics).
  */
 const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) => {
-  const tag = params.azureTag;
+  /*
+    The API lower-cases a payee handle before it validates it, so a capital letter resolves: the
+    answer for `Jane_02ga` is the answer for `jane_02ga`, with the handle in lower case.
+
+    A handle of the wrong form is then a framework 400 and never an `exists:false`. The key is the
+    parameter's name and there is no `detail`; the three sentences are one per rule, in the order the
+    API checks them: too short, too long, then the pattern. Measured on the API's own pipeline.
+  */
+  const tag = lowerCasePayeeHandle(params.azureTag);
+  if (tag.length < 3) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag must be at least 3 characters.'] }),
+    );
+  }
+  if (tag.length > 20) {
+    return response.untyped(
+      modelStateProblem({ azureTag: ['AzureTag cannot exceed 20 characters.'] }),
+    );
+  }
+  if (!AZURE_TAG_RE.test(tag)) {
+    return response.untyped(
+      modelStateProblem({
+        azureTag: [AZURE_TAG_SENTENCE],
+      }),
+    );
+  }
   const isSelf = mockState.session?.azureTag === tag;
   const found = isSelf ? undefined : mockState.recipients.find((r) => r.azureTag === tag);
   if (found) {
@@ -2921,7 +3006,18 @@ const authoriseTransfer = api.post(
     );
     if (pinBind) return response.untyped(pinBind);
 
+    /*
+      The API lower-cases the payee handle before it validates it, so a capital is read as its
+      lower-case letter. A handle that still breaks the rule (two characters, a hyphen, a first
+      character that is not a letter, 21 characters) is refused with the pattern sentence under the
+      key `RecipientAzureTag`, whatever its length: unlike the lookup, the mint has no sentence
+      for a length. Measured on the API's own pipeline.
+    */
+    const handle = lowerCasePayeeHandle(body.recipientAzureTag);
     const bindingErrors = mintBindingErrors(body);
+    if (typeof handle === 'string' && !AZURE_TAG_RE.test(handle)) {
+      bindingErrors.RecipientAzureTag = [AZURE_TAG_SENTENCE];
+    }
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
@@ -2935,7 +3031,7 @@ const authoriseTransfer = api.post(
 
     // Self-transfer precedes the recipient lookup inside `ResolveExternalPayeeAsync`, so it cannot
     // be reported as "not found" for a handle that plainly exists — it is the caller's own.
-    if (mockState.session?.azureTag?.toLowerCase() === body.recipientAzureTag?.toLowerCase()) {
+    if (mockState.session?.azureTag?.toLowerCase() === handle?.toLowerCase()) {
       return response.untyped(
         problem({
           instance: pathOf(request),
@@ -2947,11 +3043,11 @@ const authoriseTransfer = api.post(
     }
 
     const recipient = mockState.recipients.find(
-      (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
+      (r) => r.azureTag.toLowerCase() === handle?.toLowerCase(),
     );
     if (!recipient) {
       // Observed through the API's test host: 404 / RECIPIENT_NOT_FOUND.
-      return response.untyped(recipientNotFound(body.recipientAzureTag, request));
+      return response.untyped(recipientNotFound(handle, request));
     }
 
     /*
@@ -3024,7 +3120,7 @@ const authoriseTransfer = api.post(
     const minted = mintAuthorization({
       operation: 'Transfer',
       fromAccountId: body.fromAccountId,
-      recipientAzureTag: body.recipientAzureTag,
+      recipientAzureTag: handle,
       amount: body.amount,
     });
 
@@ -3355,7 +3451,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     pin?: string;
   };
   const amount = body.amount as number;
-  const tag = body.recipientAzureTag ?? '';
+  // Lower-cased first, as on the lookup and the mint: what the authorisation holds and what the
+  // payee is matched on is the handle in lower case.
+  const tag = lowerCasePayeeHandle(body.recipientAzureTag ?? '');
 
   /*
     Source account FIRST. `TransferService.TransferAsync` opens with
@@ -3396,9 +3494,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
     /*
-      OWNERSHIP BEFORE THE PIN, and this order is measured rather than assumed. `TransferAsync`
-      opens with `GetAccountWithOwnershipCheckAsync` and only then calls `VerifyPinOrThrowAsync`.
-      Observed against the real API — same unknown account id, two different pins:
+      OWNERSHIP FIRST, and this order is measured rather than assumed: the contract test
+      "answers the caller's missing source account with ACCOUNT_NOT_FOUND on the send too" pins it
+      on the real stack. `TransferAsync` opens with `GetAccountWithOwnershipCheckAsync`, before
+      anything about the authorisation. Observed against the real API while the PIN still rode in
+      the transfer body (ADR-0042 removed it) — same unknown account id, two different pins:
 
         correct pin -> 404 ACCOUNT_NOT_FOUND
         WRONG   pin -> 404 ACCOUNT_NOT_FOUND    (not 401, and no attempt counted)
@@ -3413,9 +3513,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     NO AUTHORISATION PRESENTED, at the rung the in-band PIN check used to occupy (ADR-0042).
 
     `TransferService.RequireAuthorization` sits after the ownership 404 and BEFORE the payee is
-    resolved, exactly where `VerifyPinOrThrowAsync` sat, and the placement carries the same
-    property: a caller with no second factor cannot use this endpoint to ask which handles exist.
-    Answering here rather than at `validateAuthorization` below is what reproduces that.
+    resolved, exactly where `VerifyPinOrThrowAsync` sat, so a request that presents no
+    authorisation learns nothing about the payee. Answering here rather than at
+    `validateAuthorization` below is what reproduces that. It stops no other request: a made-up
+    reference reaches the payee checks below, which answer before the reference is examined, as
+    the API's do, except that the mock has no RECIPIENT_NO_ACCOUNT branch to answer with.
   */
   if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
@@ -3443,12 +3545,12 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     Spend the authorisation, if one was presented (ADR-0042).
 
     POSITION IS THE CONTRACT, and it is not where the first draft put it. `TransferAsync` runs
-    ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the payee is
-    resolved BEFORE the authorisation is examined: an unknown handle answers 404 RECIPIENT_NOT_FOUND
-    even when the presented authorisation is also wrong. The mock validated first, which turned that
-    404 into a 401 — a client debugging a typo'd handle would have been told its confirmation was
-    invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves
-    nothing.
+    ownership → presence check → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the
+    payee is resolved BEFORE the authorisation is examined: an unknown handle answers 404
+    RECIPIENT_NOT_FOUND even when the presented authorisation is also wrong. The mock validated
+    first, which turned that 404 into a 401 — a client debugging a typo'd handle would have been
+    told its confirmation was invalid. Still before any money moves: a refusal costs nothing and
+    moves nothing.
 
     A request with no header never reaches here: the rung above answers AUTHORIZATION_REQUIRED,
     which is what ADR-0042's flip made of the fall-through this line used to describe.
@@ -3456,7 +3558,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',
     fromAccountId: body.fromAccountId,
-    recipientAzureTag: body.recipientAzureTag,
+    recipientAzureTag: tag,
     amount: body.amount,
   });
   if (authorization.refusal) return response.untyped(authorization.refusal);
@@ -3688,9 +3790,10 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
   /*
-    Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the PIN
-    and after the same-account rule, so every cheaper refusal above still answers as itself. There
-    is no payee to resolve on this endpoint, which is the one difference from the external path.
+    Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the
+    presence check and after the same-account rule, so every cheaper refusal above still answers as
+    itself. There is no payee to resolve on this endpoint, which is the one difference from the
+    external path.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'InternalTransfer',
@@ -3832,7 +3935,9 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  const pin = authBody.body.pin as string | undefined;
+  // The BFF binds `Pin` whatever its spelling, so {"PIN":"123456"} reaches the session gate;
+  // a case in authGuards.contract.test.ts holds this against the real BFF.
+  const pin = boundMember(authBody.body, 'pin') as string | undefined;
   // Model validation runs before the action, so a malformed PIN is a 400 even for an anonymous
   // caller — and WHICH 400 depends on how it is malformed. See `pinPayloadProblem`.
   if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
@@ -3879,17 +3984,13 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     return pinLockedProblem(mockState.pinLockedUntil, now, 'verify-pin');
   }
   /*
-    A REFUSED PIN IS A 200, and the body is not the caller's current state — `authLevel` is
-    HARD-CODED 1 by the BFF, not echoed back. The mock returned `mockState.authLevel`, so an
-    already-elevated user who fumbled a re-entry saw `2` where production says `1`.
-
-    Measured 2026-08-04 (this cost one of three attempts, hence the exact quote):
-      POST /bff/auth/verify-pin {"pin":"000000"}
-        -> 200 {"data":{"verified":false,"authLevel":1,"pinExpiresAt":null},
-                "message":"Invalid PIN"}
+    A refused PIN is a 200 that carries the session's held level, so an elevated session stays
+    at 2: `BffAuthController.VerifyPin` answers `GetAuthLevel` of the session, which drops to 1
+    only when the elevation has lapsed. The mock never lets one lapse, and its /me answers the
+    same `mockState.authLevel`. The BFF's `AWrongPinOnAnElevatedSession_KeepsItsLevel` holds it.
   */
   return HttpResponse.json({
-    data: { verified: false, authLevel: 1, pinExpiresAt: null },
+    data: { verified: false, authLevel: mockState.authLevel, pinExpiresAt: null },
     message: 'Invalid PIN',
   });
 });
@@ -3914,6 +4015,7 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
  * A bad format is still the API's VALIDATION_ERROR shape (400, `errors` dict, NO errorCode — the FE
  * synthesizes VALIDATION_ERROR). On success it flips session.hasPin so the invalidated /me refetch
  * clears the withdraw gate, and clears any prior lock so the freshly-set PIN works immediately.
+ * A PIN_REQUIRED flips it too: that refusal proves a PIN exists, and the BFF's session learns it.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   runSessionActivityMiddleware(request);
@@ -3950,7 +4052,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   /*
     CHANGING requires the current PIN; ENROLLING does not. Order matters and is measured: the
     format check above runs first (ASP.NET binds and validates before the action), then the session,
-    then this. `mockState.pin` being set is the mock's equivalent of a non-null PinHash.
+    then this. What stands for a non-null PinHash is said at the gate below.
   */
   /*
     ENROLLING costs the PASSWORD (T7/#201), and the mock enforces it because the mock's job is to
@@ -3972,11 +4074,12 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   const currentPin = authBody.body.currentPin as string | undefined;
 
   /*
-    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — NOT `mockState.pin`.
-    A first draft used the latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE
-    withdraw verifies against and it defaults to MOCK_PIN unconditionally (state.ts), so every
-    enrolment looked like a change and answered 422. The test caught it, which is the test doing
-    its job — the two fields read alike and mean different things.
+    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — or a PIN this
+    session has not learnt of (`pinUnknownToSession`), NOT `mockState.pin`. A first draft used the
+    latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE withdraw verifies against
+    and it defaults to MOCK_PIN unconditionally (state.ts), so every enrolment looked like a change
+    and answered 422. The test caught it, which is the test doing its job — the two fields read
+    alike and mean different things.
 
     CurrentPin obeys the FULL verifier contract, because the API routes it through IPinVerifier and
     inherits every one of these. A first draft here only incremented a counter, which modelled an
@@ -4014,7 +4117,9 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     });
   }
 
-  if (!mockState.session.hasPin) {
+  const accountHasPin = mockState.session.hasPin || mockState.pinUnknownToSession;
+
+  if (!accountHasPin) {
     if (typeof password !== 'string' || password.length === 0) {
       // `problem`, not `bffProblem`: the BFF forwards the API's ProblemDetails verbatim through
       // ForwardUpstreamError, so the body carries errorCode and the API's own instance — the same
@@ -4055,8 +4160,12 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     clearLoginAttempts(account);
   }
 
-  if (mockState.session.hasPin) {
+  if (accountHasPin) {
     if (typeof currentPin !== 'string' || currentPin.length === 0) {
+      // The BFF's session learns from this refusal that a PIN exists, so the next /me says so
+      // (`IsPinRequired` in backend/src/AzureBank.Bff/Controllers/BffAuthController.cs).
+      mockState.session.hasPin = true;
+      mockState.pinUnknownToSession = false;
       return problem({
         instance: '/api/auth/pin',
         status: 422,
@@ -4087,6 +4196,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   mockState.pin = pin;
   mockState.pinAttempts = 0;
   mockState.pinLockedUntil = null;
+  mockState.pinUnknownToSession = false;
   if (mockState.session) {
     mockState.session.hasPin = true;
   }
