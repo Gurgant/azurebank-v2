@@ -59,8 +59,9 @@ export function formatLockHorizon(seconds: number): string {
  * the PIN-gated reveal, which AccountNumberField shows as it is. This function masks every
  * other display of a number, the lists, the masked state of the field and the account
  * pickers: it turns the middle groups into bullets whatever they hold, so the server's mask
- * is normalised and a full number in a DTO would still not reach the screen, and it fails
- * closed on an unexpected shape.
+ * is normalised and a full number of that shape in a DTO would still not reach the screen.
+ * It fails closed only on fewer than three groups: with three or more, the first and the last
+ * are shown as they are, so `1234567890--` comes back unchanged.
  */
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');

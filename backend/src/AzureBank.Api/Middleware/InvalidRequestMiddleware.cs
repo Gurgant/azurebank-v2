@@ -13,9 +13,10 @@ namespace AzureBank.Api.Middleware;
 /// - Returns structured JSON error instead of empty 400 response
 /// - Fixes Schemathesis "Missing Content-Type header" and "JSON deserialization error"
 ///
-/// Routing has already run when this middleware does, because the host inserts routing ahead of
-/// every middleware. It MUST still be registered early in the pipeline, to catch what is thrown after
-/// it, in body reading and model binding.
+/// Routing has already run when this middleware does: Program.cs calls no UseRouting, so the host
+/// inserts routing ahead of every middleware. An explicit UseRouting after this one would change
+/// that. It MUST still be registered early in the pipeline, to catch what is thrown after it, in
+/// body reading and model binding.
 /// </summary>
 public class InvalidRequestMiddleware
 {
@@ -97,7 +98,8 @@ public static class InvalidRequestMiddlewareExtensions
     /// <summary>
     /// Adds the invalid request handling middleware to the pipeline.
     /// IMPORTANT: Call this early in the pipeline, so that it catches what is thrown after it.
-    /// Routing runs first whatever the order: the host inserts it ahead of every middleware.
+    /// Routing runs first while Program.cs calls no UseRouting: the host then inserts it ahead of
+    /// every middleware.
     /// </summary>
     public static IApplicationBuilder UseInvalidRequestHandling(this IApplicationBuilder builder)
     {
