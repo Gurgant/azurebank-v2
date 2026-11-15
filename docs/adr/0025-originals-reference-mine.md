@@ -59,8 +59,8 @@ window into code that does not have one.
   adaptation into the existing atomic and fenced machinery, never a file copy. A good idea in one of
   those four paths is re-derived as a specification, which is slower. That cost is accepted: those
   are the paths where a fast copy is most dangerous.
-- One item from the originals is adopted, refresh-token rotation (ADR-0021), and one is researched
-  and rejected, ETag/If-Match (ADR-0024).
+- One item from the originals is adopted, the refresh token (ADR-0021; ADR-0057 later stopped its
+  rotation), and one is researched and rejected, ETag/If-Match (ADR-0024).
 - Not covered: everything that is safe to adapt. The record says where to look and what never to
   copy; the rest is a judgement per item.
 - Not covered: the canonical copies live outside the repository, on one machine, with no backup in

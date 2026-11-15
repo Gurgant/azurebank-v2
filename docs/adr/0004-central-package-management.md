@@ -41,8 +41,9 @@ what the solution depends on means reading every project.
 - It costs flexibility: a project cannot take a different version of a package without an explicit
   override. It needs NuGet 6.2+ and .NET 6+, which .NET 10 meets, and a developer who has
   not met Central Package Management has it to learn.
-- Not covered: GitHub's dependency graph reads no version from this file, so no advisory is
-  matched against the backend's packages (see [`SECURITY.md`](../../SECURITY.md), "Dependencies").
+- Not covered: GitHub's dependency graph reads no version from this file, so Dependabot does not
+  see the backend's packages. NuGet's audit does, as an error in the restore of the required
+  backend job (see [`SECURITY.md`](../../SECURITY.md), "Dependencies").
 
 ## Verified by
 

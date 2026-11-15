@@ -43,8 +43,8 @@ public class SessionActivityMiddleware
     /// </summary>
     private static bool IsSessionStatusProbe(HttpRequest request)
     {
-        // This middleware runs BEFORE routing, and routing tolerates one trailing slash —
-        // so the exclusion must too, or a slash-suffixed poll silently counts as activity.
+        // Routing tolerates one trailing slash, so the exclusion must too, or a
+        // slash-suffixed poll silently counts as activity.
         return HttpMethods.IsGet(request.Method)
             && (request.Path.Equals("/bff/auth/session-status", StringComparison.OrdinalIgnoreCase)
                 || request.Path.Equals("/bff/auth/session-status/", StringComparison.OrdinalIgnoreCase));
