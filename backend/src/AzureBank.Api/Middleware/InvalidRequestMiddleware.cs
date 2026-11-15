@@ -15,8 +15,8 @@ namespace AzureBank.Api.Middleware;
 ///
 /// Routing has already run when this middleware does: Program.cs calls no UseRouting, so the host
 /// inserts routing ahead of every middleware. An explicit UseRouting after this one would change
-/// that. It MUST still be registered early in the pipeline, to catch what is thrown after it, in
-/// body reading and model binding.
+/// that. It MUST still be registered early in the pipeline, to catch the BadHttpRequestException
+/// thrown after it, in body reading and model binding: it catches that type and no other.
 /// </summary>
 public class InvalidRequestMiddleware
 {
@@ -97,7 +97,8 @@ public static class InvalidRequestMiddlewareExtensions
 {
     /// <summary>
     /// Adds the invalid request handling middleware to the pipeline.
-    /// IMPORTANT: Call this early in the pipeline, so that it catches what is thrown after it.
+    /// IMPORTANT: Call this early in the pipeline, so that it catches the BadHttpRequestException
+    /// thrown after it.
     /// Routing runs first while Program.cs calls no UseRouting: the host then inserts it ahead of
     /// every middleware.
     /// </summary>
