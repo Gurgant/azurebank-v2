@@ -4,7 +4,7 @@ AzureBank is a banking application (a .NET API, a React frontend, SQL Server) th
 alone, with four AI coding agents working under my direction. I designed it, and before I merge
 a change I read its diff with a list of the test and workflow files it edits, because those are
 the files where a check can be made easier to pass; that reading is
-[my own statement](#what-this-does-not-show). 64 [decision records][adr] say why it is built the
+[my own statement](#what-this-does-not-show). 65 [decision records][adr] say why it is built the
 way it is. Harness engineering is the part of that work that is not the application: what I
 build around agents made by others. It has three parts:
 
@@ -115,8 +115,8 @@ inferential when an AI model judges the result.
 
 | Part | What is here, and where it shows |
 |---|---|
-| Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 64 [decisions][adr], the [traps][tr] |
-| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 25 [architecture-test][arch] files |
+| Instructions (guides) | One [instruction file][ag] for all agents, two procedures ([gate][gate], [review round][round]), 65 [decisions][adr], the [traps][tr] |
+| Checks a program runs (computational sensors) | [CI jobs][ci]; a security scan; 26 [architecture-test][arch] files |
 | Checks a model judges (inferential sensors) | An AI review on pull requests; a [second reader][who] |
 | Limits and my checkpoints | The [rule set][rs], 11 required checks; my merge; a [deploy][dep] |
 | Isolation | A separate folder and branch per agent ([the path of a change][path]): it separates files, nothing else |
