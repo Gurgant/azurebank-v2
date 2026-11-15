@@ -25,8 +25,14 @@ blockExoticSubdeps: true
 
 # oxfmt, which typed-openapi brings in, pins tinypool 2.1.0 exactly, a version with an advisory;
 # this keeps 2.1.2, which npm's overrides block in package.json held before the move.
+#
+# typescript-estree, under typescript-eslint, asks for minimatch ^9.0.4, and its latest release for
+# ^10.2.2: every minimatch from 7.0.0 to 11.0.0 has a denial of service through globparts
+# amplification (GHSA-g3hv-75wg-m249), which 11.0.1 fixes. 11.0.5 is the latest that
+# minimumReleaseAge took on 2026-11-14. A development dependency, run by the lint only.
 overrides:
   'oxfmt>tinypool': 2.1.2
+  '@typescript-eslint/typescript-estree>minimatch': 11.0.5
 
 # semver 6.3.1 is the maintenance backport on the 6.x line, published by hand by an npm CLI
 # maintainer on 2023-07-10, after 7.5.4 had been published with provenance; it reaches us only as a
