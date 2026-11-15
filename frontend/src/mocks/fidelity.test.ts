@@ -1533,6 +1533,32 @@ describe('failure modes the mock could not previously produce', () => {
     expect(mockState.loginLockedUntil['demo@azurebank.dev']).toBeUndefined();
   });
 
+  it('a PIN the session has not learnt of is refused PIN_REQUIRED, and the session learns it', async () => {
+    /*
+      A PIN set from another browser, or saved by the API while its answer to the BFF was lost:
+      the API refuses a first PIN with 422 PIN_REQUIRED, and the BFF's session learns from that
+      refusal that a PIN exists. Held on the BFF over the real API by
+      `APinSetInAnotherBrowser_IsLearntFromTheApisRefusal` (BffSignInAndPinOverApiTests.cs).
+    */
+    seedMockSession({ ...mockState.session!, hasPin: false });
+    mockState.pinUnknownToSession = true;
+    const hasPinPerMe = async () =>
+      (await (await fetch('/bff/auth/me')).json()).data.user.hasPin as boolean;
+    expect(await hasPinPerMe()).toBe(false);
+
+    const refused = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '135790', password: 'Password1!' }),
+    });
+
+    expect(refused.status).toBe(422);
+    expect((await refused.json()).errorCode).toBe('PIN_REQUIRED');
+    expect(await hasPinPerMe()).toBe(true);
+    // Refused, so nothing was saved: the PIN on file is the one there was.
+    expect(mockState.pin).toBe(MOCK_PIN);
+  });
+
   const reauthenticate = (password: string) =>
     fetch('/bff/auth/reauthenticate', {
       method: 'POST',
