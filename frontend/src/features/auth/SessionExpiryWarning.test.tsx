@@ -969,7 +969,7 @@ describe('SessionExpiryWarning', () => {
       });
     });
 
-    it("the owner's button still on its way at zero is waited for, and the session is not ended", async () => {
+    it('the button that sends the kept password, still on its way at zero, is waited for, and the session is not ended', async () => {
       // The same hold as for a typed password, for the branch that sends the kept one.
       const { store } = await bootOnACopy();
       await heldPastZero(
