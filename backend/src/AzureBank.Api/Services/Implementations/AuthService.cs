@@ -875,24 +875,10 @@ public class AuthService : IAuthService
         if (string.IsNullOrEmpty(user.PinHash))
         {
             /*
-              Enrolling. The mirror of the change branch below, and it closes the half ADR-0040 left
-              open on purpose. Its deferral said the reasoning was "worth re-examining if the
-              enrolment entry point ever moves away from the post-registration handoff", and it has:
-              there are four ways into /pin-setup and three of them can be days after login.
-
-              Measured through the BFF without the password requirement:
-                register                    -> 201, hasPin:false, authLevel 1
-                set-pin "424242"            -> 200      cookie ONLY, no password
-                verify-pin "424242"         -> 200, authLevel 2
-                deposit 250 / withdraw 250  -> 201, balanceAfter 0.0000
-                GET .../full-number         -> 200, "AB-8512-2148-18"
-              A session cookie was the entire proof required to mint the credential that authorises
-              every money movement.
-
-              The password is the bar and also the ceiling: NIST SP 800-63B-4 §4.1.2.1 requires
-              binding at the maximum AAL currently available on the account or the maximum at which
-              the new authenticator will be used, whichever is lower. With no PIN enrolled, the account's
-              maximum is the password — so demanding anything heavier would be invention, not rigour.
+              Enrolling: there is no PIN to prove, so the account password is asked for in the same
+              request, or a session cookie alone would mint the credential that authorises every
+              money movement. It is also the ceiling: with no PIN, the password is the strongest
+              authenticator the account has (ADR-0040, decision 3).
             */
             if (string.IsNullOrEmpty(request.Password))
             {
