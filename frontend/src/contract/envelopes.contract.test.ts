@@ -156,7 +156,7 @@ describe('contract: the instance member', () => {
   });
 });
 
-describe('contract: cache directives on the reveal', () => {
+describe('contract: cache directives', () => {
   beforeAll(async () => {
     expect((await elevate()).status).toBe(200);
   });
@@ -167,8 +167,9 @@ describe('contract: cache directives on the reveal', () => {
       forwards them untouched, so the browser sees them through the BFF.
 
       Asserted on the wire rather than in the C#, because a header is exactly the kind of thing an
-      intermediary can strip: this is the test that would notice if the proxy ever stopped
-      forwarding it.
+      intermediary can strip. Since the BFF puts the same pair on every answer under /api and /bff
+      that names no policy, a pass here no longer shows that the API still sets it: through the BFF
+      the two cannot be told apart.
     */
     const { status, headers } = await call(`/api/accounts/${await firstAccountId()}/full-number`);
 
@@ -177,16 +178,32 @@ describe('contract: cache directives on the reveal', () => {
     expect(headers.get('pragma')).toBe('no-cache');
   });
 
-  it('does not put those headers on an ordinary 200', async () => {
-    // The negative control. Without it the assertion above passes just as happily against a stack
-    // that marks EVERY response no-store, which would be a different system with different
-    // performance and the same green tick.
-    const { status, headers } = await call('/api/accounts');
+  it.each(['/api/accounts', '/bff/auth/me'])(
+    'forbids caching an ordinary 200 from %s: the BFF’s default under /api and /bff',
+    async (path) => {
+      /*
+        `SecurityHeadersMiddleware` adds `Cache-Control: no-store` and `Pragma: no-cache` to every
+        answer under /api and /bff that names no policy of its own, so a browser keeps no balance,
+        transaction, name or e-mail after a sign-out (ASVS 14.3.2). The accounts list is the
+        proxied case, where the API sends nothing and the BFF fills it in; /bff/auth/me is the
+        BFF's own.
 
-    expect(status).toBe(200);
-    expect(headers.get('cache-control')).toBeNull();
-    expect(headers.get('pragma')).toBeNull();
-  });
+        There is no negative control for this rule here, and that is deliberate. Under both prefixes
+        nothing is left cacheable: an answer that names its own policy keeps it, and each that does
+        today (the reveal, the demo claim, the 429, the outage 503) is no-store itself. What the
+        BFF leaves alone is outside them: the SPA's shell and files, which the BFF in CI's real
+        stack serves from the built SPA, and /health. The mock has no SPA, and the suite sends the
+        same requests to both targets, so no check of those can run on both. They are pinned in the
+        BFF's own suite: `SecurityHeadersTests` for a path that only begins like a prefix and for
+        an upstream policy that is kept, and `SpaHostingTests` for the shell's `no-cache`.
+      */
+      const { status, headers } = await call(path);
+
+      expect(status).toBe(200);
+      expect(headers.get('cache-control')).toBe('no-store');
+      expect(headers.get('pragma')).toBe('no-cache');
+    },
+  );
 });
 
 describe('contract: an oversized idempotent body', () => {

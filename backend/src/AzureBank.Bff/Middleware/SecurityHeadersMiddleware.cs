@@ -73,6 +73,29 @@ public class SecurityHeadersMiddleware
             context.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000");
         }
 
+        // The answers under /api and /bff carry balances, transactions and the user's name and
+        // e-mail, and the SPA's fetch uses the default cache mode, so without this a browser may
+        // keep them after a sign-out (ASVS 14.3.2, the control ADR-0020 cites for the reveal). The
+        // check runs when the response starts, after the proxy has copied the API's headers in, so
+        // an answer that already names its own policy (the reveal, the demo claim, the 429, the
+        // outage 503, a forwarded upstream error) keeps it. The SPA's files and shell sit outside
+        // these two prefixes and set their own policy. Pragma goes with it, the pair ADR-0020
+        // decision 4 and the other no-store answers send, for a cache that still reads only that.
+        if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/bff"))
+        {
+            context.Response.OnStarting(() =>
+            {
+                var headers = context.Response.Headers;
+                if (headers.CacheControl.Count == 0)
+                {
+                    headers.CacheControl = "no-store";
+                    headers.Pragma = "no-cache";
+                }
+
+                return Task.CompletedTask;
+            });
+        }
+
         await _next(context);
     }
 }

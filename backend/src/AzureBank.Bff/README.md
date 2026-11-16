@@ -212,6 +212,11 @@ On every response:
 | `Content-Security-Policy` | The policy of [ADR-0054](../../../docs/adr/0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) D3, measured against the served SPA: no `'unsafe-inline'`, no `'unsafe-eval'`, and one hash in `style-src`, the empty string's, for Griffel's empty `<style>` elements |
 | `Strict-Transport-Security` | `max-age=31536000`, in every environment but Development. Sent over plain http too: behind an edge that terminates TLS every request arrives as http, and `UseHsts` would send nothing (ADR-0054, Consequences) |
 
+Under `/api` and `/bff` a response that names no `Cache-Control` of its own also gets
+`Cache-Control: no-store` and `Pragma: no-cache`, so a browser keeps no balance, transaction, name or
+e-mail after a sign-out (ASVS 14.3.2, ADR-0020 decision 4). An answer that names its own policy keeps
+it, and the SPA's files and shell, outside both prefixes, keep theirs.
+
 The BFF registers no CORS, by design (ADR-0018, decision 1). The browser reaches it same-origin
 only: in development Vite's `server.proxy` forwards `/api` and `/bff`, and in production the BFF
 serves the SPA itself.
