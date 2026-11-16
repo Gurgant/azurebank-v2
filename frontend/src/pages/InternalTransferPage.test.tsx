@@ -1120,6 +1120,52 @@ describe('an account of the move is closed under the page', () => {
       expect.objectContaining({ fromAccountId: HOLIDAY_ID, toAccountId: MAIN_ACCOUNT_ID }),
     ]);
   });
+
+  it('says at once that it did not go through when a limiter refuses the resend that carries a new authorisation', async () => {
+    /*
+      A1 expired, and the PIN typed again meets a limiter. A limiter answers before the API's
+      idempotency check and the action, so the resend's authorisation was never checked or spent,
+      and A1 was refused: nothing under the key can land. The listing's first answer settles it,
+      and the move that follows is a new one under a new key.
+    */
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transfers/internal', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        if (keys.length === 1) {
+          return problem({
+            status: 401,
+            errorCode: 'AUTHORIZATION_EXPIRED',
+            detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+          });
+        }
+        if (keys.length === 2) return problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' });
+      }),
+    );
+    await fill('Rainy Day', 'Main Account');
+    await confirmWithPin();
+    await screen.findByText(/your confirmation expired/);
+
+    await enterPin();
+
+    expect(await screen.findByText(COPY.movementNone)).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(screen.getByText("Your transfer didn't go through")).toBeInTheDocument();
+    expect(screen.queryByText(/may still go through/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+
+    await settle();
+    await userEvent.click(
+      screen.getByRole('button', { name: "It didn't go through — start over" }),
+    );
+    await settle();
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await confirmWithPin();
+    expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
+    expect(keys).toHaveLength(3);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
 });
 
 /*

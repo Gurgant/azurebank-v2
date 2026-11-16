@@ -1345,6 +1345,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
   const refused = () =>
     problem({ status: 401, errorCode: 'AUTHORIZATION_EXPIRED', detail: 'Expired.' });
   const noConnection = () => HttpResponse.error();
+  const limited = () => problem({ status: 429, errorCode: 'RATE_LIMIT_EXCEEDED' });
 
   /** Sends one withdrawal per step under one key, then latches the check if no answer did. */
   async function withdrawalsUnderOneKey(
@@ -1382,6 +1383,20 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(copy?.everyAuthorisationRefused).toBe(true);
   });
 
+  it.each(limiterRefusals)(
+    '6n — A1 refused, then a limiter refused the resend that first carried A2 (%s): A2 was never checked or spent, so nothing under the key can commit any more',
+    async (errorCode) => {
+      // A limiter answers before the idempotency check and the action, so only A1 was ever
+      // checked, and it was refused.
+      const copy = await withdrawalsUnderOneKey([
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: () => problem({ status: 429, errorCode }) },
+      ]);
+
+      expect(copy?.everyAuthorisationRefused).toBe(true);
+    },
+  );
+
   it.each([
     [
       'a send that carried no authorisation',
@@ -1399,6 +1414,33 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       [
         { authorisation: A1, answer: noConnection },
         { authorisation: A2, answer: refused },
+      ],
+    ],
+    [
+      'A1 refused, A2 answered with no connection, then a limiter refused its resend with A2',
+      [
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: noConnection },
+        { authorisation: A2, answer: limited },
+      ],
+    ],
+    // The take-back belongs to a limiter's refusal alone: every unconfirmed answer to a resend
+    // latches the check, and A2's send may have reached the action.
+    [
+      'A1 refused, then A2 answered RESULT_UNKNOWN',
+      [
+        { authorisation: A1, answer: refused },
+        {
+          authorisation: A2,
+          answer: () => problem({ status: 409, errorCode: 'IDEMPOTENCY_RESULT_UNKNOWN' }),
+        },
+      ],
+    ],
+    [
+      'A1 refused, then A2 answered a 409 that names no code (HTTP_409)',
+      [
+        { authorisation: A1, answer: refused },
+        { authorisation: A2, answer: () => new HttpResponse(null, { status: 409 }) },
       ],
     ],
     [
@@ -1436,6 +1478,26 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
       expect(copy?.everyAuthorisationRefused).toBe(false);
     },
   );
+
+  it('6o — A1 refused, then A2 answered 201 with a body that fails its schema: the send may have landed, so the key may still commit', async () => {
+    // The throw is the scenario (a 2xx whose body cannot become a receipt), and this suite fails
+    // a test that writes to the error channel: hold it back and check it was the one write.
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const copy = await withdrawalsUnderOneKey([
+      { authorisation: A1, answer: refused },
+      {
+        authorisation: A2,
+        answer: () =>
+          HttpResponse.json(
+            { data: { newBalance: 'one hundred' }, message: null },
+            { status: 201 },
+          ),
+      },
+    ]);
+
+    expect(copy?.everyAuthorisationRefused).toBe(false);
+    expect(logged).toHaveBeenCalledTimes(1);
+  });
 
   it('7 — a money send with no answer ends at 65 s and keeps its key for the retry', async () => {
     const keys: string[] = [];
