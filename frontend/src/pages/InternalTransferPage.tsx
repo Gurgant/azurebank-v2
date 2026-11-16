@@ -26,6 +26,7 @@ import {
 } from '../api/problemMessages';
 import { typography } from '../theme/typography';
 import { useTransferWizardStyles } from './transferWizardStyles';
+import { TransferPinStep } from './TransferPinStep';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { WentThroughView } from '../components/shared/WentThroughView';
@@ -42,13 +43,7 @@ import { useMovementCheck } from '../hooks/useMovementCheck';
 import { usePageRead } from '../hooks/usePageRead';
 import { useSettledPress } from '../hooks/useSettledPress';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import {
-  AlertSlot,
-  ReadErrorBar,
-  RetryCountdown,
-  WaitHint,
-  retryDeadline,
-} from '../components/feedback';
+import { AlertSlot, ReadErrorBar, WaitHint, retryDeadline } from '../components/feedback';
 import {
   insufficientFundsMessage,
   internalTransferFormSchema,
@@ -59,7 +54,6 @@ import {
 import { AmountField } from '../components/form/AmountField';
 import { availableBalanceOf } from '../utils/availableBalance';
 import { useFundsGate } from '../hooks/useFundsGate';
-import { PinInput } from '../components/PinInput';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 
@@ -878,11 +872,12 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="small"
                 /*
-                  BOTH phases, exactly as the PIN input above. Today this control cannot actually
-                  reach the mint — `onValid` re-presents `lastAuthorization.current` whenever a key
-                  is live, and a live key implies a send, which implies a mint that already
-                  succeeded. The guard does not depend on that invariant on purpose: it is one
-                  identifier, and the invariant is three files away from anyone editing this button.
+                  BOTH phases, exactly as the boxes in `TransferPinStep`. Today this control cannot
+                  actually reach the mint — `onValid` re-presents `lastAuthorization.current`
+                  whenever a key is live, and a live key implies a send, which implies a mint that
+                  already succeeded. The guard does not depend on that invariant on purpose: it is
+                  one identifier, and the invariant is three files away from anyone editing this
+                  button.
                 */
                 disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
@@ -1044,96 +1039,36 @@ export function InternalTransferPage() {
             </div>
           </>
         ) : step === 'pin' ? (
-          <>
-            {/*
-              The PIN goes to the mint, and the transfer carries the authorisation it returns in the
-              `Step-Up-Authorization` header (ADR-0042).
-            */}
-            <div className={styles.reviewCard}>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>Moving</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
-              </div>
-              <div className={styles.reviewRow}>
-                <Text className={styles.reviewLabel}>To</Text>
-                <Text className={styles.reviewValue}>{toAccount?.name}</Text>
-              </div>
-            </div>
-            {/* With no Send control the behaviour has to be discoverable BEFORE the last digit. */}
-            <Text id={pinHintId} style={{ textAlign: 'center' }}>
-              Enter your 6-digit PIN. The transfer sends as soon as the last digit is in.
-            </Text>
-            <PinInput
-              key={pinNonce}
-              length={PIN_LENGTH}
-              value={pin}
-              onChange={(next) => {
-                setPin(next);
-                setPinError(false);
-              }}
-              // The sixth digit sends (ADR-0042); the completed value goes to the REF first,
-              // because `onValid` runs before `pin` re-renders. See TransferPage.
-              onComplete={(entered) => {
-                enteredPin.current = entered;
-                void handleSubmit(onValid, onInvalid)();
-              }}
-              // `isMinting` as well as `isSubmitting`: the submit has TWO phases now, and
-              // `isSubmitting` only covers the second. Without this the boxes stay live for the
-              // whole mint round trip — a window in which a second completion starts a second
-              // mint AND a second send.
-              disabled={isMinting || isSubmitting || pinLockDeadline !== null}
-              error={pinError}
-              // Named for what it asks and described by the instruction and by whatever refused
-              // the last attempt, as WithdrawDialog's boxes are; autoFocus is what lets the
-              // `pinNonce` remount put the caret back in box 1 for a retry.
-              autoFocus
-              ariaLabel="Enter your PIN"
-              ariaDescribedBy={[
-                pinHintId,
-                error ? pinErrorId : null,
-                pinLockDeadline !== null ? pinLockId : null,
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            />
-            {pinLockDeadline !== null && (
-              <>
-                <MessageBar id={pinLockId} intent="error" role="alert">
-                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
-                </MessageBar>
-                {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
-                    re-announce the whole banner every second. It carries its own polite region. */}
-                <RetryCountdown
-                  deadline={pinLockDeadline}
-                  onElapsed={() => setPinLockDeadline(null)}
-                />
-              </>
-            )}
-            {/* No Send button: the sixth digit is the send. The spinner is what remains visible of
-                the request the user just started. */}
-            {isSubmitting && (
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <Spinner size="tiny" label={`Moving ${formatCurrency(amountNumber)}`} />
-              </div>
-            )}
-            {/* Under the boxes and the spinner, outside their described-by targets, and promising
-                nothing: during the wait no control here can re-send the same key. From 20 s it
-                asks the visitor to keep the page open, since a reload would send the move again
-                with a new key — once there is a key: while the PIN alone is being checked none
-                exists yet, and it says only that it is still trying. */}
-            <WaitHint active={confirming} kind={isMinting && !keyLive ? 'write' : 'moneySend'} />
-            <div className={styles.actions}>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => wizard.toReview()}
-                disabled={exitLocked}
-              >
-                Back
-              </Button>
-            </div>
-          </>
+          <TransferPinStep
+            verb="Moving"
+            amountNumber={amountNumber}
+            to={toAccount?.name}
+            pinLength={PIN_LENGTH}
+            pin={pin}
+            pinNonce={pinNonce}
+            pinError={pinError}
+            pinLockDeadline={pinLockDeadline}
+            error={error}
+            pinHintId={pinHintId}
+            pinErrorId={pinErrorId}
+            pinLockId={pinLockId}
+            isMinting={isMinting}
+            isSubmitting={isSubmitting}
+            keyLive={keyLive}
+            exitLocked={exitLocked}
+            confirming={confirming}
+            onPinChange={(next) => {
+              setPin(next);
+              setPinError(false);
+            }}
+            // The completed value goes to the REF first: `onValid` runs before `pin` re-renders.
+            onPinComplete={(entered) => {
+              enteredPin.current = entered;
+              void handleSubmit(onValid, onInvalid)();
+            }}
+            onLockElapsed={() => setPinLockDeadline(null)}
+            onBack={() => wizard.toReview()}
+          />
         ) : (
           <>
             <div className={styles.reviewCard}>
