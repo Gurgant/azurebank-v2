@@ -1,6 +1,13 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
+using AzureBank.Bff.Http;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AzureBank.Bff.Tests;
 
@@ -171,5 +178,170 @@ public class CorrelationIdTests : IClassFixture<WebApplicationFactory<Program>>
 
         seen.Should().NotBe("hostile value; with junk");
         seen.Should().MatchRegex("^[A-Za-z0-9._-]{1,64}$");
+    }
+
+    /*
+      The other road. The calls the BFF makes to the API itself (a sign-in, a PIN check, the read of
+      /me, a renewal) are new requests on the "BackendApi" client, so nothing the middleware wrote
+      on the browser's request reaches them: CorrelationIdHandler gives each the id. A refused
+      sign-in is enough to see it, because what is under test is what the call carried, not what
+      the API answered; and it opens no session, so nothing else of the BFF calls the API after it.
+    */
+
+    /// <summary>Stands in for the API on the BFF's own road and keeps the ids each call carried.</summary>
+    private sealed class OwnRoad
+    {
+        private readonly ConcurrentQueue<(string Path, string[] Ids)> _calls = new();
+
+        public List<string[]> IdsSentTo(string path) =>
+            _calls.Where(call => call.Path == path).Select(call => call.Ids).ToList();
+
+        public HttpResponseMessage Respond(HttpRequestMessage request)
+        {
+            string[] ids = request.Headers.TryGetValues(Header, out var values) ? [.. values] : [];
+            _calls.Enqueue((request.RequestUri!.AbsolutePath, ids));
+            return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent(
+                    """{"status":401,"title":"Unauthorized","errorCode":"INVALID_CREDENTIALS"}""",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        }
+    }
+
+    private WebApplicationFactory<Program> HostOver(OwnRoad api) =>
+        _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(
+                    () => new FakeBackendApiHandler(api.Respond))));
+
+    private static HttpRequestMessage SignIn(string? correlationId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/bff/auth/login")
+        {
+            Content = JsonContent.Create(new { email = "someone@example.com", password = "Password123!" }),
+        };
+        if (correlationId is not null)
+        {
+            request.Headers.TryAddWithoutValidation(Header, correlationId);
+        }
+        return request;
+    }
+
+    [Fact]
+    public async Task TheBffsOwnCall_CarriesTheIdTheBffAdopted()
+    {
+        var api = new OwnRoad();
+        using var host = HostOver(api);
+        using var client = host.CreateClient();
+        using var signIn = SignIn("bff-own-call-1");
+
+        using var response = await client.SendAsync(signIn);
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Unauthorized, "the control: the sign-in reached the API and was answered");
+        api.IdsSentTo("/api/auth/login").Should().ContainSingle()
+            .Which.Should().Equal("bff-own-call-1");
+    }
+
+    [Fact]
+    public async Task TheBffsOwnCall_CarriesTheIdTheBffMinted()
+    {
+        var api = new OwnRoad();
+        using var host = HostOver(api);
+        using var client = host.CreateClient();
+        using var signIn = SignIn(null);
+
+        using var response = await client.SendAsync(signIn);
+
+        var minted = CorrelationOf(response);
+        minted.Should().NotBeNullOrWhiteSpace("the control: the BFF names every request it answers");
+        api.IdsSentTo("/api/auth/login").Should().ContainSingle()
+            .Which.Should().Equal(minted!);
+    }
+
+    /*
+      The handler alone, with no host. The grant revoker's workers and the session-stamp watcher
+      start with the host and call the API outside any request: there is no id for them to carry,
+      and the handler must not invent one. Run inside the middleware's next, the same handler sends
+      that request's id, which is the control, and once the middleware has returned it sends none
+      again: the id ends with its request.
+    */
+    [Fact]
+    public async Task TheHandler_SendsNoIdOutsideARequest_AndTheRequestsIdInsideOne()
+    {
+        var sent = new List<string[]>();
+        using var invoker = HandlerRecordingInto(sent);
+
+        Task CallTheApi() => SendRevoke(invoker);
+
+        await CallTheApi();
+
+        var context = new DefaultHttpContext();
+        context.Request.Headers[Header] = "bff-own-call-2";
+        await new AzureBank.Bff.Middleware.CorrelationIdMiddleware(_ => CallTheApi()).InvokeAsync(context);
+
+        await CallTheApi();
+
+        sent.Should().HaveCount(3);
+        sent[0].Should().BeEmpty("outside any request there is no id, and the handler invents none");
+        sent[1].Should().Equal("bff-own-call-2");
+        sent[2].Should().BeEmpty("the id ends with the request that settled on it");
+    }
+
+    /*
+      The reason the id sits in an AsyncLocal and not on the request. A renewal that TokenRefresher
+      starts with Task.Run takes the id with it and can still be sending when its request has
+      ended. This drives a Task.Run of its own, not TokenRefresher: it holds the handler's reading
+      of the ambient id, and the runtime carrying it into detached work. A renewal that stopped
+      flowing the context (SuppressFlow, UnsafeQueueUserWorkItem) would need a test on the real
+      renewal path to be seen. The gate keeps this call waiting until the middleware has returned,
+      which is the control, and it must still go out under the id of the request that started it.
+    */
+    [Fact]
+    public async Task ACallStartedWithTaskRun_GoesOutUnderItsRequestsId_AfterTheRequestHasEnded()
+    {
+        var sent = new List<string[]>();
+        using var invoker = HandlerRecordingInto(sent);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewal = Task.CompletedTask;
+
+        var context = new DefaultHttpContext();
+        context.Request.Headers[Header] = "bff-own-call-3";
+        await new AzureBank.Bff.Middleware.CorrelationIdMiddleware(_ =>
+        {
+            renewal = Task.Run(async () =>
+            {
+                await gate.Task;
+                await SendRevoke(invoker);
+            });
+            return Task.CompletedTask;
+        }).InvokeAsync(context);
+
+        sent.Should().BeEmpty("the control: the request has ended and the renewal has not yet sent");
+
+        gate.SetResult();
+        await renewal;
+
+        sent.Should().ContainSingle().Which.Should().Equal("bff-own-call-3");
+    }
+
+    /// <summary>The handler under test, in front of a stand-in API that keeps each call's ids.</summary>
+    private static HttpMessageInvoker HandlerRecordingInto(List<string[]> sent) =>
+        new(new CorrelationIdHandler
+        {
+            InnerHandler = new FakeBackendApiHandler(request =>
+            {
+                sent.Add(request.Headers.TryGetValues(Header, out var values) ? [.. values] : []);
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }),
+        });
+
+    private static async Task SendRevoke(HttpMessageInvoker invoker)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "https://localhost:7215/api/auth/revoke");
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
     }
 }

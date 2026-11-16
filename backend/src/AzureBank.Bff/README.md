@@ -58,7 +58,7 @@ Windows the build cannot replace an executable that is running.
 | `Extensions/SpaHostingExtensions.cs` | Serving the built SPA |
 | `ClientAddress.cs`, `StrictForwardedFor.cs` | The address a client is counted by |
 | `Options/` | The settings classes and their startup validators |
-| `Http/`, `Health/`, `Observability/` | The service key and the timeout on the road to the API, the readiness probe, the request log and the propagator that reads no trace from a request |
+| `Http/`, `Health/`, `Observability/` | The service key, the correlation id and the timeout on the road to the API, the readiness probe, the request log and the propagator that reads no trace from a request |
 
 ## BFF Endpoints
 
