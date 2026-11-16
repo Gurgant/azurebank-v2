@@ -21,7 +21,7 @@ public class AzureTagAttribute : ValidationAttribute
         }
         return tag.Length >= ValidationRules.AzureTagMinLength
             && tag.Length <= ValidationRules.AzureTagMaxLength
-            && Pattern.IsMatch(tag);
+            && Pattern.IsWholeMatch(tag);
     }
 
     public override string FormatErrorMessage(string name) =>

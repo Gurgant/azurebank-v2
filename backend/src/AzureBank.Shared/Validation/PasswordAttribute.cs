@@ -26,7 +26,7 @@ public class PasswordAttribute : ValidationAttribute
             return false;
         }
 
-        return Pattern.IsMatch(password);
+        return Pattern.IsWholeMatch(password);
     }
 
     public override string FormatErrorMessage(string name) =>

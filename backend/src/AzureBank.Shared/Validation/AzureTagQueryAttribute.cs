@@ -56,7 +56,7 @@ public class AzureTagQueryAttribute : ValidationAttribute
         }
 
         // Validate pattern
-        if (!Pattern.IsMatch(tag))
+        if (!Pattern.IsWholeMatch(tag))
         {
             return new ValidationResult(
                 ValidationRules.AzureTagPatternMessage,
