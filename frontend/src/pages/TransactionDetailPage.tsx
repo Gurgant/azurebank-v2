@@ -314,7 +314,10 @@ export function TransactionDetailPage() {
     transactionQuery,
     { endpoint: 'getTransaction', arg: id ?? '' },
   );
-  const isNotFound = problem?.status === 404;
+  // The API answers a transaction on another user's account with 403 ACCESS_DENIED, not 404 (an
+  // old demo copy's included, reached with Back after Start over). The view below is worded for
+  // that case too, and a Retry could never pass it.
+  const isNotFound = problem?.status === 404 || problem?.errorCode === 'ACCESS_DENIED';
   const detailsTitleId = useId();
 
   // [badge background, dot fill, label text color] — the dot needs a FILL, the
@@ -341,7 +344,8 @@ export function TransactionDetailPage() {
         <WaitHint active={waiting} kind="read" failed={failed} onStopWaiting={stopWaiting} />
       </div>
 
-      {/* A 404 is a first-class outcome, not an error bar: the link may be stale. */}
+      {/* Not found (a 404, or ACCESS_DENIED) is a first-class outcome, not an error bar: the link
+          may be stale. */}
       {isNotFound && (
         <div className={styles.stateContainer}>
           <div className={styles.stateIcon}>

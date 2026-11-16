@@ -135,7 +135,26 @@ describe('transaction detail (T2)', () => {
     expect(screen.queryByText(/Support code/)).not.toBeInTheDocument();
   });
 
-  it('a non-404 failure shows the problem bar and Retry recovers', async () => {
+  it("a transaction on another user's account is the same not-found state, with no Retry", async () => {
+    // The API answers 403 ACCESS_DENIED for it, not 404 (TransactionService.GetTransactionByIdAsync).
+    server.use(
+      http.get('*/api/transactions/:id', () =>
+        problem({
+          status: 403,
+          errorCode: 'ACCESS_DENIED',
+          detail: 'You do not have access to this transaction.',
+        }),
+      ),
+    );
+    renderDetail(T1_DEPOSIT);
+
+    expect(await screen.findByText('Transaction not found')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to history' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/You do not have access/)).not.toBeInTheDocument();
+  });
+
+  it('a failure other than not-found shows the problem bar and Retry recovers', async () => {
     server.use(
       http.get('*/api/transactions/:id', () =>
         problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Detail exploded.' }),
