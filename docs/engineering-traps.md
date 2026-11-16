@@ -432,11 +432,13 @@ show it: it copies the whole request body itself.
 **Read the body before an early refusal, or close the connection, and give the read a
 deadline.** `OversizedBodyDrain` reads and discards up to 1 MiB, for five seconds at most, before
 the 413. Above that size, or once the time is up, the 413 carries `Connection: close`. The four
-money endpoints and the four authorisation mints go through it (`OversizedBodyDrainTests`,
-`MintOversizedBodyDrainTests`, `KestrelRequestSizeLimitTests`). A chunked body has no length to
-check first: at a mint the server's refusal during the read becomes the same 413, with
-`Connection: close`. Not covered: on Kestrel no test sends a mint more than 1 MiB or stalls a
-body, and through the BFF a sender that slow gets a 502 at 13 s, not the 413.
+money endpoints, the four authorisation mints, and login, register, set PIN and verify PIN go
+through it (`OversizedBodyDrainTests`, `MintOversizedBodyDrainTests`, `AuthOversizedBodyTests`,
+`KestrelRequestSizeLimitTests`). A chunked body has no length to check first: on a route marked
+`[RefuseOversizedBody]` the server's refusal during the read becomes the same 413, with
+`Connection: close`. Not covered: on Kestrel no test sends login, register, set PIN or verify PIN
+an oversized or chunked body, or a mint more than 1 MiB, or stalls a body, and through the BFF a
+sender that slow gets a 502 at 13 s, not the 413.
 
 - **Stop a body read with `PipeReader.CancelPendingRead`, not with its cancellation token.** A
   read cancelled by its token leaves Kestrel's body reader mid-read, and Kestrel's own drain then

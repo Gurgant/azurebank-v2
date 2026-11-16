@@ -875,6 +875,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
@@ -961,6 +970,15 @@ export interface paths {
                 };
                 /** @description Conflict */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1526,6 +1544,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
@@ -1641,6 +1668,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Payload Too Large - the request body exceeds the 32 KB limit for this endpoint (PAYLOAD_TOO_LARGE). */
+                413: {
                     headers: {
                         [name: string]: unknown;
                     };

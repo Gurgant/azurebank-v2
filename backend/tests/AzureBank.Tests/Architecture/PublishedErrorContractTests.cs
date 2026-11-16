@@ -258,9 +258,9 @@ public class PublishedErrorContractTests
         var responses = register.GetProperty("responses");
 
         responses.EnumerateObject().Select(r => r.Name).Should().BeEquivalentTo(
-            ["201", "400", "403", "409", "415", "503"],
+            ["201", "400", "403", "409", "413", "415", "503"],
             "what a registration can answer: the user, a body it cannot read, the demo, a "
-            + "duplicate, a body that is not JSON, and the outage");
+            + "duplicate, a body over 32 KB, a body that is not JSON, and the outage");
 
         var content = responses.GetProperty("403").GetProperty("content");
         content.EnumerateObject().Select(m => m.Name).Should().Equal(
