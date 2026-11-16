@@ -139,7 +139,8 @@ before the listing by key has answered, so what that listing answered is said in
 paragraph depends on the screen reader (ADR-0059, Validation).
 
 **Every receipt puts the focus its send lost on its title, as the went-through view does on its
-sentence.** In `DepositDialog`, `WithdrawDialog`, `TransferPage` and `InternalTransferPage` the
+sentence.** In `DepositDialog`, `WithdrawDialog`, `TransferPage` (which draws it in
+`transfer/TransferReceipt.tsx`) and `InternalTransferPage` the
 title is a `<Text as="p">` with `tabIndex={-1}` and the ref of `useFocusWhenLost(!!success)`, in
 no live region and pointed at by no `aria-describedby`, and it draws the same ring after a send
 by keys.
