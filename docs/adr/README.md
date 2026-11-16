@@ -35,8 +35,9 @@ is detail hanging off them.
 ## By theme
 
 One line per record: number, title, status. Every record is Accepted; ADR-0021 and ADR-0034 are
-superseded in part by ADR-0057, and ADR-0019 by ADR-0023, as their lines say. The four above
-are in bold.
+superseded in part by ADR-0057, and ADR-0019 by ADR-0023, as their lines say. Points of ADR-0022
+and ADR-0045 are withdrawn by ADR-0047, ADR-0048 and ADR-0056, each where the point is. The four
+above are in bold.
 
 **Platform and topology** — where each part runs, and who may call whom.
 
