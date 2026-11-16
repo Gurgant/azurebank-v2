@@ -1,13 +1,22 @@
 import type { PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { http } from 'msw';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  apiSlice,
+  useGetAccountBalanceQuery,
+  useGetAccountsQuery,
+  useGetTransactionsQuery,
+} from '../features/api/apiSlice';
 import { serviceUnavailable } from '../mocks/problem';
-import { mockState } from '../mocks/state';
-import { makeTestStore } from '../test/renderWithProviders';
+import { server } from '../mocks/server';
+import { mockState, SAVINGS_ACCOUNT_ID } from '../mocks/state';
+import { makeTestStore, type TestStore } from '../test/renderWithProviders';
 import {
   advance,
   advanceUntil,
+  countListReads,
   installFakeClock,
   lookupsSeen,
   whenListedByKey,
@@ -45,8 +54,7 @@ function copy(overrides: Partial<SentRequest<Body>> = {}): SentRequest<Body> {
   StrictMode by `reactStrictMode`, not by a `<StrictMode>` in the wrapper: measured, a wrapper's
   StrictMode did not run a hook's effect twice under `renderHook`, and the option did.
 */
-function options({ strict }: { strict: boolean }) {
-  const store = makeTestStore();
+function options({ strict, store = makeTestStore() }: { strict: boolean; store?: TestStore }) {
   function Wrapper({ children }: PropsWithChildren) {
     return <Provider store={store}>{children}</Provider>;
   }
@@ -239,5 +247,163 @@ describe('useMovementCheck', () => {
     expect(result.current.pastLive).toBe(true);
     expect(result.current.offerNewKey).toBe(true);
     expect(seen).toHaveLength(1);
+  });
+});
+
+/*
+  What the check has read again as a copy arrives. The listing by key finds nothing here, as for a
+  send that never reached the server, so the lookup invalidates nothing itself: these hold the
+  check's own invalidation, made for any copy the hook is given, whichever way the send latched
+  the check (no HTTP status and a 409 that named no code among them). Asserted at the store, as
+  `policies.test.tsx` asserts what IDEMPOTENCY_RESULT_UNKNOWN does to the cache.
+*/
+describe('useMovementCheck, as a copy arrives', () => {
+  const HISTORY = { page: 1, pageSize: 20 };
+
+  /** Long enough for a read the check should not make to reach the mock and be counted. */
+  const settle = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+
+  it('reads the accounts and the transactions on screen again', async () => {
+    const store = makeTestStore();
+    const reads = countListReads();
+    const { result: lists } = renderHook(
+      () => ({ accounts: useGetAccountsQuery(), transactions: useGetTransactionsQuery(HISTORY) }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => {
+      expect(lists.current.accounts.isSuccess).toBe(true);
+      expect(lists.current.transactions.isSuccess).toBe(true);
+    });
+    expect(reads).toEqual({ accounts: 1, transactions: 1 });
+    const first = {
+      accounts: lists.current.accounts.requestId,
+      transactions: lists.current.transactions.requestId,
+    };
+
+    const sent = copy();
+    const { result, rerender } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(reads).toEqual({ accounts: 2, transactions: 2 });
+      expect(result.current.verdict).toBe('notYet');
+      // The second reads answered and drawn too: nothing is left to render after the test.
+      expect(lists.current.accounts.requestId).not.toBe(first.accounts);
+      expect(lists.current.accounts.isFetching).toBe(false);
+      expect(lists.current.transactions.requestId).not.toBe(first.transactions);
+      expect(lists.current.transactions.isFetching).toBe(false);
+    });
+
+    // Once per copy: a second invalidation, from a re-run of the effect, would read a third time.
+    rerender();
+    await settle();
+    expect(reads).toEqual({ accounts: 2, transactions: 2 });
+  });
+
+  it('reads nothing again when every authorisation under the key was refused', async () => {
+    // Nothing sent under the key can commit, so the send moved no money: the check says none at
+    // once, and what is on screen was read after the last change there was.
+    const store = makeTestStore();
+    const reads = countListReads();
+    const { result: lists } = renderHook(
+      () => ({ accounts: useGetAccountsQuery(), transactions: useGetTransactionsQuery(HISTORY) }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => {
+      expect(lists.current.accounts.isSuccess).toBe(true);
+      expect(lists.current.transactions.isSuccess).toBe(true);
+    });
+
+    const sent = copy({ everyAuthorisationRefused: true });
+    const { result } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => expect(result.current.verdict).toBe('none'));
+    await settle();
+    expect(reads).toEqual({ accounts: 1, transactions: 1 });
+  });
+
+  /*
+    A transfer between the visitor's own accounts: the listing is asked on one account and, if
+    that is closed, on the other, and the move changed both balances. Only the second account is
+    read on screen here, so a read of it can come only from the other-account tag or the fallback.
+  */
+  it.each([
+    [
+      'the other account of a move',
+      { first: { accountId: MAIN, type: 'TransferOut', otherAccountId: SAVINGS_ACCOUNT_ID } },
+    ],
+    [
+      'the fallback account',
+      {
+        first: { accountId: MAIN, type: 'TransferOut' },
+        fallback: { accountId: SAVINGS_ACCOUNT_ID, type: 'TransferIn' },
+      },
+    ],
+  ] as const)('reads %s again', async (_name, targets) => {
+    const store = makeTestStore();
+    let reads = 0;
+    server.use(
+      http.get(`*/api/accounts/${SAVINGS_ACCOUNT_ID}/balance`, () => {
+        reads += 1;
+        return undefined;
+      }),
+    );
+    const { result: balance } = renderHook(
+      () => useGetAccountBalanceQuery({ id: SAVINGS_ACCOUNT_ID }),
+      options({ strict: false, store }),
+    );
+    await waitFor(() => expect(balance.current.isSuccess).toBe(true));
+    expect(reads).toBe(1);
+
+    const sent = copy();
+    const { result } = renderHook(
+      () =>
+        useMovementCheck(
+          sent,
+          () => targets,
+          () => {},
+        ),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(reads).toBe(2);
+      expect(result.current.verdict).toBe('notYet');
+      expect(balance.current.isFetching).toBe(false);
+    });
+  });
+
+  it('drops a history nobody reads from the cache', async () => {
+    /*
+      "Check recent transactions" is where the view sends the visitor, and no transfer page or
+      money dialog reads the history. An invalidated entry with no reader is removed, not read
+      again, so the history page reads it afresh. Without the invalidation, a history cached in
+      the last minute would be shown as it was before the send.
+    */
+    const store = makeTestStore();
+    const read = store.dispatch(apiSlice.endpoints.getTransactions.initiate(HISTORY));
+    await read.unwrap();
+    read.unsubscribe();
+    const cached = () => apiSlice.endpoints.getTransactions.select(HISTORY)(store.getState());
+    expect(cached().status).toBe('fulfilled');
+
+    const sent = copy();
+    const { result } = renderHook(
+      () => useMovementCheck(sent, target, () => {}),
+      options({ strict: false, store }),
+    );
+
+    await waitFor(() => {
+      expect(cached().status).toBe('uninitialized');
+      expect(result.current.verdict).toBe('notYet');
+    });
   });
 });

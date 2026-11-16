@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { TransactionType } from '../api/enums';
 import { liveUntil, type FoundMovement, type MovementReading } from '../api/movementByKey';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { useFindMovementByKeyMutation } from '../features/api/apiSlice';
+import { useAppDispatch } from '../app/hooks';
+import { apiSlice, foundTags, useFindMovementByKeyMutation } from '../features/api/apiSlice';
 import type { SentRequest } from './useIdempotentMutation';
 import { useWaitLanding } from './useWaitLanding';
 
@@ -103,11 +104,13 @@ const LOOKING: Settled = { kind: 'looking' };
  * by itself at the instant `liveUntil` names, if the listing had not found it or could not answer
  * by then. An answer counts only when it is the latest ask's and about the copy still held: a late
  * answer about an older key, or one from an ask the copy's change aborted, is dropped. An empty
- * page is evidence only from an ask made at or after that instant, so the asks cannot loop.
+ * page is evidence only from an ask made at or after that instant, so the asks cannot loop. As
+ * each copy arrives it also invalidates the cache tags the send's success would (`foundTags`),
+ * unless every authorisation under its key was refused.
  *
- * `target` and `onFound` are read when an answer comes, not when the hook was called, so a flow
- * may pass new functions on every render without asking again. `onFound` runs in the same tick
- * as the verdict.
+ * `target` and `onFound` are read when an answer comes, and `target` also when a copy arrives (for
+ * the invalidation), not when the hook was called, so a flow may pass new functions on every render
+ * without asking again. `onFound` runs in the same tick as the verdict.
  *
  * Under StrictMode the first run's ask is aborted by its own cleanup and its answer dropped; the
  * second run asks. Nothing guards that by hand, on purpose.
@@ -118,6 +121,7 @@ export function useMovementCheck<TBody>(
   onFound: (movement: FoundMovement) => void,
 ): MovementCheck {
   const [find] = useFindMovementByKeyMutation();
+  const dispatch = useAppDispatch();
   const [state, setState] = useState<CheckState<TBody>>({
     sent: null,
     verdict: OFF,
@@ -251,6 +255,24 @@ export function useMovementCheck<TBody>(
     sentRef.current = sent;
     verdictRef.current = sent === null ? OFF : LOOKING;
     if (sent === null) return;
+    /*
+      Whatever latched the check, the send may have moved the money, and the listing by key
+      invalidates what it changed only once it finds the movement. So what the send's success
+      invalidates is invalidated now: the balances on screen are read again, and a history that
+      nobody reads, as under a transfer page or a money dialog, is dropped, so "Check recent
+      transactions" reads it afresh instead of showing it as it was before the send. Not when every
+      authorisation was refused: `liveUntil` says nothing under the key can commit, so there is
+      nothing to read again.
+    */
+    if (!sent.everyAuthorisationRefused) {
+      const targets = targetRef.current(sent.body);
+      dispatch(
+        apiSlice.util.invalidateTags([
+          ...foundTags(targets.first),
+          ...(targets.fallback ? foundTags(targets.fallback) : []),
+        ]),
+      );
+    }
     const bound = liveUntil(sent);
     const now = performance.now();
     if (now < bound) {
@@ -275,7 +297,7 @@ export function useMovementCheck<TBody>(
     }
     ask(sent);
     return stop;
-  }, [sent, ask, stop, arm, landingRef]);
+  }, [sent, ask, stop, arm, landingRef, dispatch]);
 
   const canCheckAgain = verdict.kind !== 'unchecked' || verdict.canCheckAgain;
 

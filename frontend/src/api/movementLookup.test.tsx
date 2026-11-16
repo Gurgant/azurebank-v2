@@ -1,13 +1,17 @@
 import type { PropsWithChildren } from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { http } from 'msw';
 import { describe, expect, it } from 'vitest';
-import { server } from '../mocks/server';
 import { serviceUnavailable } from '../mocks/problem';
 import { mockState } from '../mocks/state';
 import { makeTestStore, type TestStore } from '../test/renderWithProviders';
-import { advance, installFakeClock, lookupsSeen, whenListedByKey } from '../test/outage';
+import {
+  advance,
+  countListReads,
+  installFakeClock,
+  lookupsSeen,
+  whenListedByKey,
+} from '../test/outage';
 import { apiSlice, useGetAccountsQuery, useGetTransactionsQuery } from '../features/api/apiSlice';
 import type { MovementLookupArg } from './movementByKey';
 
@@ -43,22 +47,6 @@ async function depositUnder(store: TestStore, key: string) {
 
 function lookUp(store: TestStore, arg: MovementLookupArg) {
   return store.dispatch(apiSlice.endpoints.findMovementByKey.initiate(arg));
-}
-
-/** Counts the reads of the two lists, letting each one through to the mock. Not the lookups. */
-function countListReads() {
-  const reads = { accounts: 0, transactions: 0 };
-  server.use(
-    http.get('*/api/accounts', () => {
-      reads.accounts += 1;
-      return undefined;
-    }),
-    http.get('*/api/transactions', ({ request }) => {
-      if (!new URL(request.url).searchParams.has('IdempotencyKey')) reads.transactions += 1;
-      return undefined;
-    }),
-  );
-  return reads;
 }
 
 async function mountReaders(store: TestStore, reads: { accounts: number; transactions: number }) {
