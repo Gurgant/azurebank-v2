@@ -18,15 +18,17 @@ using Yarp.ReverseProxy.Forwarder;
 namespace AzureBank.Bff.Tests;
 
 /// <summary>
-/// The browser's <c>Cookie</c> header stops at the BFF. The session id in it is how the BFF finds
-/// the tokens it holds server-side; the API is called with the bearer the BFF attaches and reads no
-/// cookie, so a proxied request carries none: not the session's, and not any other cookie the
-/// browser sent with it.
+/// The browser's <c>Cookie</c> header stops at the BFF, and so does any <c>Authorization</c> header
+/// the browser sends. The session id in the cookie is how the BFF finds the tokens it holds
+/// server-side; the API is called with the bearer the BFF attaches and reads no cookie. So a proxied
+/// request carries no cookie of the browser's, the session's or any other, and no bearer but the
+/// session's: none at all when the session ended after the gate let the request through.
 /// </summary>
 /// <remarks>
 /// The client YARP forwards with is replaced by a recorder that keeps every header of the request
-/// as the proxy hands it over, so "no Cookie header left" is read from the request itself. The
-/// proxy's own transforms still run: only the last step, the sending, is the recorder's.
+/// as the proxy hands it over, so "no Cookie header left" and "no Authorization header left" are
+/// read from the request itself. The proxy's own transforms still run: only the last step, the
+/// sending, is the recorder's.
 /// </remarks>
 public sealed class BrowserCookieStaysInTheBffTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
@@ -282,6 +284,32 @@ public sealed class BrowserCookieStaysInTheBffTests : IClassFixture<WebApplicati
             forwarded.Values("Cookie").Should().BeEmpty(
                 "the cookie is dropped on every proxied request, not only on one a session answers for");
         }
+    }
+
+    [Fact]
+    public async Task WhenTheSessionEndsOnTheWayToTheProxy_TheBrowsersOwnBearerStaysBehind()
+    {
+        // The one request on which only the transform's drop keeps the browser's own Authorization
+        // from the API. With a live session the session's token is set over it, and with no
+        // session the gate refuses the request before the proxy. This one passed the gate, and its
+        // session ended before the proxy asked for its token, so no bearer is set over the copy
+        // YARP made of the browser's headers.
+        var (host, api) = NewHost(services =>
+        {
+            services.AddSingleton<TokenRefresher>();
+            services.Replace(ServiceDescriptor.Singleton<ITokenRefresher, SessionEndsBeforeTheToken>());
+        });
+        var session = SignIn(host, "jwt-held-for-this-session");
+        using var client = host.CreateClient();
+
+        using var request = Proxied(HttpMethod.Get, "/api/accounts", $"theme=dark; {session}");
+        request.Headers.Add("Authorization", "Bearer jwt-the-browser-brought");
+        await client.SendAsync(request);
+
+        var forwarded = api.Requests.Should().ContainSingle(
+            "the gate saw a live session, so the request is forwarded").Subject;
+        forwarded.Values("Authorization").Should().BeEmpty(
+            "the session ended, and a bearer the browser brought is never one the API is called with");
     }
 
     // CONTROL: this passes with the cookie forwarded and with it dropped. Dropping it changes
