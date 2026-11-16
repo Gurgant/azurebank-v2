@@ -220,9 +220,10 @@ public sealed class PinService : IPinVerifier
 
     /// <summary>
     /// Re-hashes the PIN with the currently active pepper and persists it
-    /// (rehash-on-use migration, ADR-0011). Runs in this service's own scope; the
-    /// hash column is not part of any concurrency-sensitive counter, so a single
-    /// set-based update is sufficient.
+    /// (rehash-on-use migration, ADR-0011). Runs in this service's own scope. The single
+    /// set-based update is conditional on the hash that was verified, as
+    /// StoreNewPasswordHashAsync is for the password: a PIN change that committed since
+    /// the load must not be undone by it.
     /// </summary>
     private async Task UpgradePinHashAsync(
         AzureBankDbContext db, ApplicationUser user, string pin, CancellationToken cancellationToken)
@@ -235,10 +236,20 @@ public sealed class PinService : IPinVerifier
             // silently diverged from the InMemory one below — which goes through SaveChanges and
             // therefore gets stamped by UpdateTimestamps — leaving a credential change that is
             // invisible in the audit columns on the provider that actually ships.
-            await db.Users.Where(u => u.Id == user.Id)
+            //
+            // It writes only over the hash it verified, as the password's StoreNewPasswordHashAsync
+            // does: a PIN change that committed since the load has stored a hash of the new PIN, and
+            // this write, made from the old one, must not put the old PIN back. When no row matches,
+            // the row already holds a newer hash (a PIN change, or a parallel check that upgraded it)
+            // and nothing is written.
+            var written = await db.Users.Where(u => u.Id == user.Id && u.PinHash == user.PinHash)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.PinHash, newHash)
                     .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow), cancellationToken);
+            if (written == 0)
+            {
+                return;
+            }
         }
         else
         {

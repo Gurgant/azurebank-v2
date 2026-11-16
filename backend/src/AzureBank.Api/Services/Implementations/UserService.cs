@@ -118,6 +118,10 @@ public class UserService : IUserService
 
         var previous = user.AzureTag;
         user.AzureTag = normalized;
+        // Every whole-row writer of the user checks the stamp, so a rename that leaves it unchanged
+        // lets a write loaded before the rename (a PIN set or change) put the old handle back. It is
+        // rotated here as RevokeAllForUserAsync and the demo claim rotate it: that write then fails.
+        user.ConcurrencyStamp = Guid.NewGuid().ToString();
         user.UpdatedAt = DateTime.UtcNow;
 
         /*
@@ -128,8 +132,8 @@ public class UserService : IUserService
 
           NEITHER HANDLE goes in the row, and that is the D5 rule rather than an oversight: a handle
           is user-chosen and public, which makes it exactly the descriptive personal data this table
-          must not hold, on a store designed never to be purged. The subject is the USER, and both
-          handles stay in the log line below, which does expire.
+          must not hold, on a store designed never to be purged. The subject is the USER, and the log
+          line below names neither handle either (ADR-0017).
         */
         _audit.Record(
             SecurityEvents.AzureTagRenamed, AuditOutcome.Succeeded,
@@ -139,6 +143,11 @@ public class UserService : IUserService
         {
             // A plain column update — UserName is the immutable id, so no Identity username
             // change is involved (ADR-0015). The audit row added above rides THIS save.
+            //
+            // A DbUpdateConcurrencyException from this save (the stamp rotated above, lost to a
+            // sign-out, a PIN save or another rename of this user that committed after the load)
+            // is not caught below and answers 500. AccountService.UpdateAccountAsync reloads and
+            // retries, then answers AccountBusyException; this rename has no such loop yet.
             await _context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException ex) when (ConcurrencyRetry.IsAzureTagCollision(ex))
