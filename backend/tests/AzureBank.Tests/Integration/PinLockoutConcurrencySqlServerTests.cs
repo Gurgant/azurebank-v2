@@ -141,6 +141,54 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
     }
 
     /// <summary>
+    /// A lock that has run out is claimed again by the next PIN, right or wrong. On SQL Server the
+    /// claim's WHERE reads the lock (<c>PinLockoutEnd == null || PinLockoutEnd &lt;= now</c>), and
+    /// that is the only thing that lets a row with a past lock be claimed: without the second term
+    /// the UPDATE matches nothing, the re-read finds the lock gone, and the claim loops, an UPDATE
+    /// and a SELECT a turn, until the request deadline. InMemory takes the tracked branch, which
+    /// never reads the lock, so only here can it be seen. The PIN is sent with a budget so that a
+    /// claim that loops fails in <see cref="ClaimBudget"/> and does not hang to the deadline.
+    /// </summary>
+    [SqlServerFact]
+    public async Task RightPinAfterTheLockHasRunOut_IsAcceptedAndClearsTheLock_OnSqlServer()
+    {
+        const string pin = "123456";
+        var client = CreateSqlClient();
+        var (token, tag) = await RegisterAsync(client);
+        await SetPinAsync(client, token, pin);
+        await EarnThePinLockAsync(client, token, pin);
+        (await ReadPinLockoutEndAsync(tag)).Should().BeAfter(DateTimeOffset.UtcNow, "the lock is armed");
+
+        await MovePinLockEndToThePastAsync(tag);
+        var answer = await VerifyPinWithinTheBudgetAsync(client, token, pin);
+
+        answer.Should().Be(Answer.Verified, "the lock has run out, so the right PIN is claimed and compared");
+        (await ReadPinAccessFailedCountAsync(tag)).Should().Be(0, "a right PIN takes back the attempt it claimed");
+        (await ReadPinLockoutEndAsync(tag)).Should().BeNull("the claim and the reset leave no lock on the row");
+    }
+
+    /// <summary>
+    /// The other side of the same term: a wrong PIN after the lock has run out is claimed too, is
+    /// compared and called wrong, and starts a new window at one attempt, with no lock left.
+    /// </summary>
+    [SqlServerFact]
+    public async Task WrongPinAfterTheLockHasRunOut_IsCalledWrongAndCountsOne_OnSqlServer()
+    {
+        const string pin = "123456";
+        var client = CreateSqlClient();
+        var (token, tag) = await RegisterAsync(client);
+        await SetPinAsync(client, token, pin);
+        await EarnThePinLockAsync(client, token, pin);
+
+        await MovePinLockEndToThePastAsync(tag);
+        var answer = await VerifyPinWithinTheBudgetAsync(client, token, "000000");
+
+        answer.Should().Be(Answer.Wrong, "the lock has run out, so the wrong PIN is compared, not refused");
+        (await ReadPinAccessFailedCountAsync(tag)).Should().Be(1, "the claim opened a new window");
+        (await ReadPinLockoutEndAsync(tag)).Should().BeNull("the claim cleared the lock that had run out");
+    }
+
+    /// <summary>
     /// Right PINs sent together: the ones beyond the threshold may be refused by the lock that the
     /// claim at the threshold holds while it is compared (ADR-0010, Consequences), but that lock
     /// does not outlive them. None is called wrong, and the row ends clean.
@@ -283,15 +331,16 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
         return await Task.WhenAll(sends);
     }
 
-    private static async Task<Answer> VerifyPinAnswerAsync(HttpClient client, string token, string pin)
+    private static async Task<Answer> VerifyPinAnswerAsync(
+        HttpClient client, string token, string pin, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin/verify")
         {
             Content = JsonContent.Create(new VerifyPinRequest { Pin = pin }, options: Json)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await client.SendAsync(request);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var response = await client.SendAsync(request, cancellationToken);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return response.StatusCode switch
         {
             HttpStatusCode.OK => body.RootElement.GetProperty("data").GetProperty("verified").GetBoolean()
@@ -333,6 +382,68 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         return await db.Users.Where(u => u.AzureTag == azureTag)
             .Select(u => u.PinAccessFailedCount).SingleAsync();
+    }
+
+    private async Task<DateTimeOffset?> ReadPinLockoutEndAsync(string azureTag)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.Where(u => u.AzureTag == azureTag)
+            .Select(u => u.PinLockoutEnd).SingleAsync();
+    }
+
+    /// <summary>
+    /// Ages the lock by writing the row, as a clock that had moved on would: the lock ends a second
+    /// ago and the count, which the claim that armed it reset, stays at 0.
+    /// </summary>
+    private async Task MovePinLockEndToThePastAsync(string azureTag)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var ended = DateTimeOffset.UtcNow.AddSeconds(-1);
+        var rows = await db.Users.Where(u => u.AzureTag == azureTag)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)ended));
+        rows.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Arms the lock the way a visitor does: MaxPinAttempts wrong PINs one after another, the last
+    /// of which is answered by the lock. The right PIN is then refused as well.
+    /// </summary>
+    private static async Task EarnThePinLockAsync(HttpClient client, string token, string pin)
+    {
+        for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
+        {
+            (await VerifyPinAsync(client, token, "000000")).Should().Be(HttpStatusCode.OK);
+        }
+        (await VerifyPinAsync(client, token, "000000")).Should().Be(HttpStatusCode.TooManyRequests,
+            "the wrong PIN that reaches the threshold is answered by the lock it applies");
+        (await VerifyPinAsync(client, token, pin)).Should().Be(HttpStatusCode.TooManyRequests,
+            "while the lock is armed the right PIN is refused too");
+    }
+
+    // One whole request, Argon2id included, on the SQL Server of CI can take seconds. The budget is
+    // set well above that, and still well below the 40 s deadline a claim that never matches runs to.
+    private static readonly TimeSpan ClaimBudget = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// One verification that must answer within <see cref="ClaimBudget"/>. A claim that never
+    /// matches loops on the server until the 40 s request deadline; the budget turns that into a
+    /// failure in seconds, and cancels the request so that the loop ends with it.
+    /// </summary>
+    private static async Task<Answer> VerifyPinWithinTheBudgetAsync(HttpClient client, string token, string pin)
+    {
+        using var budget = new CancellationTokenSource(ClaimBudget);
+        try
+        {
+            return await VerifyPinAnswerAsync(client, token, pin, budget.Token);
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"The PIN was not answered within {ClaimBudget.TotalSeconds:0} s: the claim of a row whose lock "
+                + "has run out never matched and went round again.");
+        }
     }
 
     private static async Task SetPinAsync(HttpClient client, string token, string pin)
